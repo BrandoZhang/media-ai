@@ -70,14 +70,14 @@ not violate.
 ```mermaid
 sequenceDiagram
     participant Skill as Agent Skill / shell
-    participant CLI as cli/* + common.run()
+    participant CLI as cli and common.run
     participant Reg as core.registry
     participant Cap as validate_request
     participant Adp as Provider adapter
     participant Cred as credentials chain
     participant API as backend (HTTP/RPC) or ffmpeg
 
-    Skill->>CLI: media-ai image generate --prompt … --output …
+    Skill->>CLI: media-ai image generate ...
     CLI->>CLI: parse argv → ImageRequest (normalized)
     CLI->>Reg: build(provider?, model?, modality)
     Reg-->>CLI: (adapter, resolved model id)
@@ -86,10 +86,10 @@ sequenceDiagram
     CLI->>Adp: generate_image(req)
     Adp->>Cred: credential() (lazy, per call)
     Cred-->>Adp: Secret (reveal-only) or BrokeredHandle
-    Adp->>API: request (key revealed only here; body built from req + options)
+    Adp->>API: build request from req and options, reveal key only here
     API-->>Adp: bytes / job id / base64
     Adp->>Adp: write artifact(s), record usage (redacted)
-    Adp-->>CLI: GenerationResult (or JobHandle if --wait false)
+    Adp-->>CLI: GenerationResult, or JobHandle if async
     CLI-->>Skill: one JSON line on stdout, exit 0
 ```
 
