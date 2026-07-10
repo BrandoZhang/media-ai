@@ -1,0 +1,284 @@
+"""Volcengine **Ark** provider (Doubao Seedream/Seedance). API-Key (Bearer) auth.
+
+Image generation is synchronous (``/images/generations``); video generation is an
+async task (``/contents/generations/tasks`` create → poll → optional cancel).
+Migrated from the original ``VolcBackend`` onto the provider-agnostic core.
+
+Model IDs are account-specific and must be enabled in the console; set them via
+config/env (``ARK_IMAGE_MODEL`` / ``ARK_VIDEO_MODEL``) or per call with ``--model``.
+Refs: image https://www.volcengine.com/docs/82379/1541523 ; video create
+https://www.volcengine.com/docs/82379/1520757 ; query 1521309 ; cancel 1521720.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import signal
+import time
+from pathlib import Path
+
+from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
+from ..core.errors import ErrorCategory, MediaError
+from ..core.geometry import normalize_ratio
+from ..core.mediaref import to_data_uri
+from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
+from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
+from ..core.usage import record_usage
+from ._base import HttpProvider
+
+_ARK_MIN_IMAGE_PIXELS = 2560 * 1440  # Seedream method-2 floor
+_TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
+
+
+class VolcProvider(HttpProvider):
+    name = "volc"
+    auth_scheme = "bearer"
+
+    def __init__(self, *, credentials=None, config=None) -> None:
+        super().__init__(credentials=credentials, config=config)
+        self.base_url = os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+        self.image_model = os.getenv("ARK_IMAGE_MODEL", "doubao-seedream-4-5-251128")
+        self.video_model = os.getenv("ARK_VIDEO_MODEL", "doubao-seedance-2-0-260128")
+        self.poll_interval = float(os.getenv("ARK_POLL_INTERVAL", "5") or 5)
+        self.poll_timeout = float(os.getenv("ARK_POLL_TIMEOUT", "900") or 900)
+
+    # ---- discovery -------------------------------------------------------
+    def models(self) -> list[str]:
+        return [self.image_model, self.video_model]
+
+    def default_model(self, modality: Modality | None) -> str:
+        return self.video_model if modality == Modality.VIDEO else self.image_model
+
+    def _is_video_model(self, model: str) -> bool:
+        return "seedance" in model.lower() or model == self.video_model
+
+    def capabilities(self, model: str | None = None) -> ModelCapabilities:
+        model = model or self.image_model
+        if self._is_video_model(model):
+            return ModelCapabilities(
+                provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
+                video=VideoCaps(
+                    is_async=True,
+                    aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"),
+                    resolutions=("480p", "720p", "1080p"),
+                    durations=(),  # model-version specific; left unconstrained
+                    supports_first_frame=True, supports_last_frame=True,
+                    supports_reference_images=True, supports_reference_videos=True,
+                    supports_reference_audios=True, supports_seed=True, supports_audio=True,
+                    supports_watermark_control=True, supports_return_last_frame=True,
+                    options=("camera_fixed",),
+                ),
+                notes=("model IDs are account-specific; enable them in the Volcengine console",),
+            )
+        return ModelCapabilities(
+            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
+            image=ImageCaps(
+                operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
+                geometry_mode=GeometryMode.BOTH,
+                aspect_ratios=("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
+                named_sizes=("1K", "2K", "4K"),
+                pixel_min=(1280, 720), pixel_max=(4096, 4096),
+                max_count=15, output_formats=("png",),
+                supports_seed=True, max_references=9, options=("watermark",),
+            ),
+            notes=("size below 2560x1440 falls back to the '2K' preset",),
+        )
+
+    # ---- images ----------------------------------------------------------
+    def _image_size(self, req: ImageRequest) -> str:
+        override = os.getenv("ARK_IMAGE_SIZE")
+        if override:
+            return override
+        geo = req.geometry
+        if geo and geo.mode == "pixels":
+            if geo.width * geo.height >= _ARK_MIN_IMAGE_PIXELS:  # type: ignore[operator]
+                return f"{geo.width}x{geo.height}"
+            return "2K"
+        if geo and geo.resolution:
+            return geo.resolution
+        return "2K"
+
+    def generate_image(self, req: ImageRequest) -> GenerationResult:
+        client, headers = self._prepare()
+        model_id = req.model or self.image_model
+        body: dict = {
+            "model": model_id, "prompt": req.prompt, "size": self._image_size(req),
+            "response_format": "url", "watermark": bool(req.options.get("watermark", False)),
+        }
+        if req.seed is not None and req.seed >= 0:
+            body["seed"] = req.seed
+        if req.references:
+            enc = [to_data_uri(r, "image") for r in req.references]
+            body["image"] = enc if len(enc) > 1 else enc[0]
+        if req.count > 1:
+            body["sequential_image_generation"] = "auto"
+            body["sequential_image_generation_options"] = {"max_images": req.count}
+        else:
+            body["sequential_image_generation"] = "disabled"
+
+        data = client.request_json("POST", "/images/generations", body=body, headers=headers)
+        items = [d for d in (data.get("data") or []) if d.get("url") or d.get("b64_json")]
+        if not items:
+            raise MediaError("Ark image response had no images", category=ErrorCategory.PROVIDER,
+                             provider=self.name, model=model_id)
+        out = Path(req.output)
+        artifacts = [self._save_image(items[0], out, client, headers, "image")]
+        for i, it in enumerate(items[1:], start=2):
+            p = out.with_name(f"{out.stem}_{i}{out.suffix}")
+            artifacts.append(self._save_image(it, p, client, headers, "image", role="group"))
+        usage = data.get("usage") or {}
+        used_model = data.get("model") or model_id
+        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
+                      "model": used_model, "kind": "image",
+                      "generated_images": usage.get("generated_images", len(items)),
+                      "output_tokens": usage.get("output_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        return GenerationResult(
+            modality="image", operation=req.operation.value, provider=self.name, model=used_model,
+            artifacts=artifacts, usage=usage, meta={"prompt": req.prompt, "size": body["size"]},
+        )
+
+    @staticmethod
+    def _save_image(item: dict, out: Path, client, headers, kind: str, *, role=None) -> Artifact:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if item.get("b64_json"):
+            out.write_bytes(base64.b64decode(item["b64_json"]))
+        elif item.get("url"):
+            client.download(item["url"], out)
+        return Artifact.from_path(out, kind, mime="image/png", role=role)
+
+    # ---- video (async task) ----------------------------------------------
+    def _build_content(self, req: VideoRequest) -> list[dict]:
+        content: list[dict] = []
+        if req.first_frame:
+            content.append({"type": "image_url", "image_url": {"url": to_data_uri(req.first_frame, "image")}, "role": "first_frame"})
+        if req.last_frame:
+            content.append({"type": "image_url", "image_url": {"url": to_data_uri(req.last_frame, "image")}, "role": "last_frame"})
+        for r in req.reference_images:
+            content.append({"type": "image_url", "image_url": {"url": to_data_uri(r, "image")}, "role": "reference_image"})
+        for r in req.reference_videos:
+            content.append({"type": "video_url", "video_url": {"url": to_data_uri(r, "video")}, "role": "reference_video"})
+        for r in req.reference_audios:
+            content.append({"type": "audio_url", "audio_url": {"url": to_data_uri(r, "audio")}, "role": "reference_audio"})
+        if not content and not req.prompt:
+            raise MediaError("video generation needs a prompt or at least one reference", category=ErrorCategory.VALIDATION, provider=self.name)
+        if req.prompt:
+            content.append({"type": "text", "text": req.prompt})
+        return content
+
+    def _create_task(self, req: VideoRequest, client, headers) -> str:
+        geo = req.geometry
+        body: dict = {
+            "model": req.model or self.video_model,
+            "content": self._build_content(req),
+            "resolution": (geo.resolution if geo else None) or "720p",
+            "ratio": normalize_ratio(geo.aspect_ratio if geo else None) or "adaptive",
+            "duration": req.duration or 5,
+            "camera_fixed": bool(req.options.get("camera_fixed", False)),
+            "watermark": bool(req.watermark) if req.watermark is not None else False,
+        }
+        if req.seed is not None and req.seed >= 0:
+            body["seed"] = req.seed
+        if req.audio is not None:
+            body["generate_audio"] = req.audio
+        if req.return_last_frame:
+            body["return_last_frame"] = True
+        data = client.request_json("POST", "/contents/generations/tasks", body=body, headers=headers)
+        task_id = data.get("id")
+        if not task_id:
+            raise MediaError("Ark video create returned no task id", category=ErrorCategory.PROVIDER, provider=self.name)
+        return task_id
+
+    def generate_video(self, req: VideoRequest):
+        client, headers = self._prepare()
+        task_id = self._create_task(req, client, headers)
+        if not req.wait:
+            return JobHandle(provider=self.name, model=req.model or self.video_model, id=task_id, output=str(req.output))
+        return self._poll(task_id, Path(req.output), client, headers, operation=req.operation.value)
+
+    def _finalize(self, res: dict, out: Path, client, headers, *, task_id: str, operation: str) -> GenerationResult:
+        content = res.get("content") or {}
+        if not content.get("video_url"):
+            raise MediaError(f"Ark task {task_id} succeeded but returned no video_url",
+                             category=ErrorCategory.PROVIDER, provider=self.name)
+        client.download(content["video_url"], out, headers=None)
+        artifacts = [Artifact.from_path(out, "video", mime="video/mp4")]
+        if content.get("last_frame_url"):
+            lf = out.with_name(f"{out.stem}_lastframe.png")
+            client.download(content["last_frame_url"], lf)
+            artifacts.append(Artifact.from_path(lf, "frame", mime="image/png", role="last_frame"))
+        usage = res.get("usage") or {}
+        used_model = res.get("model") or self.video_model
+        record_usage({"tool": operation, "operation": operation, "provider": self.name, "model": used_model,
+                      "kind": "video", "seconds": res.get("duration", 0),
+                      "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        return GenerationResult(
+            modality="video", operation=operation, provider=self.name, model=used_model, artifacts=artifacts,
+            usage=usage, meta={"task_id": task_id, "seconds": res.get("duration"), "resolution": res.get("resolution")},
+        )
+
+    def _cancel(self, task_id: str, client, headers) -> None:
+        try:
+            client.request_json("DELETE", f"/contents/generations/tasks/{task_id}", headers=headers)
+        except Exception:  # noqa: BLE001 - cancellation is best-effort
+            pass
+
+    def _poll(self, task_id: str, out: Path, client, headers, *, operation: str) -> GenerationResult:
+        # The harness may kill this (blocking) tool at its action_timeout; cancel
+        # the billed task on signal/timeout so a killed wait doesn't orphan it.
+        def _on_signal(signum, _frame):
+            self._cancel(task_id, client, headers)
+            raise MediaError(f"Ark video task {task_id} interrupted (signal {signum}); task cancelled",
+                             category=ErrorCategory.TIMEOUT, provider=self.name)
+
+        prev = {}
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                prev[sig] = signal.signal(sig, _on_signal)
+            except (ValueError, OSError):
+                pass
+        try:
+            deadline = time.monotonic() + self.poll_timeout
+            while time.monotonic() < deadline:
+                res = client.request_json("GET", f"/contents/generations/tasks/{task_id}", headers=headers)
+                status = str(res.get("status", "")).lower()
+                if status == "succeeded":
+                    return self._finalize(res, out, client, headers, task_id=task_id, operation=operation)
+                if status in _TERMINAL:
+                    raise MediaError(f"Ark video task {task_id} {status}", category=ErrorCategory.PROVIDER, provider=self.name)
+                time.sleep(self.poll_interval)
+            self._cancel(task_id, client, headers)
+            raise MediaError(f"Ark video task {task_id} timed out after {self.poll_timeout}s (cancelled)",
+                             category=ErrorCategory.TIMEOUT, provider=self.name)
+        finally:
+            for sig, handler in prev.items():
+                try:
+                    signal.signal(sig, handler)
+                except (ValueError, OSError):
+                    pass
+
+    # ---- jobs ------------------------------------------------------------
+    def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
+        client, headers = self._prepare()
+        res = client.request_json("GET", f"/contents/generations/tasks/{ref.id}", headers=headers)
+        status = str(res.get("status", "")).lower()
+        result = None
+        if output is not None and status == "succeeded":
+            result = self._finalize(res, Path(output), client, headers, task_id=ref.id, operation="video.generate")
+        return JobStatus(provider=self.name, model=res.get("model"), id=ref.id, status=status or "unknown",
+                         op="query", result=result, raw={k: v for k, v in res.items() if k in ("id", "usage", "error")})
+
+    def cancel_job(self, ref: JobRef) -> JobStatus:
+        client, headers = self._prepare()
+        client.request_json("DELETE", f"/contents/generations/tasks/{ref.id}", headers=headers)
+        return JobStatus(provider=self.name, model=None, id=ref.id, status="cancelled", op="cancel",
+                         raw={"note": "cancel/delete requested"})
+
+    # ---- errors ----------------------------------------------------------
+    def _error(self, status: int, body: str) -> MediaError:
+        low = body.lower()
+        if status == 400 and ("sensitive" in low or "risk" in low or "content" in low and "policy" in low):
+            return MediaError(f"Ark rejected content (safety): {body}", category=ErrorCategory.SAFETY, provider=self.name)
+        cat = {401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH, 404: ErrorCategory.NOT_FOUND,
+               429: ErrorCategory.RATE_LIMIT, 400: ErrorCategory.VALIDATION}.get(status, ErrorCategory.PROVIDER)
+        return MediaError(f"Ark API HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
