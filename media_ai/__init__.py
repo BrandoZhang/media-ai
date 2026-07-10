@@ -25,6 +25,7 @@ from .core.capabilities import (
 from .core.errors import ErrorCategory, MediaError
 from .core.provider import Provider
 from .core.registry import provider_names, register_provider, unregister_provider
+from .core.retry import retry
 from .core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from .core.types import (
     GeometrySpec,
@@ -43,6 +44,7 @@ __all__ = [
     "register_provider",
     "unregister_provider",
     "provider_names",
+    "retry",
     "Provider",
     "HttpProvider",
     "ModelCapabilities",

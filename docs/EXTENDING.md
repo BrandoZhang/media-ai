@@ -105,6 +105,73 @@ media-ai image generate --provider acme --prompt "a fox" --output fox.png --opti
 media-ai image generate --model acme-fast --prompt "a fox" --output fox.png   # provider inferred
 ```
 
+## Non-HTTP / RPC providers
+
+`HttpProvider` is only a convenience for REST backends. The `Provider` interface
+itself has **no transport assumptions** — subclass it directly for a gRPC stub, a
+JSON-RPC endpoint, a vendor Python SDK, a local subprocess, or a message queue.
+You keep everything else (registry, CLI, capability discovery + validation,
+credentials resolution, redaction, usage ledger, result contract) and just supply
+the calls.
+
+```python
+from media_ai import (
+    Provider, ModelCapabilities, ImageCaps, Operation, Modality,
+    GenerationResult, Artifact, MediaError, ErrorCategory, retry,
+)
+import acme_rpc   # your gRPC / SDK / RPC client library
+
+class AcmeRpcProvider(Provider):
+    name = "acme"
+    model_hints = ("acme-",)
+
+    def __init__(self, *, credentials=None, config=None):
+        super().__init__(credentials=credentials, config=config)
+        self._stub = acme_rpc.Client(endpoint=(config or {}).get("endpoint", "localhost:50051"))
+
+    def models(self): return ["acme-pro"]
+    def default_model(self, modality): return "acme-pro"
+    def capabilities(self, model=None):
+        return ModelCapabilities(provider=self.name, model=model or "acme-pro",
+            modalities=frozenset({Modality.IMAGE}),
+            image=ImageCaps(operations=frozenset({Operation.IMAGE_GENERATE}), supports_seed=True))
+
+    def generate_image(self, req):
+        key = self.credential().reveal()          # resolved from env/keychain/secret-manager/broker
+        def call():
+            return self._stub.Generate(            # your RPC — inject the key however your transport wants
+                acme_rpc.Req(prompt=req.prompt, seed=req.seed or 0, api_key=key))
+        try:
+            # idempotency-aware retry for a read-only/deterministic RPC:
+            resp = retry(call, retryable=lambda e: isinstance(e, acme_rpc.Transient))
+        except acme_rpc.Unauthorized as e:
+            raise MediaError(str(e), category=ErrorCategory.AUTH, provider=self.name) from e
+        except acme_rpc.RpcError as e:             # map transport errors -> the shared taxonomy
+            raise MediaError(str(e), category=ErrorCategory.PROVIDER, provider=self.name) from e
+        req.output.parent.mkdir(parents=True, exist_ok=True)
+        req.output.write_bytes(resp.image_bytes)
+        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name,
+                                model=req.model, artifacts=[Artifact.from_path(req.output, "image")], usage={})
+```
+
+What an RPC provider is responsible for (that `HttpProvider` would otherwise give
+you for free):
+
+- **Credential injection.** Call `self.credential().reveal()` and pass the value
+  into your transport (gRPC metadata, an SDK client, RPC field). The value is still
+  redacted from all logs/output. For **brokered mode** (`MEDIA_CRED_BROKER` set),
+  `credential()` returns a `BrokeredHandle` with no local secret — an RPC provider
+  performs the vault-exchange itself (call the broker for a short-lived token, then
+  use it in the RPC); the HTTP proxy-injection path doesn't apply to non-HTTP.
+- **Error mapping.** Translate your transport's failures into `MediaError` with the
+  right `ErrorCategory` (auth/rate_limit/timeout/safety/…) so exit codes stay
+  deterministic.
+- **Retry** (optional). Use `media_ai.retry(fn, retryable=…)` for
+  idempotency-aware exponential backoff, or your transport's own policy.
+
+Everything above the adapter — the one-JSON-line contract, capability gating,
+`--option` functions, the usage ledger — is identical to an HTTP provider.
+
 ## What's pluggable vs not
 
 - **Pluggable without touching core:** new providers, new models, per-model
