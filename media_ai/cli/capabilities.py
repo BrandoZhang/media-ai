@@ -26,7 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _do(args) -> dict:
-    names = [args.provider] if args.provider else list(registry.PROVIDER_NAMES)
+    names = [args.provider] if args.provider else registry.provider_names()
     providers = []
     for name in names:
         try:

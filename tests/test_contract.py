@@ -19,7 +19,7 @@ from media_ai.core.types import ImageRequest, Modality, Operation, VideoRequest
 
 def _all_models():
     out = []
-    for name in registry.PROVIDER_NAMES:
+    for name in registry.provider_names():
         prov = registry.get_provider(name)
         for model in prov.models():
             out.append((name, model))

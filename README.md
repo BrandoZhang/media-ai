@@ -115,4 +115,14 @@ media-ai usage
 - [docs/PROVIDERS.md](docs/PROVIDERS.md) — per-provider setup + capability matrix
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker
 - [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) — invocation contract for Agent Skills
+- [docs/EXTENDING.md](docs/EXTENDING.md) — add a custom provider (no core changes)
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — unresolved provider-specific items
+
+## Custom providers
+
+Adding a backend requires **no changes to core**. Subclass `Provider` /
+`HttpProvider`, declare a `ModelCapabilities` schema per model (which drives
+discovery + validation), expose provider-specific functions via capability-gated
+`--option`, and register it — in-process with `register_provider(...)` or as an
+installed package via a `media_ai.providers` entry point. See
+[docs/EXTENDING.md](docs/EXTENDING.md).

@@ -25,6 +25,9 @@ class Provider:
 
     name: str = "base"
     requires_credentials: bool = True
+    # Lowercase substrings that route a bare ``--model`` id to this provider when
+    # it is discovered via an entry point (see media_ai.core.registry).
+    model_hints: tuple[str, ...] = ()
 
     def __init__(self, *, credentials: CredentialProvider | None = None, config: dict | None = None) -> None:
         self._credentials = credentials or default_chain()
