@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-ai"
+version = "0.1.0"
+description = "Standalone multimodal generation CLIs (text/image/video) with a mock + Volcengine Ark backend and token-cost accounting."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "pillow>=10.1",
+    "imageio-ffmpeg>=0.4",
+]
+
+[project.scripts]
+text2image = "media_ai.cli.text2image:main"
+image2image = "media_ai.cli.image2image:main"
+text2video = "media_ai.cli.text2video:main"
+image2video = "media_ai.cli.image2video:main"
+ref2video = "media_ai.cli.ref2video:main"
+concat_video = "media_ai.cli.concat_video:main"
+video_task = "media_ai.cli.video_task:main"
+media_usage = "media_ai.cli.media_usage:main"
+media-ai = "media_ai.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["media_ai", "media_ai.cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
