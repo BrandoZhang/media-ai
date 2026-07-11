@@ -49,9 +49,10 @@ class GeminiProvider(HttpProvider):
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
-        self.base_url = (self.config.get("base_url") or os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
-        self.image_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
-        self.video_model = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.0-generate-001")
+        self.base_url = (self.config.get("base_url") or os.getenv("GEMINI_BASE_URL")
+                         or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+        self.image_model = os.getenv("GEMINI_IMAGE_MODEL") or "gemini-2.5-flash-image"
+        self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.0-generate-001"
         self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
         self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
 

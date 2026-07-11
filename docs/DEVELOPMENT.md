@@ -77,17 +77,46 @@ installs them all.
 ## Running against a real provider
 
 The default `mock` provider needs no credentials or network. For a real backend,
-set the provider and its key in the **environment** (never as a CLI flag):
+set the provider and its key in the **environment** (never as a CLI flag). The
+fastest way to see every variable is [`.env.example`](../.env.example) — copy it and
+fill in the block for your provider:
 
 ```bash
-export MEDIA_PROVIDER=openai OPENAI_API_KEY=...
-uv run media-ai capabilities --provider openai
-uv run media-ai image generate --model gpt-image-2 --prompt "a fox" --output fox.png
+cp .env.example .env          # then edit .env (OPENAI_API_KEY=…, ARK_API_KEY=…, etc.)
+uv run --env-file .env media-ai capabilities --provider openai
+uv run --env-file .env media-ai image generate --model gpt-image-2 --prompt "a fox" --output fox.png
 ```
 
+`uv run --env-file .env` loads the file into the process environment; the CLI does
+not read `.env` on its own. (Equivalently: `set -a && . ./.env && set +a`.) Never
+commit your real `.env` — only `.env.example` is committed.
+
 Credential resolution (env is the last link of a broker → secret-manager → keychain
-→ config-file → env chain) is described in [CREDENTIALS.md](CREDENTIALS.md); per-provider
+→ config-file → env chain), the `credentials.toml` file, and **profiles** (per-
+endpoint/tenant keys) are described in [CREDENTIALS.md](CREDENTIALS.md); per-provider
 setup is in [PROVIDERS.md](PROVIDERS.md).
+
+## Live / regression tests (real APIs)
+
+The default suite is fully offline. The `-m live` tests hit real provider APIs and
+are **double-gated** so they never run by accident or fail without creds:
+
+```bash
+# opt in AND provide the key(s); anything unset simply skips
+MEDIA_LIVE_TESTS=1 OPENAI_API_KEY=… uv run --env-file .env pytest -m live -v
+```
+
+Each test skips unless `MEDIA_LIVE_TESTS=1` **and** that provider's key is present
+(Volc also needs `ARK_IMAGE_MODEL`, since Ark model/endpoint ids are account-specific;
+the video smoke needs `MEDIA_LIVE_VIDEO=1` too). Keep them cheap — one small image
+per provider.
+
+**CI:** `.github/workflows/ci.yml` runs the offline suite (`-m "not live"`) on every
+push/PR. `.github/workflows/live.yml` runs `-m live` on merge to `main` (and via
+*Run workflow*), reading keys from repo **Secrets** (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`ARK_API_KEY`, plus optional `*_BASE_URL` / `ARK_IMAGE_MODEL` / `ARK_VIDEO_MODEL`).
+If no provider secret is configured, the live job is a **green no-op** (all steps
+skip), so forks and unconfigured repos never fail.
 
 ## Before you push
 

@@ -18,6 +18,10 @@ The CLI selects a provider by **name**; the registry binds a credential resolver
 to the adapter; the adapter reveals the value only inside its HTTP request builder
 (`media_ai/providers/_base.py`). Credentials never pass through `media_ai/cli/`.
 
+> **Just want to get running?** Copy [`.env.example`](../.env.example) to `.env`,
+> fill in your provider's block, and `uv run --env-file .env media-ai …` (or
+> `set -a && . ./.env && set +a`). It lists every variable below.
+
 ## Resolution chain (most-secure first, first hit wins)
 
 Configured in `media_ai/credentials/resolver.py`; re-resolved **per invocation**

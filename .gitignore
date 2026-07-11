@@ -10,3 +10,6 @@ dist/
 venv/
 *.jsonl
 media_usage.jsonl
+.env
+.env.*
+!.env.example

@@ -47,6 +47,9 @@ packages = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: hits real provider APIs; skipped unless MEDIA_LIVE_TESTS=1 and the provider's key is set",
+]
 
 [tool.ruff]
 line-length = 130

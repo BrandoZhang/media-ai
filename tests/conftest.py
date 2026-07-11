@@ -71,10 +71,13 @@ def fake_provider(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _ledger(tmp_path, monkeypatch):
+def _ledger(tmp_path, monkeypatch, request):
     monkeypatch.setenv("MEDIA_USAGE_LOG", str(tmp_path / "usage.jsonl"))
+    # `live` tests hit real APIs and MUST keep the real environment (keys, base
+    # URLs, model ids); only the offline tests are scrubbed hermetic.
+    if request.node.get_closest_marker("live"):
+        return tmp_path / "usage.jsonl"
     monkeypatch.setenv("MEDIA_PROVIDER", "mock")
-    # keep tests hermetic: no ambient provider keys / broker
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
                 "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)

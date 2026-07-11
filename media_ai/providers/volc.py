@@ -38,9 +38,12 @@ class VolcProvider(HttpProvider):
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
-        self.base_url = (self.config.get("base_url") or os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")).rstrip("/")
-        self.image_model = os.getenv("ARK_IMAGE_MODEL", "doubao-seedream-4-5-251128")
-        self.video_model = os.getenv("ARK_VIDEO_MODEL", "doubao-seedance-2-0-260128")
+        # `or` (not getenv defaults) so a set-but-empty env var (e.g. an unset CI
+        # secret, which GitHub materializes as "") falls back to the default.
+        self.base_url = (self.config.get("base_url") or os.getenv("ARK_BASE_URL")
+                         or "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+        self.image_model = os.getenv("ARK_IMAGE_MODEL") or "doubao-seedream-4-5-251128"
+        self.video_model = os.getenv("ARK_VIDEO_MODEL") or "doubao-seedance-2-0-260128"
         self.poll_interval = float(os.getenv("ARK_POLL_INTERVAL", "5") or 5)
         self.poll_timeout = float(os.getenv("ARK_POLL_TIMEOUT", "900") or 900)
 
