@@ -36,15 +36,20 @@ before relying on them in production; the adapters are written to fail safely
 - **Imagen was removed.** `imagen-*` model ids still route to this provider but
   return a deterministic `unsupported` error (exit 3) pointing at Nano Banana, rather
   than silently falling back to the mock provider.
-- **Grounding / thinking wire shapes.** `--option grounding=true` sends the
-  well-established `tools:[{google_search:{}}]` (Flash + Pro). `thinking_level=high`
-  (3.1 Flash) sends `generationConfig.thinkingConfig.thinkingLevel`; the exact
-  `generateContent` acceptance of `thinkingLevel` is not exercised offline. `[verify]`
-  Google *Image* Search grounding is Interactions-API-only (its `search_types` field
-  isn't part of `generateContent`), so it is **not** exposed on this path.
-- **Veo extension** maps `--reference-video` to the Veo `video` parameter. Google
-  only extends **Veo-generated** clips (≤141s, 720p) and requires `durationSeconds=8`;
-  a non-Veo source or wrong length is rejected by the API, not pre-checked. `[verify]`
+- **Output format follows the file extension.** Gemini 3.x image models return
+  **JPEG** by default (2.5 returns PNG); the adapter writes the format your `--output`
+  extension asks for (`.png`/`.jpg`/`.webp`), transcoding when needed, and reports the
+  matching mime. No re-encode happens when the model's format already matches.
+- **Grounding / thinking (verified live).** `--option grounding=true` sends
+  `tools:[{google_search:{}}]` (Flash + Pro) and `thinking_level=high` (3.1 Flash)
+  sends `generationConfig.thinkingConfig.thinkingLevel="high"` — both accepted by
+  `generateContent`. Google *Image* Search grounding is Interactions-API-only (its
+  `search_types` field isn't part of `generateContent`), so it is **not** exposed here.
+- **Veo extension needs a URI, not a local file.** `--reference-video` must be the
+  **URI of a previously generated Veo clip** (e.g. the operation's `video.uri`, valid
+  ~2 days); the API rejects inline video bytes ("Video URI not found"). A local path is
+  refused with a clear `validation` error. Google only extends Veo-generated clips
+  (≤141s, 720p, `durationSeconds=8`); a non-Veo source is rejected by the API.
 - **Inline request size limit** (~20 MB) *is* now enforced client-side: local media
   over the cap fails with a clear `validation` error (exit 3) instead of an opaque API
   rejection. The **Files API** upload path for larger inputs is not yet implemented,

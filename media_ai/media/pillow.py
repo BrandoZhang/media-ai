@@ -1,17 +1,55 @@
-"""Pillow-based placeholder image rendering for the offline mock provider.
+"""Pillow-based image helpers.
 
-Draws a caption card (the prompt baked into the frame) so mock artifacts are
-visually distinguishable and deterministic given ``(prompt, seed)``. Falls back to
-a solid-color PNG written with the stdlib if Pillow is unavailable.
+Placeholder rendering for the offline mock provider (a caption card baked into the
+frame, deterministic given ``(prompt, seed)``), plus :func:`save_image_bytes`, which
+writes provider-returned image bytes to disk in the format the output path asks for.
+Falls back to stdlib behavior when Pillow is unavailable.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import struct
 import textwrap
 import zlib
 from pathlib import Path
+
+# Output extension -> (Pillow format, mime). Drives :func:`save_image_bytes`.
+_SUFFIX_FMT = {
+    ".png": ("PNG", "image/png"), ".jpg": ("JPEG", "image/jpeg"), ".jpeg": ("JPEG", "image/jpeg"),
+    ".webp": ("WEBP", "image/webp"), ".gif": ("GIF", "image/gif"),
+}
+
+
+def save_image_bytes(raw: bytes, out: Path, *, source_mime: str | None = None) -> str:
+    """Write ``raw`` image bytes to ``out``, converting to the format implied by
+    ``out``'s extension when the source differs (e.g. a model that returns JPEG for
+    an ``.png`` path). Returns the mime actually written.
+
+    Best-effort: if the extension is unknown, Pillow is missing, or decoding fails,
+    the bytes are written verbatim and the source mime (if any) is reported.
+    """
+    ensure_parent(out)
+    target = _SUFFIX_FMT.get(out.suffix.lower())
+    if target is None:  # unknown/absent extension — trust the source, write verbatim
+        out.write_bytes(raw)
+        return (source_mime or "application/octet-stream").lower()
+    target_fmt, target_mime = target
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as im:
+            if (im.format or "").upper() == target_fmt:
+                out.write_bytes(raw)  # already the requested format — no re-encode
+                return target_mime
+            if target_fmt == "JPEG" and im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")  # JPEG can't hold alpha/palette
+            im.save(out, format=target_fmt)
+        return target_mime
+    except Exception:  # noqa: BLE001 - never fail a generation over a transcode hiccup
+        out.write_bytes(raw)
+        return (source_mime or target_mime).lower()
 
 
 def seed_int(prompt: str, seed: int | None) -> int:

@@ -88,9 +88,10 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
 - **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`,
   `veo-3.1-lite-generate-preview` via `:predictLongRunning` → poll operation →
   **download the file URI with the API key**. First-frame (all) + last-frame,
-  up to 3 `--reference-image`s (asset), and video extension via
-  `--reference-video` (continue a Veo clip; 3.1 non-Lite). `--seed` and
-  `--resolution 720p|1080p|4k` supported. Audio is native on Veo 3.x (`--audio` is
+  up to 3 `--reference-image`s (asset) — all accept **local files** — and video
+  extension via `--reference-video`, which must be the **URI of a prior Veo clip**
+  (3.1 non-Lite; a local file is refused since the API rejects inline video). `--seed`
+  and `--resolution 720p|1080p|4k` supported. Audio is native on Veo 3.x (`--audio` is
   unreliable on the Developer API — see LIMITATIONS.md). Jobs **cannot be
   cancelled** on the Developer API (`job cancel` → exit 3). Deprecated `veo-2.0` /
   `veo-3.0` snapshots still resolve via `--model`.

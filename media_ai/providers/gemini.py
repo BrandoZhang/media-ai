@@ -31,6 +31,7 @@ from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from ..core.usage import record_usage
+from ..media import pillow
 from ._base import HttpProvider
 
 # The 10 aspect ratios every Nano Banana model shares. Gemini 3.1 Flash Image adds
@@ -160,7 +161,7 @@ class GeminiProvider(HttpProvider):
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
                 geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=ratios,
-                named_sizes=sizes, max_count=4, output_formats=("png",),
+                named_sizes=sizes, max_count=4, output_formats=("png", "jpeg", "webp"),
                 max_references=max_refs, options=options,
             ),
             notes=(note, "native conversational image gen/edit; SynthID watermark is unconditional"),
@@ -201,9 +202,10 @@ class GeminiProvider(HttpProvider):
         if not images:
             raise _no_image_error(data, self.name, model)
         out = Path(req.output)
-        artifacts = [_write_b64(images[0], out, "image")]
-        for i, im in enumerate(images[1:], start=2):
-            artifacts.append(_write_b64(im, out.with_name(f"{out.stem}_{i}{out.suffix}"), "image", role="group"))
+        artifacts = [_write_b64(images[0][0], out, "image", source_mime=images[0][1])]
+        for i, (b64, mime) in enumerate(images[1:], start=2):
+            artifacts.append(_write_b64(b64, out.with_name(f"{out.stem}_{i}{out.suffix}"), "image",
+                                        source_mime=mime, role="group"))
         usage = data.get("usageMetadata") or {}
         record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
                       "model": model, "kind": "image", "generated_images": len(images),
@@ -225,9 +227,18 @@ class GeminiProvider(HttpProvider):
             instance["referenceImages"] = [{"image": _veo_media(r), "referenceType": "asset"}
                                            for r in req.reference_images]
         if req.reference_videos:
-            # Veo extension: continue a previously generated Veo clip. Only the first
-            # is used (multi-video prompting is unsupported).
-            instance["video"] = _veo_media(req.reference_videos[0])
+            # Veo extension continues a previously generated Veo clip, referenced by
+            # its URI (valid ~2 days). The API rejects inline video bytes for
+            # extension ("Video URI not found"), so a local file cannot be used here.
+            ref = req.reference_videos[0]
+            if ref.is_local:
+                raise MediaError(
+                    "Veo video extension needs the URI of a previously generated Veo clip — pass the "
+                    "operation's video URI as --reference-video; the API does not accept an inline/local "
+                    "video for extension",
+                    category=ErrorCategory.VALIDATION, provider=self.name,
+                )
+            instance["video"] = {"uri": ref.raw, "mimeType": "video/mp4"}
         params: dict = {}
         if req.geometry and req.geometry.aspect_ratio and req.geometry.aspect_ratio != "adaptive":
             params["aspectRatio"] = req.geometry.aspect_ratio
@@ -495,8 +506,9 @@ def _operation_error(err, op_name: str, provider: str) -> MediaError:
 # --------------------------------------------------------------------------
 
 
-def _extract_inline_images(data: dict) -> list[str]:
-    out: list[str] = []
+def _extract_inline_images(data: dict) -> list[tuple[str, str]]:
+    """Return ``(base64, mimeType)`` for each output image, in order."""
+    out: list[tuple[str, str]] = []
     for cand in data.get("candidates") or []:
         for part in ((cand.get("content") or {}).get("parts") or []):
             # Thinking models emit interim "thought" images; they are not the final
@@ -505,7 +517,7 @@ def _extract_inline_images(data: dict) -> list[str]:
                 continue
             inline = part.get("inlineData") or part.get("inline_data")
             if inline and inline.get("data"):
-                out.append(inline["data"])
+                out.append((inline["data"], inline.get("mimeType") or inline.get("mime_type") or ""))
     return out
 
 
@@ -535,7 +547,8 @@ def _veo_video_uri(res: dict) -> str | None:
     return None
 
 
-def _write_b64(b64: str, out: Path, kind: str, *, role=None) -> Artifact:
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(base64.b64decode(b64))
-    return Artifact.from_path(out, kind, mime="image/png", role=role)
+def _write_b64(b64: str, out: Path, kind: str, *, source_mime: str = "", role=None) -> Artifact:
+    # Gemini 3.x image models return JPEG by default; honor the caller's output
+    # extension (transcoding if needed) so the file and its reported mime match.
+    mime = pillow.save_image_bytes(base64.b64decode(b64), out, source_mime=source_mime)
+    return Artifact.from_path(out, kind, mime=mime, role=role)

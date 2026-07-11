@@ -186,18 +186,28 @@ def test_veo_reference_images_and_seed(fake_provider, tmp_path):
     assert body["parameters"]["seed"] == 7
 
 
-def test_veo_extension_maps_reference_video_to_video_param(fake_provider, tmp_path):
-    clip = tmp_path / "src.mp4"
-    clip.write_bytes(b"FAKE-MP4")
+def test_veo_extension_uses_video_uri(fake_provider, tmp_path):
+    # extension continues a prior Veo clip referenced by URI (the API rejects inline video)
+    uri = "https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media"
     prov, fake = fake_provider(GeminiProvider, [
         {"name": "op"},
         {"name": "op", "done": True,
          "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/E:download"}}]}}}])
     prov.poll_interval = 0
     prov.generate_video(VideoRequest(prompt="continue", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
-                                     reference_videos=[MediaRef(str(clip), "reference_video")], duration=8))
-    instance = fake.calls[0]["body"]["instances"][0]
-    assert instance["video"]["mimeType"] == "video/mp4"
+                                     reference_videos=[MediaRef(uri, "reference_video")], duration=8))
+    assert fake.calls[0]["body"]["instances"][0]["video"] == {"uri": uri, "mimeType": "video/mp4"}
+
+
+def test_veo_extension_local_file_is_rejected(fake_provider, tmp_path):
+    clip = tmp_path / "src.mp4"
+    clip.write_bytes(b"FAKE-MP4")
+    prov, _ = fake_provider(GeminiProvider, [{"name": "op"}])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_video(VideoRequest(prompt="continue", output=tmp_path / "v.mp4",
+                                         model="veo-3.1-generate-preview",
+                                         reference_videos=[MediaRef(str(clip), "reference_video")], duration=8))
+    assert ei.value.category == ErrorCategory.VALIDATION and "uri" in ei.value.message.lower()
 
 
 # ---- capabilities: current Nano Banana + Veo 3.1 lineup ------------------
