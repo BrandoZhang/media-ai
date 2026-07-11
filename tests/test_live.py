@@ -68,6 +68,19 @@ def test_live_gemini_image(tmp_path):
     _smoke_image("gemini", tmp_path)
 
 
+@pytest.mark.skipif(not (_LIVE and _any("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+                    reason="set MEDIA_LIVE_TESTS=1 and GEMINI_API_KEY/GOOGLE_API_KEY")
+def test_live_gemini_speech(tmp_path):
+    out = tmp_path / "gemini.wav"
+    proc = _cli("speech", "generate", "--provider", "gemini",
+                "--text", "Say cheerfully: Have a wonderful day!", "--voice", "Kore",
+                "--output", str(out))
+    assert proc.returncode == 0, f"gemini live speech failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
+    res = _last_json(proc)
+    assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
+    assert res["provider"] == "gemini" and res["modality"] == "audio"
+
+
 @pytest.mark.skipif(not (_LIVE and _has("ARK_API_KEY", "ARK_IMAGE_MODEL")),
                     reason="set MEDIA_LIVE_TESTS=1, ARK_API_KEY and ARK_IMAGE_MODEL (account-specific)")
 def test_live_volc_image(tmp_path):

@@ -162,10 +162,13 @@ def test_job_handle_has_poll_hint():
 def test_record_and_summarize(_ledger):
     usage.record_usage({"operation": "image.generate", "provider": "mock", "generated_images": 2, "total_tokens": 100})
     usage.record_usage({"operation": "video.generate", "provider": "mock", "seconds": 3, "total_tokens": 50})
+    usage.record_usage({"operation": "speech.generate", "provider": "gemini", "characters": 42, "total_tokens": 20})
     totals = usage.summarize_usage()
-    assert totals["calls"] == 2 and totals["total_tokens"] == 150
+    assert totals["calls"] == 3 and totals["total_tokens"] == 170
     assert totals["images_generated"] == 2 and totals["video_seconds"] == 3
-    assert totals["by_provider"] == {"mock": 150}
+    assert totals["speech_characters"] == 42
+    assert totals["by_provider"] == {"mock": 150, "gemini": 20}
+    assert totals["by_tool"]["speech.generate"] == 20
 
 
 def test_summarize_tolerates_legacy_backend_key(tmp_path, monkeypatch):
