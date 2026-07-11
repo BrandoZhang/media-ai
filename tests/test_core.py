@@ -178,3 +178,9 @@ def test_summarize_tolerates_legacy_backend_key(tmp_path, monkeypatch):
 def test_record_usage_never_raises(monkeypatch):
     monkeypatch.setenv("MEDIA_USAGE_LOG", "/proc/definitely/not/writable/u.jsonl")
     usage.record_usage({"total_tokens": 1})  # must not raise
+
+
+def test_parse_options_coerces_bool_int_float():
+    from media_ai.cli.common import parse_options
+    o = parse_options(["a=true", "b=3", "c=7.5", "d=hello", "e=off", "f=-2"])
+    assert o == {"a": True, "b": 3, "c": 7.5, "d": "hello", "e": False, "f": -2}

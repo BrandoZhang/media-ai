@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
-from media_ai.core.errors import ErrorCategory
-from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef, Operation
+from media_ai.core.capabilities import validate_request
+from media_ai.core.errors import ErrorCategory, MediaError
+from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, Modality, Operation
 from media_ai.providers.openai import OpenAIProvider
 
 
@@ -72,3 +74,28 @@ def test_sora_video_submit_returns_job(fake_provider, tmp_path):
     body = fake.calls[0]["body"]
     assert fake.calls[0]["path"] == "/videos" and body["seconds"] == "4" and body["size"] == "1280x720"
     assert handle.id == "vid_123"
+
+
+def test_aspect_ratio_not_rejected_preflight():
+    # `_size` maps any ratio to a valid pixel size, so validation must not block it
+    prov = OpenAIProvider()
+    for model in ("gpt-image-2", "dall-e-3"):
+        caps = prov.capabilities(model, Modality.IMAGE)
+        req = ImageRequest(prompt="x", output=Path("o.png"), model=model, geometry=GeometrySpec(aspect_ratio="16:9"))
+        validate_request(req, caps)  # must not raise
+
+
+def test_dalle_rejects_out_of_enum_pixel_size():
+    prov = OpenAIProvider()
+    caps = prov.capabilities("dall-e-3", Modality.IMAGE)
+    with pytest.raises(MediaError) as ei:
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), model="dall-e-3",
+                                      geometry=GeometrySpec(width=500, height=500)), caps)
+    assert ei.value.category == ErrorCategory.UNSUPPORTED
+
+
+def test_sora_get_job_failed_raises(fake_provider):
+    prov, _ = fake_provider(OpenAIProvider, [{"id": "v", "status": "failed"}])
+    with pytest.raises(MediaError) as ei:
+        prov.get_job(JobRef(provider="openai", id="v"))
+    assert ei.value.category == ErrorCategory.PROVIDER

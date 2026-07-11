@@ -139,6 +139,8 @@ def _check_geometry(geo: GeometrySpec | None, caps: ImageCaps | VideoCaps, issue
             issues.add("size", f"width & height must be multiples of {caps.pixel_multiple}")
         if geo.mode == "pixels" and caps.pixel_max and (geo.width > caps.pixel_max[0] or geo.height > caps.pixel_max[1]):  # type: ignore[operator]
             issues.add("size", f"exceeds max {caps.pixel_max[0]}x{caps.pixel_max[1]}")
+        if geo.mode == "pixels" and caps.pixel_sizes and f"{geo.width}x{geo.height}" not in caps.pixel_sizes:
+            issues.add("size", f"unsupported size {geo.width}x{geo.height}; allowed: {', '.join(caps.pixel_sizes)}")
     else:  # VideoCaps
         if geo.aspect_ratio and geo.aspect_ratio != "adaptive" and caps.aspect_ratios and geo.aspect_ratio not in caps.aspect_ratios:
             issues.add("aspect-ratio", f"unsupported ratio {geo.aspect_ratio!r}; allowed: {', '.join(caps.aspect_ratios)}")

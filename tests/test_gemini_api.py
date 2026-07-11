@@ -114,3 +114,10 @@ def test_veo_cancel_is_unsupported():
     with pytest.raises(MediaError) as ei:
         GeminiProvider().cancel_job(JobRef(provider="gemini", id="op"))
     assert ei.value.category == ErrorCategory.UNSUPPORTED
+
+
+def test_veo_get_job_failed_operation_raises(fake_provider):
+    prov, _ = fake_provider(GeminiProvider, [{"name": "op", "done": True, "error": {"code": 13, "message": "boom"}}])
+    with pytest.raises(MediaError) as ei:
+        prov.get_job(JobRef(provider="gemini", id="op"))
+    assert ei.value.category == ErrorCategory.PROVIDER

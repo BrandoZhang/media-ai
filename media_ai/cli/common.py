@@ -88,6 +88,8 @@ def _coerce(v: str):
         return False
     if v.lstrip("-").isdigit():
         return int(v)
+    if "." in v and v.replace(".", "", 1).lstrip("-").isdigit():
+        return float(v)  # e.g. guidance_scale=7.5
     return v
 
 

@@ -125,3 +125,12 @@ def test_legacy_shims_still_work(env, tmp_path):
     assert proc.returncode == 0, proc.stderr
     res = json.loads(proc.stdout.strip().splitlines()[-1])
     assert res["ok"] and out.is_file()
+
+
+def test_legacy_video_task_shim_runs(env):
+    # regression: the video_task shim's Namespace lacks provider_profile, which
+    # job._do reads — must not crash.
+    proc = subprocess.run(["video_task", "--op", "cancel", "--id", "abc"],
+                          capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip().splitlines()[-1])["status"] == "cancelled"

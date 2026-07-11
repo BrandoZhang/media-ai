@@ -87,7 +87,9 @@ class OpenAIProvider(HttpProvider):
                 provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
                 image=ImageCaps(
                     operations=frozenset({Operation.IMAGE_GENERATE} if is3 else {Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                    geometry_mode=GeometryMode.PIXELS, pixel_sizes=(_DALLE3_SIZES if is3 else _DALLE2_SIZES),
+                    # BOTH: a pixel --size is validated against the fixed enum below;
+                    # an --aspect-ratio is mapped to one of those sizes by `_size`.
+                    geometry_mode=GeometryMode.BOTH, pixel_sizes=(_DALLE3_SIZES if is3 else _DALLE2_SIZES),
                     max_count=1 if is3 else 10, output_formats=("png",),
                     supports_quality=is3, supports_mask=not is3, max_references=0 if is3 else 1,
                     options=("style",) if is3 else (),
@@ -101,7 +103,9 @@ class OpenAIProvider(HttpProvider):
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
                 geometry_mode=GeometryMode.BOTH,
-                aspect_ratios=("1:1", "3:2", "2:3"),
+                # `_size` maps any aspect ratio (landscape/portrait/square), so don't
+                # pre-reject ratios; the pixel size it produces is what's validated.
+                aspect_ratios=(),
                 named_sizes=(),
                 pixel_sizes=() if arbitrary else _FIXED_GPT_SIZES,
                 pixel_multiple=16 if arbitrary else None,
@@ -244,6 +248,9 @@ class OpenAIProvider(HttpProvider):
         client, headers = self._prepare()
         res = client.request_json("GET", f"/videos/{ref.id}", headers=headers)
         status = str(res.get("status", "")).lower()
+        if status in ("failed", "cancelled", "canceled"):
+            # terminal failure -> categorized error (consistent with volc/gemini)
+            raise MediaError(f"Sora video {ref.id} {status}", category=ErrorCategory.PROVIDER, provider=self.name)
         result = None
         if output is not None and status == "completed":
             result = self._finalize_video(client, headers, ref.id, Path(output), res.get("model") or self.video_model, res)

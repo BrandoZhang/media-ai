@@ -89,7 +89,7 @@ def resolve_image_pixels(geo: GeometrySpec | None, default: tuple[int, int]) -> 
         return default
     if geo.mode == "pixels":
         return geo.width, geo.height  # type: ignore[return-value]
-    tier_px = IMAGE_TIER_PX.get((geo.resolution or "").upper().replace("K", "K"), 1024)
+    tier_px = IMAGE_TIER_PX.get((geo.resolution or "").upper(), 1024)
     ratio = normalize_ratio(geo.aspect_ratio) or "1:1"
     if ratio == "adaptive":
         ratio = "1:1"

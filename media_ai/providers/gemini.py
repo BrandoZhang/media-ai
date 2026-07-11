@@ -241,8 +241,12 @@ class GeminiProvider(HttpProvider):
         client, headers = self._prepare()
         res = client.request_json("GET", f"/{ref.id}", headers=headers)
         done = bool(res.get("done"))
+        if done and res.get("error"):
+            # a done-with-error operation is a failure, not a success
+            raise MediaError(f"Veo operation {ref.id} failed: {str(res['error'])[:200]}",
+                             category=ErrorCategory.PROVIDER, provider=self.name)
         result = None
-        if done and output is not None and not res.get("error"):
+        if done and output is not None:
             result = self._finalize_video(client, headers, ref.id, Path(output), ref.model or self.video_model, res)
         return JobStatus(provider=self.name, model=ref.model, id=ref.id,
                          status="succeeded" if done else "running", op="query", result=result)

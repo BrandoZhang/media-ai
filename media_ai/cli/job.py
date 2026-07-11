@@ -28,7 +28,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _do(args):
-    provider = registry.get_provider(common.provider_name(args), profile=args.provider_profile)
+    provider = registry.get_provider(common.provider_name(args), profile=getattr(args, "provider_profile", None))
     ref = JobRef(provider=provider.name, id=args.id, model=args.model)
     if args.op == "cancel":
         return provider.cancel_job(ref)
