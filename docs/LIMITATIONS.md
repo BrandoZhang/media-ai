@@ -50,10 +50,16 @@ before relying on them in production; the adapters are written to fail safely
   ~2 days); the API rejects inline video bytes ("Video URI not found"). A local path is
   refused with a clear `validation` error. Google only extends Veo-generated clips
   (≤141s, 720p, `durationSeconds=8`); a non-Veo source is rejected by the API.
-- **Inline request size limit** (~20 MB) *is* now enforced client-side: local media
-  over the cap fails with a clear `validation` error (exit 3) instead of an opaque API
-  rejection. The **Files API** upload path for larger inputs is not yet implemented,
-  so very large clips/images can't be sent inline.
+- **Large local images auto-upload (Files API).** For `generateContent` image
+  references, small inputs are inlined and anything past the inline budget
+  (`GEMINI_INLINE_MAX_BYTES`, default 12 MB summed) is uploaded via the **Files API**
+  and referenced by `fileData.fileUri` — so references above the ~20 MB inline cap
+  just work (verified live with a 23 MB PNG). Only the direct API-key path supports
+  upload (the resumable protocol can't be brokered).
+- **Veo image inputs stay inline-only.** Veo `predictLongRunning` rejects file URIs
+  for `image`/`lastFrame`/`referenceImages` (`` `uri`/`fileData` isn't supported ``),
+  so those are inlined and an input over ~20 MB fails with a clear `validation` error.
+  (Veo *extension* is the exception — it takes a video URI; see above.)
 - **Vertex AI** (OAuth/service-account, different host) is a separate auth path and
   is out of scope for this build (Developer API-key path only).
 

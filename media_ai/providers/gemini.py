@@ -32,6 +32,7 @@ from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from ..core.usage import record_usage
 from ..media import pillow
+from . import _gemini_files
 from ._base import HttpProvider
 
 # The 10 aspect ratios every Nano Banana model shares. Gemini 3.1 Flash Image adds
@@ -81,6 +82,11 @@ class GeminiProvider(HttpProvider):
         self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
         self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
         self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
+        # generateContent references up to this many raw bytes (summed) are inlined as
+        # base64; anything beyond is uploaded via the Files API and referenced by URI,
+        # keeping the request under the ~20 MB inline cap. Kept well below 20 MB to
+        # leave room for base64 inflation (~4/3) and the JSON envelope.
+        self.inline_max_bytes = int(os.getenv("GEMINI_INLINE_MAX_BYTES") or 12 * 1024 * 1024)
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
@@ -177,9 +183,17 @@ class GeminiProvider(HttpProvider):
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:
         client, headers = self._prepare()
         parts: list[dict] = [{"text": req.prompt}]
+        uploaded = 0
+        inline_used = 0
         for r in req.references:
-            b64, mime = _inline_media(r)
-            parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+            data, mime = read_bytes(r)  # local-only; rejects remote refs
+            if inline_used + len(data) <= self.inline_max_bytes:
+                parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}})
+                inline_used += len(data)
+            else:  # too large to inline safely — upload and reference by URI
+                uri = _gemini_files.upload_bytes(self.base_url, headers, data, mime, display_name=_ref_name(r))
+                parts.append({"fileData": {"mimeType": mime, "fileUri": uri}})
+                uploaded += 1
         gen_cfg: dict = {"responseModalities": ["TEXT", "IMAGE"]}
         if req.count > 1:
             gen_cfg["candidateCount"] = req.count
@@ -210,8 +224,11 @@ class GeminiProvider(HttpProvider):
         record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
                       "model": model, "kind": "image", "generated_images": len(images),
                       "output_tokens": usage.get("candidatesTokenCount", 0), "total_tokens": usage.get("totalTokenCount", 0)})
+        meta = {"prompt": req.prompt}
+        if uploaded:
+            meta["uploaded_refs"] = uploaded  # references sent via the Files API
         return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
-                                artifacts=artifacts, usage=usage, meta={"prompt": req.prompt})
+                                artifacts=artifacts, usage=usage, meta=meta)
 
     # ---- video (Veo long-running op) -------------------------------------
     def generate_video(self, req: VideoRequest):
@@ -347,6 +364,13 @@ class GeminiProvider(HttpProvider):
 # Files-API upload path for larger media is not wired up, so we reject oversized
 # inline media with an actionable error rather than let the API fail opaquely.
 _INLINE_LIMIT = 20 * 1024 * 1024
+
+
+def _ref_name(ref: MediaRef) -> str:
+    try:
+        return ref.path().name or "input"
+    except Exception:  # noqa: BLE001
+        return "input"
 
 
 def _inline_media(ref: MediaRef) -> tuple[str, str]:

@@ -150,17 +150,52 @@ def test_imagen_model_gives_clear_removal_error(fake_provider, tmp_path):
         prov.capabilities("imagen-4.0-generate-001")
 
 
-def test_native_oversized_inline_media_is_rejected(fake_provider, tmp_path, monkeypatch):
+def test_native_large_reference_uploads_via_files_api(fake_provider, tmp_path, monkeypatch):
+    import media_ai.providers.gemini as gem
+    seen = {}
+
+    def fake_upload(base_url, headers, data, mime, *, display_name="input", **kw):
+        seen.update(base_url=base_url, mime=mime, size=len(data), name=display_name)
+        return "https://generativelanguage.googleapis.com/v1beta/files/UP:download"
+
+    monkeypatch.setattr(gem._gemini_files, "upload_bytes", fake_upload)
+    small = tmp_path / "small.png"
+    small.write_bytes(PNG_1x1_BYTES)
+    big = tmp_path / "big.png"
+    big.write_bytes(PNG_1x1_BYTES * 4000)  # ~large
+    prov, fake = fake_provider(GeminiProvider, [_one_image()])
+    prov.inline_max_bytes = 500  # force the big ref to upload, keep the small one inline
+    res = prov.generate_image(ImageRequest(prompt="compose", output=tmp_path / "o.png",
+                                           model="gemini-3.1-flash-image",
+                                           references=[MediaRef(str(small), "reference_image"),
+                                                       MediaRef(str(big), "reference_image")]))
+    parts = fake.calls[0]["body"]["contents"][0]["parts"]
+    assert any("inlineData" in p for p in parts)  # small stayed inline
+    fd = [p for p in parts if "fileData" in p]
+    assert fd and fd[0]["fileData"] == {"mimeType": "image/png",
+                                        "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/UP:download"}
+    assert res.meta.get("uploaded_refs") == 1 and seen["size"] == big.stat().st_size
+
+
+def test_veo_oversized_inline_media_is_rejected(fake_provider, tmp_path, monkeypatch):
+    # Veo image inputs are inline-only (the API rejects file URIs), so oversized
+    # media still fails fast with a clear error rather than silently truncating.
     import media_ai.providers.gemini as gem
     monkeypatch.setattr(gem, "_INLINE_LIMIT", 8)  # bytes
     big = tmp_path / "big.png"
     big.write_bytes(b"x" * 64)
-    prov, _ = fake_provider(GeminiProvider, [_one_image()])
+    prov, _ = fake_provider(GeminiProvider, [{"name": "op"}])
     with pytest.raises(MediaError) as ei:
-        prov.generate_image(ImageRequest(prompt="edit", output=tmp_path / "o.png",
-                                         model="gemini-3.1-flash-image",
-                                         references=[MediaRef(str(big), "reference_image")]))
+        prov.generate_video(VideoRequest(prompt="move", output=tmp_path / "v.mp4",
+                                         model="veo-3.1-generate-preview",
+                                         first_frame=MediaRef(str(big), "first_frame"), duration=8))
     assert ei.value.category == ErrorCategory.VALIDATION and "inline" in ei.value.message.lower()
+
+
+def test_gemini_files_endpoint_derivation():
+    from media_ai.providers._gemini_files import _files_endpoint
+    assert _files_endpoint("https://generativelanguage.googleapis.com/v1beta") == \
+        "https://generativelanguage.googleapis.com/upload/v1beta/files"
 
 
 # ---- new video features (reference images / seed / extension) ------------

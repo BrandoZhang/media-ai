@@ -85,7 +85,8 @@ it (reference images, extension).
 | Veo last frame (`--last-frame`) | ✅ | inlined as base64 |
 | Veo reference images (`--reference-image`) | ✅ | inlined as base64 |
 | **Veo extension (`--reference-video`)** | ❌ **by API design** | needs a **URI** to a prior Veo clip; inline video is refused. A local path now returns a clear `validation` error. |
-| Any input > ~20 MB | ❌ | inline-request cap; refused with a clear `validation` error (Files-API upload not implemented). |
+| Large image ref (> inline cap) for `generateContent` | ✅ | auto-uploaded via the **Files API** and referenced by `fileData.fileUri` (verified live with a 23 MB PNG). |
+| Large image input (> ~20 MB) for Veo | ❌ | Veo rejects file URIs for images (`` `uri`/`fileData` isn't supported ``); inline-only, so a clear `validation` error. |
 
 ## Wire-format findings (raw probes)
 
@@ -101,6 +102,11 @@ it (reference images, extension).
 - Errors use the standard `{"error": {"code", "message", "status"}}` envelope; the
   adapter's `_error` maps `status` strings correctly (verified with a live
   `INVALID_ARGUMENT`).
+- **Files API** resumable upload works (start → `X-Goog-Upload-URL` → upload+finalize
+  → file resource `state: ACTIVE`). `generateContent` accepts the result as
+  `{"fileData": {"mimeType", "fileUri"}}`. Veo `predictLongRunning` does **not** accept
+  `uri` or `fileData` for image inputs — both return `400 "isn't supported by this
+  model"`.
 
 ## Bugs found and fixed
 
@@ -126,10 +132,13 @@ Both fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
 - **4K / 1080p video, `personGeneration`, `--seed` effect** — request shapes are
   built and validated, but not exercised for output quality here (720p only, to
   conserve credit).
-- **Files API upload** for inputs above the ~20 MB inline cap — not implemented; such
-  inputs fail fast with a clear error rather than being uploaded.
+- **Files API upload** — implemented and verified for `generateContent` image
+  references (large local inputs auto-upload). Not applicable to Veo image inputs
+  (API rejects file URIs). Video-to-image (a large local *video* as input to a 3.1
+  Flash image request) is not wired up.
 - **Batch API** image generation — not covered.
-- **Broker/managed-credential path** — the live run used a direct API key.
+- **Broker/managed-credential path** — the live run used a direct API key; Files-API
+  upload is only supported on the direct-key path.
 
 ## Reproduce
 

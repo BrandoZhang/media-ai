@@ -83,8 +83,11 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   `--aspect-ratio` (+ `--resolution 512|1K|2K|4K`, per-model). `--count` =
   candidateCount. Extras via `--option`: `grounding=true` (Google Search, Flash +
   Pro) and `thinking_level=high` (3.1 Flash). Sizes/ratios/refs differ per model —
-  see `capabilities`. (`imagen-*` ids return a clear `unsupported` error — use a
-  Nano Banana model.)
+  see `capabilities`. Large local references (past `GEMINI_INLINE_MAX_BYTES`, default
+  12 MB) auto-upload via the **Files API** and are referenced by URI, so inputs above
+  the ~20 MB inline cap work. Output is written in the format your `--output`
+  extension asks for (models return JPEG by default). (`imagen-*` ids return a clear
+  `unsupported` error — use a Nano Banana model.)
 - **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`,
   `veo-3.1-lite-generate-preview` via `:predictLongRunning` → poll operation →
   **download the file URI with the API key**. First-frame (all) + last-frame,
@@ -99,7 +102,7 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
 - A 200-OK response with **no image** (Gemini's silent safety drop) is surfaced as
   a `safety` error (exit 8), not an empty file.
 - Extra env: `GEMINI_BASE_URL`, `GEMINI_IMAGE_MODEL`, `GEMINI_VIDEO_MODEL`,
-  `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`.
+  `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
 - Every image/video path (incl. local-file inputs) was exercised against the live API
   — see [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
 
