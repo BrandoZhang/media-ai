@@ -88,6 +88,22 @@ def test_delete_retried_on_urlerror(client, monkeypatch):
     assert count["n"] == 2
 
 
+def test_get_retried_on_408(client, monkeypatch):
+    # 408 REQUEST_TIMEOUT is transient (per the Gemini troubleshooting guide) and
+    # safe to retry on an idempotent GET.
+    count = _install(monkeypatch, [_http_error(408), b'{"status": "succeeded"}'])
+    assert client.request_json("GET", "/tasks/abc")["status"] == "succeeded"
+    assert count["n"] == 2
+
+
+def test_post_not_retried_on_408(client, monkeypatch):
+    # ...but a non-idempotent POST must not be retried (could double-submit).
+    count = _install(monkeypatch, [_http_error(408)])
+    with pytest.raises(MediaError):
+        client.request_json("POST", "/tasks", body={"x": 1})
+    assert count["n"] == 1
+
+
 def test_retry_classifier_vetoes_retry(monkeypatch):
     # a classifier that returns False turns a would-be 429 retry into an immediate fail
     count = _install(monkeypatch, [_http_error(429), b'{"ok": true}'])

@@ -131,6 +131,8 @@ def _register_builtins() -> None:
     register_provider("mock", _mock, model_hints=("mock",))
     register_provider("volc", _volc, model_hints=("doubao", "seedream", "seedance"))
     register_provider("openai", _openai, model_hints=("gpt-image", "dall-e", "sora"))
+    # `imagen-` still routes here so a request for a (removed) Imagen model gets a
+    # clear "use Nano Banana" error instead of silently falling back to mock.
     register_provider("gemini", _gemini, model_hints=("gemini-", "imagen-", "veo-"))
 
 
