@@ -2,10 +2,10 @@
 name: media-ai-video
 description: >-
   Generate video from a text prompt, a first/last frame image, or multimodal
-  references (images/videos/audio) via the media-ai CLI, across Volcengine Seedance,
-  Google Veo, and OpenAI Sora. Handles the async job flow (blocking or --wait false
-  + poll). Use when asked to create, generate, make, or animate a video / clip /
-  movie / animation from text or an image on the command line.
+  references (images/videos/audio) via the media-ai CLI, across Volcengine Seedance
+  and Google Veo. Handles the async job flow (blocking or --wait false + poll). Use
+  when asked to create, generate, make, or animate a video / clip / movie /
+  animation from text or an image on the command line.
 version: 1.0.0
 metadata:
   requires:
@@ -51,9 +51,9 @@ Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
  "poll":"media-ai job query --provider gemini --id <op> --output clip.mp4"}
 ```
 
-> **Cancel support:** `volc` (Seedance) and `openai` (Sora) support `job cancel`;
-> **Gemini/Veo cannot be cancelled** (exit 3). With `--wait true`, `volc` also
-> cancels the *billed* task if the process is killed (SIGTERM/SIGINT/timeout).
+> **Cancel support:** `volc` (Seedance) supports `job cancel`; **Gemini/Veo cannot be
+> cancelled** (exit 3). With `--wait true`, `volc` also cancels the *billed* task if
+> the process is killed (SIGTERM/SIGINT/timeout). (OpenAI has no video model — Sora retired.)
 
 ## Core flags
 
@@ -67,7 +67,7 @@ Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
 | `--resolution {480p,720p,1080p,...}` + `--aspect-ratio R` | geometry (or `--size WxH`) |
 | `--seed N` | reproducibility (where supported) |
 | `--audio {true,false}` | request generated audio (where supported) |
-| `--watermark {true,false}` | watermark control (default false = no watermark, where supported) |
+| `--watermark {true,false}` | watermark control; omitted unless set — effective behavior is no watermark (where supported) |
 | `--negative-prompt TEXT` | what to avoid |
 | `--return-last-frame {true,false}` | also return the final frame as an artifact |
 | `--wait {true,false}` | block+poll (default) vs async submit |
@@ -86,13 +86,14 @@ media-ai video generate --provider gemini --model veo-3.1-generate-preview \
     --first-frame hero.png --prompt "she turns and smiles" \
     --resolution 1080p --duration 6 --audio true --wait false --output hero.mp4
 
-# references → video (Sora, experimental)
-media-ai video generate --provider openai --model sora-2 \
-    --prompt "montage in this style" --reference-image '["a.png","b.png"]' \
-    --resolution 720p --duration 8 --output montage.mp4
+# references → video (Seedance)
+media-ai video generate --provider volc \
+    --prompt "keep this character in a neon night market" \
+    --reference-image '["char1.png","char2.png"]' \
+    --resolution 720p --duration 5 --output market.mp4
 ```
 
 ## References
 
 - `references/generate.md` — full flag semantics + the three input modes with examples.
-- `references/providers.md` — video model matrix (Seedance / Veo tiers / Sora): durations, resolutions, audio, frames, references, cancel, options.
+- `references/providers.md` — video model matrix (Seedance / Veo tiers): durations, resolutions, audio, frames, references, cancel, options. (OpenAI has no video model — Sora retired.)

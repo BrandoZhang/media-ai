@@ -16,7 +16,7 @@ loaded on demand (progressive disclosure). Layout and conventions follow
 |---|---|---|
 | **[`media-ai-shared`](media-ai-shared/SKILL.md)** | **Read first.** Machine contract, exit codes, provider/model selection, credentials, discover-first rule | global flags, `capabilities` |
 | [`media-ai-image`](media-ai-image/SKILL.md) | Generate & edit images (Seedream / GPT-Image·DALL·E / Nano Banana) | `image generate`, `image edit` |
-| [`media-ai-video`](media-ai-video/SKILL.md) | Generate video from text / frames / references (Seedance / Veo / Sora) | `video generate` |
+| [`media-ai-video`](media-ai-video/SKILL.md) | Generate video from text / frames / references (Seedance / Veo) | `video generate` |
 | [`media-ai-job`](media-ai-job/SKILL.md) | Poll, finalize, or cancel async jobs | `job query`, `job cancel` |
 | [`media-ai-concat`](media-ai-concat/SKILL.md) | Join clips into one film (local ffmpeg) | `concat` |
 | [`media-ai-capabilities`](media-ai-capabilities/SKILL.md) | Discover what each provider/model supports | `capabilities` |

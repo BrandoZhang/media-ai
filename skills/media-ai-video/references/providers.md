@@ -36,19 +36,11 @@ Ark API, modality is taken from the command.
 200-OK with no video = a silent safety drop → **exit 8** (`safety`), not an empty file.
 Downloaded file URIs may expire — finalize promptly with `job query --output`.
 
-## OpenAI — Sora (async; **experimental**)
+## OpenAI — no video model
 
-| aspect | value |
-|---|---|
-| models | `sora-2`, `sora-2-pro` (`experimental: true`) |
-| ratios | `16:9, 9:16` |
-| resolutions | `720p, 1080p` |
-| durations | `4, 8, 12` |
-| **cancel** | ✓ |
-| options | `size`, `remix_video_id` |
-
-Flow: `POST /videos` → poll `GET /videos/{id}` → download content. Being experimental,
-prefer `--wait false` + explicit polling so you control timeouts.
+Sora was retired (OpenAI removed the Videos API), so `--provider openai` has **no
+video capability**. `sora-*` ids still route to openai but return a deterministic
+`unsupported` error (exit 3) — use `volc` or `gemini` for video.
 
 > Durations, resolutions, audio, and frame/reference support vary by tier — confirm
 > with `media-ai capabilities --model <m>` before submitting a long (billed) job.

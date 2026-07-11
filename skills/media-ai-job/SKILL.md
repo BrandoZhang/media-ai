@@ -61,16 +61,16 @@ the id is provider-scoped.
 - `failed` → inspect the error (a safety-blocked task surfaces as **exit 8**).
 
 > Poll politely (a few seconds between calls). Providers already enforce their own
-> poll timeouts (`ARK_POLL_TIMEOUT` 900s, `OPENAI_POLL_TIMEOUT` 900s,
-> `GEMINI_POLL_TIMEOUT` 1200s) when you use `--wait true` instead.
+> poll timeouts (`ARK_POLL_TIMEOUT` 900s, `GEMINI_POLL_TIMEOUT` 1200s) when you use
+> `--wait true` instead.
 
 ## Cancel support (differs by provider)
 
 | provider | `job cancel` |
 |---|---|
 | `volc` (Seedance) | ✓ (also auto-cancels a killed `--wait true` task) |
-| `openai` (Sora) | ✓ |
 | `gemini` (Veo) | ✗ — cannot cancel; `job cancel` returns **exit 3** (`unsupported`) |
+| `openai` | n/a — no video jobs (Sora retired); any `job` op returns **exit 3** |
 | `mock` | ✓ (simulated) |
 
 For Veo, if you must not pay for an unwanted job, avoid submitting it — there is no

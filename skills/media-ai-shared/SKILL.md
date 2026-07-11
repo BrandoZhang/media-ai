@@ -69,7 +69,7 @@ Every generation command accepts these global flags (from `add_global_args`):
 | `--log-level {debug,info,warning,error}` | stderr verbosity |
 
 Model-id → provider routing (bare `--model`): `doubao*`/`seedream*`/`seedance*` ⇒
-`volc`; `gpt-image*`/`dall-e*`/`sora*` ⇒ `openai`; `gemini-*`/`veo-*` ⇒ `gemini`.
+`volc`; `gpt-image*`/`dall-e*` ⇒ `openai`; `gemini-*`/`veo-*` ⇒ `gemini`.
 Provider/model selection detail and per-provider matrices → `references/providers.md`.
 
 ## Credentials — keys never touch argv
