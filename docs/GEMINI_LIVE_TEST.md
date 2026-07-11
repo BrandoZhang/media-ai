@@ -12,6 +12,10 @@ shapes and surface real bugs.
   **local files as input**.
 - **Outcome:** all paths exercised; **2 real bugs found and fixed** (image
   output mime/format; Veo extension input). Fixes were re-verified live.
+- **TTS follow-up (same key):** the `speech` paths (Gemini text-to-speech, added after
+  the image/video run) were live-tested separately — see
+  [Text-to-speech (TTS)](#text-to-speech-tts) below. Both single- and multi-speaker
+  succeeded on the first try; **no bugs** (the offline design matched the wire exactly).
 
 ## Method
 
@@ -149,6 +153,78 @@ it (reference images, extension).
 All fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
 `PROVIDERS.md`.
 
+## Text-to-speech (TTS)
+
+The `gemini` provider's `speech` paths (Gemini 2.5/3.1 TTS) were driven through
+`media-ai speech …` against the real API. Both paths worked on the first attempt;
+**no adapter changes were needed** — the offline `FakeClient` request/response shapes
+matched the live wire format exactly.
+
+| Path | Model | Voice(s) | Result |
+|---|---|---|---|
+| text → speech (single) | `gemini-2.5-flash-preview-tts` | `Kore` | ✅ 24 kHz mono WAV, ~2.25 s |
+| multi-speaker dialogue (cast + `--instruction`) | `gemini-2.5-flash-preview-tts` | `Kore` + `Puck` | ✅ 24 kHz mono WAV, ~3.25 s |
+
+**Request wire format** (single-speaker; `POST /models/{model}:generateContent`, auth
+via the `x-goog-api-key` header):
+
+```json
+{
+  "contents": [{"role": "user", "parts": [{"text": "Say cheerfully: Have a wonderful day!"}]}],
+  "generationConfig": {
+    "responseModalities": ["AUDIO"],
+    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}
+  }
+}
+```
+
+Multi-speaker replaces `speechConfig.voiceConfig` with
+`multiSpeakerVoiceConfig.speakerVoiceConfigs: [{ "speaker": "Joe", "voiceConfig":
+{"prebuiltVoiceConfig": {"voiceName": "Kore"}} }, …]` (≤ 2 speakers), and the prompt
+is the reconstructed script (`--instruction` prepended, then `"{speaker}: {text}"`
+per turn). `responseModalities` **must be `["AUDIO"]` only** — adding `"TEXT"` (as the
+image path does) makes TTS models reject the request.
+
+**Response wire format:** top-level `{candidates, modelVersion, responseId,
+usageMetadata}`; `candidates[0].content.parts[0].inlineData` carries
+`mimeType: "audio/L16;codec=pcm;rate=24000"` and base64 **headerless PCM**. The adapter
+wraps that PCM into a WAV (rate parsed from the mimeType, mono, 16-bit) — verified 24 kHz
+mono output for every call. `modelVersion` (`gemini-2.5-flash-preview-tts`) is reported
+as `result.model`; `responseId` → `meta.response_id`.
+
+**Local-file input: TTS is text-only.** The TTS request carries only `parts[].text` — no
+`inlineData`/`fileData`, and `SpeechRequest`/`DialogueRequest` expose no file field. Local
+files are an image/Veo feature only (see the local-file table above). Style, tone, accent,
+pace and inline `[tags]` are all expressed *in the prompt text* / `--instruction`.
+
+**Usage / cost.** TTS `usageMetadata` mirrors the image shape:
+`{promptTokenCount, candidatesTokenCount, totalTokenCount, promptTokensDetails,
+candidatesTokensDetails, serviceTier}`, with the per-modality split showing input as
+`TEXT` and output as `AUDIO` (e.g. the single call above: 9 TEXT prompt tokens →
+56 AUDIO tokens, 65 total). There is **no dollar/credit figure** anywhere in the
+response — cost surfaces only as token counts. The adapter records
+`total_tokens` **and** the request `characters`; `media-ai usage` now sums the latter as
+`speech_characters` (previously written to the ledger but dropped) alongside
+`total_tokens`, grouped by `by_tool` (`speech.generate` / `speech.dialogue`) and
+`by_provider` (`gemini`).
+
+**Reproduce:**
+
+```bash
+export GEMINI_API_KEY=…
+uv run media-ai speech generate --provider gemini \
+  --text "Say cheerfully: Have a wonderful day!" --voice Kore --output /tmp/g.wav
+uv run media-ai speech dialogue --provider gemini --model gemini-2.5-flash-preview-tts \
+  --speaker Joe=Kore --speaker Jane=Puck \
+  --instruction "TTS the following conversation between Joe and Jane:" \
+  --turn Joe "How's it going today Jane?" --turn Jane "Not too bad, how about you?" \
+  --output /tmp/gd.wav
+uv run media-ai usage --pretty            # speech_characters + total_tokens by tool/provider
+```
+
+The gated `test_live_gemini_speech` (in `tests/test_live.py`) covers the single-speaker
+path automatically under `MEDIA_LIVE_TESTS=1` + a Gemini key.
+
 ## Not covered / known gaps
 
 - **Cost/latency measurement** — not recorded (functional validation only).
@@ -162,6 +238,11 @@ All fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
 - **Batch API** image generation — not covered.
 - **Broker/managed-credential path** — the live run used a direct API key; Files-API
   upload is only supported on the direct-key path.
+- **TTS streaming** (`stream:true`, Gemini 3.1 only) — deferred; the CLI writes a
+  complete WAV, so the streaming path was not exercised.
+- **TTS safety/error path** — the 200-OK-but-no-audio → `safety` (exit 8) mapping is
+  covered offline (`test_tts_200_but_no_audio_is_safety`) but was not triggered live to
+  conserve credit.
 
 ## Reproduce
 
