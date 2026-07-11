@@ -141,6 +141,22 @@ def test_native_thinking_level_option(fake_provider, tmp_path):
     assert fake.calls[0]["body"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "high"}
 
 
+def test_native_captures_model_version_response_id_text_and_grounding(fake_provider, tmp_path):
+    resp = {"candidates": [{"content": {"parts": [
+                {"text": "Here is your image."},
+                {"inlineData": {"mimeType": "image/png", "data": PNG_1x1}},
+                {"thought": True, "text": "internal reasoning"}]},
+             "groundingMetadata": {"searchEntryPoint": {"renderedContent": "<div>suggestions</div>"}}}],
+            "modelVersion": "gemini-3.1-flash-image-001", "responseId": "RESP123"}
+    prov, _ = fake_provider(GeminiProvider, [resp])
+    res = prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png",
+                                           model="gemini-3.1-flash-image", options={"grounding": True}))
+    assert res.model == "gemini-3.1-flash-image-001"          # resolved modelVersion, not the requested id
+    assert res.meta["response_id"] == "RESP123"
+    assert res.meta["text"] == "Here is your image."           # the thought text is excluded
+    assert res.meta["grounding"]["searchEntryPoint"]["renderedContent"] == "<div>suggestions</div>"
+
+
 def test_imagen_model_gives_clear_removal_error(fake_provider, tmp_path):
     prov, _ = fake_provider(GeminiProvider, [])
     with pytest.raises(MediaError) as ei:

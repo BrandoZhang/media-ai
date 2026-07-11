@@ -112,6 +112,14 @@ it (reference images, extension).
   adapter records `candidatesTokenCount`/`totalTokenCount` (correct) and returns the
   full block in the result `usage`. Veo operations carry **no** usage/duration field at
   all (just `generatedSamples[].video.uri`) — see bug #3.
+- **Other image-response fields now surfaced.** The response also carries
+  `modelVersion` (the model that actually served the request — now reported as
+  `result.model` and in the usage record), `responseId` (→ `meta.response_id`, for
+  support tickets), interleaved `text` parts (→ `meta.text`; thought parts excluded),
+  and, on grounded requests, `candidates[].groundingMetadata` (→ `meta.grounding`,
+  which holds the `searchEntryPoint` search-suggestion HTML the grounding terms require
+  displaying). The output image part also carries a `thoughtSignature` used only for
+  multi-turn continuation (not supported here, so ignored).
 
 ## Bugs found and fixed
 

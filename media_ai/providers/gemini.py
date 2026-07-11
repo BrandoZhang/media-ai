@@ -221,13 +221,22 @@ class GeminiProvider(HttpProvider):
             artifacts.append(_write_b64(b64, out.with_name(f"{out.stem}_{i}{out.suffix}"), "image",
                                         source_mime=mime, role="group"))
         usage = data.get("usageMetadata") or {}
+        used_model = data.get("modelVersion") or model  # the model that actually served the request
         record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": model, "kind": "image", "generated_images": len(images),
+                      "model": used_model, "kind": "image", "generated_images": len(images),
                       "output_tokens": usage.get("candidatesTokenCount", 0), "total_tokens": usage.get("totalTokenCount", 0)})
-        meta = {"prompt": req.prompt}
+        meta: dict = {"prompt": req.prompt}
         if uploaded:
             meta["uploaded_refs"] = uploaded  # references sent via the Files API
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
+        if data.get("responseId"):
+            meta["response_id"] = data["responseId"]  # quote this in a Google support ticket
+        text = _extract_text(data)
+        if text:
+            meta["text"] = text  # the model's caption / grounded summary (TEXT+IMAGE output)
+        grounding = _grounding_metadata(data)
+        if grounding:
+            meta["grounding"] = grounding  # search suggestions (display per ToS) + citations
+        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=used_model,
                                 artifacts=artifacts, usage=usage, meta=meta)
 
     # ---- video (Veo long-running op) -------------------------------------
@@ -549,6 +558,27 @@ def _extract_inline_images(data: dict) -> list[tuple[str, str]]:
             if inline and inline.get("data"):
                 out.append((inline["data"], inline.get("mimeType") or inline.get("mime_type") or ""))
     return out
+
+
+def _extract_text(data: dict) -> str:
+    """Join the model's non-thought text parts (a caption, or a grounded summary)."""
+    chunks = []
+    for cand in data.get("candidates") or []:
+        for part in ((cand.get("content") or {}).get("parts") or []):
+            if not part.get("thought") and part.get("text"):
+                chunks.append(part["text"])
+    return "\n".join(chunks).strip()
+
+
+def _grounding_metadata(data: dict) -> dict | None:
+    """First candidate's ``groundingMetadata`` if the response was grounded. It carries
+    the search-suggestion HTML (``searchEntryPoint``) that the Google Search grounding
+    terms require callers to display, plus citation chunks — so surface it, don't drop it."""
+    for cand in data.get("candidates") or []:
+        gm = cand.get("groundingMetadata") or cand.get("grounding_metadata")
+        if gm:
+            return gm
+    return None
 
 
 def _no_image_error(data: dict, provider: str, model: str) -> MediaError:

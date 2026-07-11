@@ -45,6 +45,10 @@ before relying on them in production; the adapters are written to fail safely
   sends `generationConfig.thinkingConfig.thinkingLevel="high"` — both accepted by
   `generateContent`. Google *Image* Search grounding is Interactions-API-only (its
   `search_types` field isn't part of `generateContent`), so it is **not** exposed here.
+  A grounded response's `groundingMetadata` is returned under the result's
+  `meta.grounding`; the Google Search grounding terms require **displaying its
+  `searchEntryPoint` search suggestions** — the adapter surfaces it but can't enforce
+  that downstream.
 - **Veo extension needs a URI, not a local file.** `--reference-video` must be the
   **URI of a previously generated Veo clip** (e.g. the operation's `video.uri`, valid
   ~2 days); the API rejects inline video bytes ("Video URI not found"). A local path is
