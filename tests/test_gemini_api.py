@@ -1,4 +1,4 @@
-"""Network-free tests for the Gemini adapter (generateContent + Imagen + Veo)."""
+"""Network-free tests for the Gemini adapter (generateContent + Veo)."""
 
 from __future__ import annotations
 
@@ -52,26 +52,6 @@ def test_prompt_block_is_safety_error(fake_provider, tmp_path):
     prov, _ = fake_provider(GeminiProvider, [{"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}])
     with pytest.raises(MediaError) as ei:
         prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="gemini-2.5-flash-image"))
-    assert ei.value.category == ErrorCategory.SAFETY
-
-
-def test_imagen_predict_body_and_parse(fake_provider, tmp_path):
-    prov, fake = fake_provider(GeminiProvider, [{"predictions": [{"mimeType": "image/png", "bytesBase64Encoded": PNG_1x1}]}])
-    req = ImageRequest(prompt="mountain", output=tmp_path / "o.png", model="imagen-4.0-generate-001",
-                       geometry=GeometrySpec(aspect_ratio="16:9"), count=1, seed=42, negative_prompt="text")
-    res = prov.generate_image(req)
-    call = fake.calls[0]
-    assert call["path"] == "/models/imagen-4.0-generate-001:predict"
-    params = call["body"]["parameters"]
-    assert params["sampleCount"] == 1 and params["aspectRatio"] == "16:9"
-    assert params["seed"] == 42 and params["negativePrompt"] == "text"
-    assert Path(res.primary().path).is_file()
-
-
-def test_imagen_no_predictions_is_safety(fake_provider, tmp_path):
-    prov, _ = fake_provider(GeminiProvider, [{"predictions": []}])
-    with pytest.raises(MediaError) as ei:
-        prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="imagen-4.0-generate-001"))
     assert ei.value.category == ErrorCategory.SAFETY
 
 

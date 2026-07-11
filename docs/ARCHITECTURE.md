@@ -39,7 +39,7 @@ flowchart TB
         MOCK["mock (offline default)"]
         VOLC["volc (Ark)"]
         OAI["openai (GPT Image/DALL·E/Sora)"]
-        GEM["gemini (native/Imagen/Veo)"]
+        GEM["gemini (Nano Banana/Veo)"]
         EXT["custom plugins (entry point / register_provider)"]
     end
 

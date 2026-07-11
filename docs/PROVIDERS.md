@@ -70,7 +70,7 @@ export OPENAI_ORG=… OPENAI_PROJECT=…     # optional scoping headers
 - GPT Image may require org verification in the OpenAI dashboard.
 - Extra env: `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`, `OPENAI_VIDEO_MODEL`.
 
-## gemini — Gemini native image / Imagen / Veo
+## gemini — Gemini native image (Nano Banana) / Veo
 
 ```bash
 export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
@@ -84,9 +84,6 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   candidateCount. Extras via `--option`: `grounding=true` (Google Search, Flash +
   Pro), `image_search=true` (Google Image Search, 3.1 Flash), `thinking_level=high`
   (3.1 Flash). Sizes/ratios/refs differ per model — see `capabilities`.
-- **Imagen** (`imagen-4.0-generate/-ultra/-fast-001`) via `:predict` — dedicated
-  text→image; `--seed`, `--negative-prompt`, `--option person_generation=…`.
-  Deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model.
 - **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`,
   `veo-3.1-lite-generate-preview` via `:predictLongRunning` → poll operation →
   **download the file URI with the API key**. First-frame (all) + last-frame,
@@ -104,11 +101,11 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
 
 ## Capability matrix (summary)
 
-| | volc image | openai gpt-image-2 | gemini native | imagen-4 | volc/openai/gemini video |
-|---|---|---|---|---|---|
-| edit / references | ✓ | ✓ (+mask) | ✓ | ✗ | i2v/first-frame |
-| geometry | px or tier | px (arbitrary) | aspect-ratio | aspect-ratio | ratio+resolution |
-| batch | sequential | n≤10 | candidateCount | sampleCount≤4 | 1 |
-| seed | ✓ | ✗ | ✗ | ✓ | ✓ |
-| negative prompt | ✗ | ✗ | ✗ | ✓ | ✓ (veo) |
-| async | ✗ | ✗ | ✗ | ✗ | ✓ |
+| | volc image | openai gpt-image-2 | gemini native | volc/openai/gemini video |
+|---|---|---|---|---|
+| edit / references | ✓ | ✓ (+mask) | ✓ | i2v/first-frame |
+| geometry | px or tier | px (arbitrary) | aspect-ratio | ratio+resolution |
+| batch | sequential | n≤10 | candidateCount | 1 |
+| seed | ✓ | ✗ | ✗ | ✓ |
+| negative prompt | ✗ | ✗ | ✗ | ✓ (veo) |
+| async | ✗ | ✗ | ✗ | ✓ |

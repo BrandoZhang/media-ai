@@ -1,14 +1,12 @@
-"""Google Gemini provider — native image (``generateContent``), Imagen
-(``:predict``), and Veo video (``:predictLongRunning``).
+"""Google Gemini provider — native image (``generateContent``) and Veo video
+(``:predictLongRunning``).
 
-Three wire shapes behind one adapter:
+Two wire shapes behind one adapter:
   * **Nano Banana native image** (``gemini-3.1-flash-image`` / ``-flash-lite-image``
     / ``gemini-3-pro-image`` / legacy ``gemini-2.5-flash-image``): conversational,
     multimodal edit/compose with up to 14 reference images, optional Google Search
     grounding, and (3.1 Flash) ``thinking_level`` control. Base64 image out inline;
     synchronous.
-  * **Imagen** (``imagen-4.0-*``): dedicated text→image ``:predict``; base64 out.
-    Deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model.
   * **Veo** (``veo-3.1-*``): async long-running operation → poll → **download the
     file URI with the API key**. First/last frame, up to 3 reference images, and
     video extension on Veo 3.1.
@@ -39,16 +37,10 @@ from ._base import HttpProvider
 _STD_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
 _ULTRAWIDE_RATIOS = ("1:4", "4:1", "1:8", "8:1")
 _FLASH_RATIOS = _STD_RATIOS + _ULTRAWIDE_RATIOS
-_IMAGEN_RATIOS = ("1:1", "3:4", "4:3", "9:16", "16:9")
 
 
 def _family(model: str) -> str:
-    m = model.lower()
-    if m.startswith("veo"):
-        return "veo"
-    if m.startswith("imagen"):
-        return "imagen"
-    return "native"
+    return "veo" if model.lower().startswith("veo") else "native"
 
 
 def _native_tier(model: str) -> str:
@@ -89,21 +81,16 @@ class GeminiProvider(HttpProvider):
         # capabilities(), but are omitted from discovery in favour of the current
         # Nano Banana + Veo 3.1 lineup.
         return ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
-                "gemini-2.5-flash-image", "imagen-4.0-generate-001",
-                "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001",
-                "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview",
-                "veo-3.1-lite-generate-preview"]
+                "gemini-2.5-flash-image", "veo-3.1-generate-preview",
+                "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview"]
 
     def default_model(self, modality: Modality | None) -> str:
         return self.video_model if modality == Modality.VIDEO else self.image_model
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        fam = _family(model)
-        if fam == "veo":
+        if _family(model) == "veo":
             return self._veo_caps(model)
-        if fam == "imagen":
-            return self._imagen_caps(model)
         return self._native_caps(model)
 
     def _veo_caps(self, model: str) -> ModelCapabilities:
@@ -142,21 +129,6 @@ class GeminiProvider(HttpProvider):
                    "(Veo 3.x audio is native, Veo 2 is silent); jobs cannot be cancelled"),
         )
 
-    def _imagen_caps(self, model: str) -> ModelCapabilities:
-        ultra = "ultra" in model
-        return ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(
-                operations=frozenset({Operation.IMAGE_GENERATE}),
-                geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=_IMAGEN_RATIOS,
-                named_sizes=("1K", "2K"), max_count=1 if ultra else 4, output_formats=("png", "jpeg"),
-                supports_seed=True, supports_negative_prompt=True, max_references=0,
-                options=("person_generation", "guidance_scale", "language"),
-            ),
-            notes=("Imagen :predict; no image editing (use a gemini-*-image model); SynthID unconditional",
-                   "deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model"),
-        )
-
     def _native_caps(self, model: str) -> ModelCapabilities:
         tier = _native_tier(model)
         if tier == "lite":
@@ -187,10 +159,7 @@ class GeminiProvider(HttpProvider):
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        model = req.model or self.image_model
-        if _family(model) == "imagen":
-            return self._imagen(model, req)
-        return self._native(model, req)
+        return self._native(req.model or self.image_model, req)
 
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:
         client, headers = self._prepare()
@@ -229,36 +198,6 @@ class GeminiProvider(HttpProvider):
                       "output_tokens": usage.get("candidatesTokenCount", 0), "total_tokens": usage.get("totalTokenCount", 0)})
         return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
                                 artifacts=artifacts, usage=usage, meta={"prompt": req.prompt})
-
-    def _imagen(self, model: str, req: ImageRequest) -> GenerationResult:
-        client, headers = self._prepare()
-        params: dict = {"sampleCount": req.count}
-        if req.geometry and req.geometry.aspect_ratio:
-            params["aspectRatio"] = req.geometry.aspect_ratio
-        if req.geometry and req.geometry.resolution:
-            params["sampleImageSize"] = req.geometry.resolution
-        if req.negative_prompt:
-            params["negativePrompt"] = req.negative_prompt
-        if req.seed is not None and req.seed >= 0:
-            params["seed"] = req.seed
-        for k in ("person_generation", "guidance_scale", "language"):
-            if k in req.options:
-                params[{"person_generation": "personGeneration", "guidance_scale": "guidanceScale", "language": "language"}[k]] = req.options[k]
-        body = {"instances": [{"prompt": req.prompt}], "parameters": params}
-        data = client.request_json("POST", f"/models/{model}:predict", body=body, headers=headers)
-        preds = [p for p in (data.get("predictions") or []) if p.get("bytesBase64Encoded")]
-        if not preds:
-            raise MediaError(f"Imagen returned no images (filtered by safety?): {str(data)[:200]}",
-                             category=ErrorCategory.SAFETY, provider=self.name, model=model)
-        out = Path(req.output)
-        artifacts = [_write_b64(preds[0]["bytesBase64Encoded"], out, "image", mime=preds[0].get("mimeType"))]
-        for i, p in enumerate(preds[1:], start=2):
-            artifacts.append(_write_b64(p["bytesBase64Encoded"], out.with_name(f"{out.stem}_{i}{out.suffix}"), "image",
-                                        mime=p.get("mimeType"), role="group"))
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": model, "kind": "image", "generated_images": len(preds)})
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
-                                artifacts=artifacts, usage={}, meta={"prompt": req.prompt})
 
     # ---- video (Veo long-running op) -------------------------------------
     def generate_video(self, req: VideoRequest):
