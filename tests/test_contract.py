@@ -77,5 +77,7 @@ def test_registry_infers_provider_from_model_id():
     assert registry.provider_for_model("gpt-image-2") == "openai"
     assert registry.provider_for_model("veo-3.0-generate-001") == "gemini"
     assert registry.provider_for_model("gemini-3.1-flash-image") == "gemini"
+    # a removed Imagen id still routes to gemini (for a clear removal error, not mock)
+    assert registry.provider_for_model("imagen-4.0-generate-001") == "gemini"
     assert registry.provider_for_model("doubao-seedance-2-0-260128") == "volc"
     assert registry.provider_for_model("totally-unknown") is None

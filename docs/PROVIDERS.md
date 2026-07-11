@@ -82,8 +82,9 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   + compose from up to 14 reference images; base64 inline out; geometry by
   `--aspect-ratio` (+ `--resolution 512|1K|2K|4K`, per-model). `--count` =
   candidateCount. Extras via `--option`: `grounding=true` (Google Search, Flash +
-  Pro), `image_search=true` (Google Image Search, 3.1 Flash), `thinking_level=high`
-  (3.1 Flash). Sizes/ratios/refs differ per model — see `capabilities`.
+  Pro) and `thinking_level=high` (3.1 Flash). Sizes/ratios/refs differ per model —
+  see `capabilities`. (`imagen-*` ids return a clear `unsupported` error — use a
+  Nano Banana model.)
 - **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`,
   `veo-3.1-lite-generate-preview` via `:predictLongRunning` → poll operation →
   **download the file URI with the API key**. First-frame (all) + last-frame,

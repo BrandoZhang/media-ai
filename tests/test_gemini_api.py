@@ -103,7 +103,7 @@ def test_veo_get_job_failed_operation_raises(fake_provider):
     assert ei.value.category == ErrorCategory.PROVIDER
 
 
-# ---- new image features (grounding / image-search / thinking) ------------
+# ---- new image features (grounding / thinking / thought-filtering) --------
 
 
 def _one_image():
@@ -117,12 +117,21 @@ def test_native_grounding_adds_google_search_tool(fake_provider, tmp_path):
     assert fake.calls[0]["body"]["tools"] == [{"google_search": {}}]
 
 
-def test_native_image_search_adds_search_types(fake_provider, tmp_path):
+def test_native_no_tools_without_grounding(fake_provider, tmp_path):
     prov, fake = fake_provider(GeminiProvider, [_one_image()])
-    prov.generate_image(ImageRequest(prompt="a Timareta butterfly", output=tmp_path / "o.png",
-                                     model="gemini-3.1-flash-image", options={"image_search": True}))
-    tool = fake.calls[0]["body"]["tools"][0]["google_search"]
-    assert tool["search_types"] == ["web_search", "image_search"]
+    prov.generate_image(ImageRequest(prompt="a fox", output=tmp_path / "o.png", model="gemini-3.1-flash-image"))
+    assert "tools" not in fake.calls[0]["body"]
+
+
+def test_native_skips_thought_images(fake_provider, tmp_path):
+    # a thinking model may emit interim "thought" images; only the final one counts
+    resp = {"candidates": [{"content": {"parts": [
+        {"thought": True, "inlineData": {"mimeType": "image/png", "data": PNG_1x1}},
+        {"inlineData": {"mimeType": "image/png", "data": PNG_1x1}},
+    ]}}]}
+    prov, _ = fake_provider(GeminiProvider, [resp])
+    res = prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="gemini-3.1-flash-image"))
+    assert len(res.artifacts) == 1  # the thought image is not saved as an artifact
 
 
 def test_native_thinking_level_option(fake_provider, tmp_path):
@@ -130,6 +139,28 @@ def test_native_thinking_level_option(fake_provider, tmp_path):
     prov.generate_image(ImageRequest(prompt="a glass city", output=tmp_path / "o.png",
                                      model="gemini-3.1-flash-image", options={"thinking_level": "high"}))
     assert fake.calls[0]["body"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "high"}
+
+
+def test_imagen_model_gives_clear_removal_error(fake_provider, tmp_path):
+    prov, _ = fake_provider(GeminiProvider, [])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="imagen-4.0-generate-001"))
+    assert ei.value.category == ErrorCategory.UNSUPPORTED and "nano banana" in ei.value.message.lower()
+    with pytest.raises(MediaError):  # capabilities() is consistent with generate_image()
+        prov.capabilities("imagen-4.0-generate-001")
+
+
+def test_native_oversized_inline_media_is_rejected(fake_provider, tmp_path, monkeypatch):
+    import media_ai.providers.gemini as gem
+    monkeypatch.setattr(gem, "_INLINE_LIMIT", 8)  # bytes
+    big = tmp_path / "big.png"
+    big.write_bytes(b"x" * 64)
+    prov, _ = fake_provider(GeminiProvider, [_one_image()])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="edit", output=tmp_path / "o.png",
+                                         model="gemini-3.1-flash-image",
+                                         references=[MediaRef(str(big), "reference_image")]))
+    assert ei.value.category == ErrorCategory.VALIDATION and "inline" in ei.value.message.lower()
 
 
 # ---- new video features (reference images / seed / extension) ------------
@@ -185,6 +216,7 @@ def test_native_caps_per_tier():
     flash = prov.capabilities("gemini-3.1-flash-image").image
     assert "1:4" in flash.aspect_ratios and flash.named_sizes == ("512", "1K", "2K", "4K")
     assert flash.max_references == 14 and "grounding" in flash.options and "thinking_level" in flash.options
+    assert "image_search" not in flash.options  # unverified generateContent field was dropped
 
     lite = prov.capabilities("gemini-3.1-flash-lite-image").image
     assert lite.named_sizes == ("1K",) and "1:4" not in lite.aspect_ratios and lite.options == ()
@@ -240,6 +272,20 @@ def test_error_leaked_key_is_auth_with_hint():
     body = _err_body(403, "PERMISSION_DENIED", "Your API key was reported as leaked. Please use another API key.")
     err = GeminiProvider()._error(403, body)
     assert err.category == ErrorCategory.AUTH and "leaked" in err.message.lower()
+
+
+def test_error_invalid_argument_with_safety_word_stays_validation():
+    # a malformed request that merely mentions "safety" must not be miscast as a
+    # content-safety block — the authoritative INVALID_ARGUMENT status wins.
+    err = GeminiProvider()._error(400, _err_body(400, "INVALID_ARGUMENT", "Invalid value at 'safetySettings'"))
+    assert err.category == ErrorCategory.VALIDATION
+
+
+def test_retry_classifier_vetoes_daily_cap_but_allows_rpm():
+    prov = GeminiProvider()
+    assert prov.retry_classifier(429, '{"error":{"message":"Quota exceeded: requests per day"}}') is False
+    assert prov.retry_classifier(429, '{"error":{"message":"Quota exceeded per_minute"}}') is True
+    assert prov.retry_classifier(503, "overloaded") is True  # non-429 untouched
 
 
 def test_error_falls_back_to_http_status_for_unstructured_body():

@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
-from ..core.mediaref import to_base64
+from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from ..core.usage import record_usage
@@ -41,7 +41,12 @@ _FLASH_RATIOS = _STD_RATIOS + _ULTRAWIDE_RATIOS
 
 
 def _family(model: str) -> str:
-    return "veo" if model.lower().startswith("veo") else "native"
+    m = model.lower()
+    if m.startswith("veo"):
+        return "veo"
+    if m.startswith("imagen"):
+        return "imagen"  # dropped; routed here only to return a clear removal error
+    return "native"
 
 
 def _native_tier(model: str) -> str:
@@ -90,8 +95,11 @@ class GeminiProvider(HttpProvider):
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        if _family(model) == "veo":
+        fam = _family(model)
+        if fam == "veo":
             return self._veo_caps(model)
+        if fam == "imagen":
+            raise _imagen_removed(model)
         return self._native_caps(model)
 
     def _veo_caps(self, model: str) -> ModelCapabilities:
@@ -144,8 +152,8 @@ class GeminiProvider(HttpProvider):
             note = "Nano Banana (2.5, legacy): imageSize fixed at 1K, up to 3 refs; prefer gemini-3.1-flash-image"
         else:  # flash — Nano Banana 2
             ratios, sizes, max_refs = _FLASH_RATIOS, ("512", "1K", "2K", "4K"), 14
-            options = ("grounding", "image_search", "thinking_level")
-            note = ("Nano Banana 2: 512px/1K/2K/4K, Google Search + Image Search grounding, "
+            options = ("grounding", "thinking_level")
+            note = ("Nano Banana 2: 512px/1K/2K/4K, Google Search grounding, "
                     "thinking_level minimal|high, video-to-image")
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
@@ -160,13 +168,16 @@ class GeminiProvider(HttpProvider):
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        return self._native(req.model or self.image_model, req)
+        model = req.model or self.image_model
+        if _family(model) == "imagen":
+            raise _imagen_removed(model)
+        return self._native(model, req)
 
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:
         client, headers = self._prepare()
         parts: list[dict] = [{"text": req.prompt}]
         for r in req.references:
-            b64, mime = to_base64(r)
+            b64, mime = _inline_media(r)
             parts.append({"inlineData": {"mimeType": mime, "data": b64}})
         gen_cfg: dict = {"responseModalities": ["TEXT", "IMAGE"]}
         if req.count > 1:
@@ -289,6 +300,11 @@ class GeminiProvider(HttpProvider):
         (so ``FAILED_PRECONDITION``, ``RESOURCE_EXHAUSTED``, ``DEADLINE_EXCEEDED`` …
         classify precisely) and falls back to the HTTP status when it can't parse.
         """
+        # The HTTP status/canonical status is authoritative here: a Gemini content
+        # block surfaces on the 200-OK path (see `_no_image_error`), so an HTTP error
+        # is a transport/validation failure and a message that merely mentions
+        # "safety"/"blocked" (e.g. a malformed `safetySettings` field) stays as its
+        # status category rather than being miscast as a safety block.
         gstatus, message, _ = _parse_error(body)
         cat, hint = _categorize(gstatus, message, status)
         label = gstatus or f"HTTP {status}"
@@ -300,31 +316,63 @@ class GeminiProvider(HttpProvider):
             details["google_status"] = gstatus
         return MediaError(msg, category=cat, code=gstatus or None, provider=self.name, details=details)
 
+    def retry_classifier(self, status: int, body: str) -> bool:
+        """Veto a pointless 429 retry. Per-minute (RPM/TPM) limits clear on a short
+        backoff and stay retryable; a per-day or spend/billing cap will not reset for
+        hours, so don't burn the retry budget on it."""
+        if status != 429:
+            return True
+        low = body.lower()
+        return not any(k in low for k in ("per day", "per_day", "perday", "requests per day",
+                                          "daily limit", "free_tier", "free tier", "billing"))
+
 
 # --------------------------------------------------------------------------
 # request builders
 # --------------------------------------------------------------------------
 
 
+# The Gemini Developer API caps a single request's inline payload at ~20 MB. The
+# Files-API upload path for larger media is not wired up, so we reject oversized
+# inline media with an actionable error rather than let the API fail opaquely.
+_INLINE_LIMIT = 20 * 1024 * 1024
+
+
+def _inline_media(ref: MediaRef) -> tuple[str, str]:
+    """Read a local ref as ``(base64, mime)``, rejecting media over the inline cap."""
+    data, mime = read_bytes(ref)
+    if len(data) > _INLINE_LIMIT:
+        raise MediaError(
+            f"inline media {ref.raw!r} is ~{len(data) // (1024 * 1024)}MB, over Gemini's "
+            "~20MB inline-request limit — use a smaller file (Files API upload for large "
+            "media is not yet supported)",
+            category=ErrorCategory.VALIDATION, provider="gemini",
+        )
+    return base64.b64encode(data).decode("ascii"), mime
+
+
 def _veo_media(ref: MediaRef) -> dict:
     """Inline a local image/video ref for a Veo ``:predictLongRunning`` instance."""
-    b64, mime = to_base64(ref)
+    b64, mime = _inline_media(ref)
     return {"bytesBase64Encoded": b64, "mimeType": mime}
 
 
 def _grounding_tools(req: ImageRequest) -> list[dict]:
     """Build the Google Search tool for a grounded image request, if requested.
 
-    ``--option grounding=true`` enables web-search grounding; ``--option
-    image_search=true`` (3.1 Flash) additionally pulls Google Image Search results
-    in as visual context. Either flag turns the tool on.
+    ``--option grounding=true`` enables Google Search grounding (web + image search
+    is handled server-side). Supported on the Flash and Pro models.
     """
-    if not (req.options.get("grounding") or req.options.get("image_search")):
-        return []
-    search: dict = {}
-    if req.options.get("image_search"):
-        search["search_types"] = ["web_search", "image_search"]
-    return [{"google_search": search}]
+    return [{"google_search": {}}] if req.options.get("grounding") else []
+
+
+def _imagen_removed(model: str) -> MediaError:
+    """Imagen was dropped (deprecated by Google); point callers at Nano Banana."""
+    return MediaError(
+        f"Imagen model {model!r} is no longer supported (deprecated by Google); "
+        "use a Nano Banana model such as gemini-3.1-flash-image",
+        category=ErrorCategory.UNSUPPORTED, provider="gemini", model=model,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -387,13 +435,20 @@ def _parse_error(body: str) -> tuple[str, str, int | None]:
     return status, err.get("message") or body, code if isinstance(code, int) else None
 
 
+def _is_safety(message: str) -> bool:
+    return any(k in (message or "").lower() for k in ("safety", "blocked", "prohibited"))
+
+
 def _categorize(gstatus: str, message: str, http_status: int | None) -> tuple[ErrorCategory, str | None]:
-    """Map a Google status + message (+ HTTP status) to ``(category, hint)``."""
-    low = f"{gstatus} {message or ''}".lower()
-    if "leaked" in low:  # a reported-leaked key is dead — rotation is the only fix
+    """Map a Google status (or HTTP status) to ``(category, hint)``.
+
+    The canonical status is authoritative — this does *not* keyword-guess safety, so
+    an ``INVALID_ARGUMENT`` stays ``VALIDATION`` even if its message mentions
+    "safety"/"blocked" (callers that see real block reasons opt into that via
+    :func:`_is_safety`). A reported-leaked key is the one unambiguous message signal.
+    """
+    if "leaked" in (message or "").lower():
         return ErrorCategory.AUTH, "key reported as leaked — generate a new one in Google AI Studio"
-    if any(k in low for k in ("safety", "blocked", "prohibited")):
-        return ErrorCategory.SAFETY, None
     cat = _STATUS_CATEGORY.get(gstatus)
     if cat is None:
         cat = _HTTP_CATEGORY.get(http_status, ErrorCategory.PROVIDER) if http_status else ErrorCategory.PROVIDER
@@ -408,14 +463,21 @@ def _categorize(gstatus: str, message: str, http_status: int | None) -> tuple[Er
 
 
 def _operation_error(err, op_name: str, provider: str) -> MediaError:
-    """Classify a terminal Veo long-running-operation failure (``res['error']``)."""
+    """Classify a terminal Veo long-running-operation failure (``res['error']``).
+
+    Unlike an HTTP request error, a finished-operation failure carries its real
+    reason in the message, so a safety-worded failure is a genuine content block.
+    """
     if isinstance(err, dict):
         code = err.get("code")
         message = err.get("message") or str(err)
         gstatus = str(err.get("status") or "") or (_GRPC_STATUS.get(code, "") if isinstance(code, int) else "")
     else:
         code, gstatus, message = None, "", str(err)
-    cat, hint = _categorize(gstatus, message, None)
+    if _is_safety(message):
+        cat, hint = ErrorCategory.SAFETY, None
+    else:
+        cat, hint = _categorize(gstatus, message, None)
     label = gstatus or (f"code {code}" if code is not None else "error")
     msg = f"Veo operation {op_name} failed: [{label}] {message}"[:400]
     if hint:
@@ -437,6 +499,10 @@ def _extract_inline_images(data: dict) -> list[str]:
     out: list[str] = []
     for cand in data.get("candidates") or []:
         for part in ((cand.get("content") or {}).get("parts") or []):
+            # Thinking models emit interim "thought" images; they are not the final
+            # output and must not be saved as artifacts.
+            if part.get("thought"):
+                continue
             inline = part.get("inlineData") or part.get("inline_data")
             if inline and inline.get("data"):
                 out.append(inline["data"])
@@ -469,7 +535,7 @@ def _veo_video_uri(res: dict) -> str | None:
     return None
 
 
-def _write_b64(b64: str, out: Path, kind: str, *, mime: str | None = None, role=None) -> Artifact:
+def _write_b64(b64: str, out: Path, kind: str, *, role=None) -> Artifact:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(base64.b64decode(b64))
-    return Artifact.from_path(out, kind, mime=mime or "image/png", role=role)
+    return Artifact.from_path(out, kind, mime="image/png", role=role)

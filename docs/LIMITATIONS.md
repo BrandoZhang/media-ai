@@ -33,17 +33,22 @@ before relying on them in production; the adapters are written to fail safely
   `gemini-3-pro-image` 1K/2K/4K; `gemini-3.1-flash-lite-image` and legacy
   `gemini-2.5-flash-image` are 1K only. Capabilities reflect this per model, and the
   extreme banner ratios (`1:4`/`4:1`/`1:8`/`8:1`) are 3.1 Flash-only.
-- **Grounding / thinking wire shapes.** `--option grounding=true` sends
-  `tools:[{google_search:{}}]`; `image_search=true` adds `search_types` inside it;
-  `thinking_level=high` sends `generationConfig.thinkingConfig.thinkingLevel`. These
-  are capability-gated per model but the exact `generateContent` acceptance of
-  `search_types`/`thinkingLevel` is not exercised offline. `[verify]`
+- **Imagen was removed.** `imagen-*` model ids still route to this provider but
+  return a deterministic `unsupported` error (exit 3) pointing at Nano Banana, rather
+  than silently falling back to the mock provider.
+- **Grounding / thinking wire shapes.** `--option grounding=true` sends the
+  well-established `tools:[{google_search:{}}]` (Flash + Pro). `thinking_level=high`
+  (3.1 Flash) sends `generationConfig.thinkingConfig.thinkingLevel`; the exact
+  `generateContent` acceptance of `thinkingLevel` is not exercised offline. `[verify]`
+  Google *Image* Search grounding is Interactions-API-only (its `search_types` field
+  isn't part of `generateContent`), so it is **not** exposed on this path.
 - **Veo extension** maps `--reference-video` to the Veo `video` parameter. Google
   only extends **Veo-generated** clips (≤141s, 720p) and requires `durationSeconds=8`;
   a non-Veo source or wrong length is rejected by the API, not pre-checked. `[verify]`
-- **Inline request size limit** (~20 MB, reportedly raised toward ~100 MB) is not
-  enforced client-side, and the **Files API** upload path for very large inputs is
-  not yet implemented — large local media may be rejected by the API. `[verify]`
+- **Inline request size limit** (~20 MB) *is* now enforced client-side: local media
+  over the cap fails with a clear `validation` error (exit 3) instead of an opaque API
+  rejection. The **Files API** upload path for larger inputs is not yet implemented,
+  so very large clips/images can't be sent inline.
 - **Vertex AI** (OAuth/service-account, different host) is a separate auth path and
   is out of scope for this build (Developer API-key path only).
 
