@@ -114,3 +114,25 @@ def test_error_mapper_maps_safety(fake_provider, tmp_path):
     err = prov._error(400, "request contains sensitive content")
     assert err.category == ErrorCategory.SAFETY
     assert prov._error(429, "rate").category == ErrorCategory.RATE_LIMIT
+
+
+def test_video_wait_true_output_safety_raises(fake_provider, tmp_path):
+    # a task that fails with an OUTPUT-safety code must surface as SAFETY (exit 8),
+    # not a generic provider error — this reason lives in the task result, not HTTP.
+    prov, _ = fake_provider(VolcProvider, [
+        {"id": "task-x"},  # create
+        {"status": "failed", "error": {"code": "OutputVideoSensitiveContentDetected", "message": "blocked"}},  # poll
+    ])
+    req = VideoRequest(prompt="scene", output=tmp_path / "v.mp4",
+                       geometry=GeometrySpec(resolution="480p"), duration=2, wait=True)
+    with pytest.raises(MediaError) as ei:
+        prov.generate_video(req)
+    assert ei.value.category == ErrorCategory.SAFETY
+    assert "OutputVideoSensitiveContentDetected" in ei.value.message
+
+
+def test_get_job_failed_raises_categorized(fake_provider, tmp_path):
+    prov, _ = fake_provider(VolcProvider, [{"status": "failed", "error": {"code": "InternalServiceError", "message": "boom"}}])
+    with pytest.raises(MediaError) as ei:
+        prov.get_job(JobRef(provider="volc", id="t"))
+    assert ei.value.category == ErrorCategory.PROVIDER and ei.value.retryable is True

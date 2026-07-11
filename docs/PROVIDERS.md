@@ -27,6 +27,15 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
   the billed task on SIGTERM/SIGINT/timeout so a killed call doesn't orphan a task.
 - Model IDs are **account-specific** — enable them in the console
   (<https://www.volcengine.com/docs/82379/1330310>).
+- **Errors are classified by Ark error `code`** (`media_ai/providers/_volc_errors.py`):
+  content-safety codes (input *or* output `SensitiveContentDetected`/`RiskDetection`)
+  → `safety` (exit 8); `ModelNotOpen`/`InvalidEndpointOrModel` → `not_found` (exit 9,
+  with an "enable it in the console" hint); `AccountOverdueError`/overdue → `auth`;
+  `QuotaExceeded`/`SetLimitExceeded` → `rate_limit` but **not retryable**; transient
+  RPM/TPM/`ServerOverloaded` → retryable `rate_limit`. The Ark `code` + `request_id`
+  are preserved in the error `details`. The same classifier maps **async video task
+  failures** (whose reason is in the task result, not an HTTP status), so an
+  output-safety block on a finished-but-rejected video still exits 8.
 - Extra env: `ARK_BASE_URL`, `ARK_IMAGE_SIZE`, `ARK_POLL_INTERVAL`, `ARK_POLL_TIMEOUT`.
 
 ## openai — GPT Image / DALL·E / Sora

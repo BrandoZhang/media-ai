@@ -26,6 +26,7 @@ from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
+from ._volc_errors import task_failure_error, to_media_error
 
 _ARK_MIN_IMAGE_PIXELS = 2560 * 1440  # Seedream method-2 floor
 _TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
@@ -245,7 +246,7 @@ class VolcProvider(HttpProvider):
                 if status == "succeeded":
                     return self._finalize(res, out, client, headers, task_id=task_id, operation=operation)
                 if status in _TERMINAL:
-                    raise MediaError(f"Ark video task {task_id} {status}", category=ErrorCategory.PROVIDER, provider=self.name)
+                    raise task_failure_error(res, self.name, task_id)
                 time.sleep(self.poll_interval)
             self._cancel(task_id, client, headers)
             raise MediaError(f"Ark video task {task_id} timed out after {self.poll_timeout}s (cancelled)",
@@ -262,6 +263,10 @@ class VolcProvider(HttpProvider):
         client, headers = self._prepare()
         res = client.request_json("GET", f"/contents/generations/tasks/{ref.id}", headers=headers)
         status = str(res.get("status", "")).lower()
+        if status in ("failed", "expired"):
+            # A terminal failure (e.g. output-safety block) is reported as the
+            # matching categorized error + exit code, consistent with the blocking path.
+            raise task_failure_error(res, self.name, ref.id)
         result = None
         if output is not None and status == "succeeded":
             result = self._finalize(res, Path(output), client, headers, task_id=ref.id, operation="video.generate")
@@ -276,9 +281,4 @@ class VolcProvider(HttpProvider):
 
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:
-        low = body.lower()
-        if status == 400 and ("sensitive" in low or "risk" in low or "content" in low and "policy" in low):
-            return MediaError(f"Ark rejected content (safety): {body}", category=ErrorCategory.SAFETY, provider=self.name)
-        cat = {401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH, 404: ErrorCategory.NOT_FOUND,
-               429: ErrorCategory.RATE_LIMIT, 400: ErrorCategory.VALIDATION}.get(status, ErrorCategory.PROVIDER)
-        return MediaError(f"Ark API HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
+        return to_media_error(status, body, self.name)
