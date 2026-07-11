@@ -50,7 +50,8 @@ def _do(args) -> object:
         negative_prompt=args.negative_prompt, background=args.background, quality=args.quality,
         output_format=args.format, options=common.parse_options(args.option),
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.IMAGE)
+    provider, model = registry.build(common.provider_name(args), args.model, Modality.IMAGE,
+                                     profile=args.provider_profile)
     req.model = model
     for w in validate_request(req, provider.capabilities(model, Modality.IMAGE), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)

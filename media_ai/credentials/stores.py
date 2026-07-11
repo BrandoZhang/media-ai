@@ -71,11 +71,11 @@ def secret_manager_resolver(provider: str) -> Credential | None:
         ref = cfg if (cfg and cfg.startswith(_SECRET_MANAGER_PREFIXES)) else None
     if not ref:
         return None
-    value = _resolve_reference(ref)
+    value = resolve_reference(ref)
     return Secret(value, provider=provider, source="secret-manager")
 
 
-def _resolve_reference(ref: str) -> str:
+def resolve_reference(ref: str) -> str:
     """Resolve a ``op://``/``vault://``/… reference to a plaintext value.
 
     Backends are intentionally pluggable. Only ``env://VARNAME`` is built in (useful

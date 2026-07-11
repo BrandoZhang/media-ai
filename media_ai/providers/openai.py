@@ -48,7 +48,7 @@ class OpenAIProvider(HttpProvider):
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
-        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        self.base_url = (self.config.get("base_url") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         self.image_model = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
         self.video_model = os.getenv("OPENAI_VIDEO_MODEL", "sora-2")
         self.poll_interval = float(os.getenv("OPENAI_POLL_INTERVAL", "5") or 5)

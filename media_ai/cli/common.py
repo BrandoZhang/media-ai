@@ -23,6 +23,8 @@ def bool_arg(s) -> bool:
 def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--provider", default=None, help="mock|volc|openai|gemini (default $MEDIA_PROVIDER or mock)")
     ap.add_argument("--model", default=None, help="model id; may imply the provider")
+    ap.add_argument("--provider-profile", dest="provider_profile", default=None,
+                    help="named profile from ~/.config/media-ai/config.toml (or $MEDIA_PROFILE)")
     ap.add_argument("--backend", default=None, help=argparse.SUPPRESS)  # deprecated alias for --provider
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
     ap.add_argument("--log-level", default=None, help="debug|info|warning|error")

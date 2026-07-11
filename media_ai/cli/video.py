@@ -53,7 +53,8 @@ def _do(args) -> object:
         audio=args.audio, watermark=args.watermark, negative_prompt=args.negative_prompt,
         return_last_frame=args.return_last_frame, wait=args.wait, options=common.parse_options(args.option),
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.VIDEO)
+    provider, model = registry.build(common.provider_name(args), args.model, Modality.VIDEO,
+                                     profile=args.provider_profile)
     req.model = model
     for w in validate_request(req, provider.capabilities(model, Modality.VIDEO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)

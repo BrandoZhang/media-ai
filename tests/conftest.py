@@ -76,7 +76,7 @@ def _ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_PROVIDER", "mock")
     # keep tests hermetic: no ambient provider keys / broker
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE"):
+                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path / "usage.jsonl"
 

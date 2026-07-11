@@ -53,6 +53,46 @@ If nothing resolves, the CLI exits **4** (auth) with an actionable message.
 value is **not JSON-serializable** — so it cannot accidentally land in the result
 JSON. On creation the value is registered with the redactor.
 
+## Profiles (per-endpoint / per-tenant credentials)
+
+By default a provider resolves **one** credential per process (`volc` →
+`ARK_API_KEY`). When different endpoints/projects need different keys — e.g. an
+image endpoint on account A and a video endpoint on account B — bind them with a
+**profile**: a named bundle of `provider` + default `model` + optional `base_url`
++ a `credential` **reference**.
+
+Profiles live in `~/.config/media-ai/config.toml` (override `MEDIA_CONFIG_FILE`)
+and are **non-secret** — `credential` is a reference (`env://VAR`, `op://…`, a
+Vault path), never a raw key, so the file is safe to share/commit:
+
+```toml
+[profiles.prod_image]
+provider   = "volc"
+model      = "ep-image-A"
+credential = "env://ARK_ACCOUNT_A_KEY"
+
+[profiles.prod_video]
+provider   = "volc"
+model      = "ep-video-B"
+base_url   = "https://ark.cn-beijing.volces.com/api/v3"
+credential = "env://ARK_ACCOUNT_B_KEY"
+```
+
+Select one with `--provider-profile prod_video` (or `$MEDIA_PROFILE`); it applies
+to `image`/`video`/`job`:
+
+```bash
+media-ai video generate --provider-profile prod_video --prompt "…" --output v.mp4
+```
+
+Precedence: explicit `--provider`/`--model` override the profile; a profile's
+`credential` reference is resolved first, and a **credential-less** profile falls
+back to the normal chain (so it still ends at `ARK_API_KEY`). The reference is
+resolved lazily and the value is redacted like any other secret — putting a raw key
+in a profile is refused (use `credentials.toml` for raw keys). Automatic
+endpoint→profile routing is intentionally omitted: credential selection is explicit
+so a call can't silently pick the wrong account's key.
+
 ## Redaction (defense in depth)
 
 `media_ai/credentials/redaction.py` masks, across **every** sink (logs, the JSON

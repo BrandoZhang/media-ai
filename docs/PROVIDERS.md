@@ -36,6 +36,9 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
   `--provider volc` explicitly with an endpoint id (the id alone can't imply the
   provider). Discovery (`media-ai capabilities`) still classifies known model names
   by name; for a bare endpoint id it is best-effort.
+- **Different endpoints on different accounts?** Bind each to its own key (and
+  optional base URL / default model) with a **profile** and select it via
+  `--provider-profile` — see [CREDENTIALS.md](CREDENTIALS.md#profiles-per-endpoint--per-tenant-credentials).
 - **Errors are classified by Ark error `code`** (`media_ai/providers/_volc_errors.py`):
   content-safety codes (input *or* output `SensitiveContentDetected`/`RiskDetection`)
   → `safety` (exit 8); `ModelNotOpen`/`InvalidEndpointOrModel` → `not_found` (exit 9,

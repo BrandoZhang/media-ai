@@ -39,6 +39,7 @@ A provider-agnostic **core**, a thin per-provider **adapter** layer, and a thin 
 
 - The CLI never touches secrets — it passes a **provider name**; the registry binds a `CredentialProvider`; the adapter resolves lazily and reveals the value **only inside its request builder** (`HttpProvider._prepare` / `credential().reveal()`).
 - Resolution chain (`credentials/resolver.py`, most-secure first): broker → secret-manager reference → OS keychain → chmod-600 config file → env var. Re-resolved per invocation (rotation-friendly).
+- **Profiles** (`credentials/profile.py`, `--provider-profile`/`$MEDIA_PROFILE`) bind provider + default model + optional base_url + a credential **reference** (non-secret, in `~/.config/media-ai/config.toml`) so different endpoints/tenants use different keys. `registry.build/get_provider` apply them; a raw key in a profile is refused.
 - `Secret` (`credentials/secret.py`) is reveal-only; its repr/str/pickle render `***` and it isn't JSON-serializable. All log/output/error sinks pass through `redact()` (`credentials/redaction.py`), which masks live secret values + key-shaped tokens. **Never** add a `--api-key` flag, log headers, or serialize a `Secret`.
 
 ## Conventions specific to this repo

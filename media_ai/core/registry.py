@@ -31,7 +31,8 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
-from ..credentials.resolver import CredentialProvider
+from ..credentials.profile import Profile, ProfileCredentialProvider, load_profile
+from ..credentials.resolver import CredentialProvider, default_chain
 from .errors import ErrorCategory, MediaError
 from .provider import Provider
 from .types import Modality
@@ -187,6 +188,25 @@ def default_provider_name() -> str:
     return os.getenv("MEDIA_PROVIDER") or os.getenv("MEDIA_BACKEND") or "mock"
 
 
+def _resolve_profile(name: str | None) -> Profile | None:
+    name = name or os.getenv("MEDIA_PROFILE")
+    return load_profile(name) if name else None
+
+
+def _profile_credentials(profile: Profile | None, credentials: CredentialProvider | None) -> CredentialProvider | None:
+    if credentials is not None or profile is None:
+        return credentials
+    return ProfileCredentialProvider(profile, default_chain())
+
+
+def _profile_config(profile: Profile | None, config: dict | None) -> dict | None:
+    if profile is None or not profile.base_url:
+        return config
+    cfg = dict(config or {})
+    cfg.setdefault("base_url", profile.base_url)
+    return cfg
+
+
 def _construct(name: str, credentials: CredentialProvider | None, config: dict | None) -> Provider:
     _ensure_loaded()
     spec = _REGISTRY.get(name.lower())
@@ -203,20 +223,32 @@ def build(
     model: str | None = None,
     modality: Modality | None = None,
     *,
+    profile: str | None = None,
     credentials: CredentialProvider | None = None,
     config: dict | None = None,
 ) -> tuple[Provider, str | None]:
     """Return ``(provider_instance, resolved_model_id)``.
 
-    Provider precedence: explicit ``--provider`` → inferred from ``--model`` →
-    ``$MEDIA_PROVIDER`` → ``mock``. Model precedence: explicit ``--model`` → the
-    provider's default for the modality.
+    Provider precedence: explicit ``--provider`` → profile → inferred from
+    ``--model`` → ``$MEDIA_PROVIDER`` → ``mock``. Model precedence: explicit
+    ``--model`` → profile → the provider's default for the modality. A profile
+    (``--provider-profile`` / ``$MEDIA_PROFILE``) also binds the credential source
+    and an optional base URL.
     """
-    name = (provider or provider_for_model(model) or default_provider_name()).lower()
-    inst = _construct(name, credentials, config)
-    resolved = model or (inst.default_model(modality) if modality else None)
+    prof = _resolve_profile(profile)
+    name = (provider or (prof.provider if prof else None) or provider_for_model(model) or default_provider_name()).lower()
+    inst = _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config))
+    resolved = model or (prof.model if prof else None) or (inst.default_model(modality) if modality else None)
     return inst, resolved
 
 
-def get_provider(name: str, *, credentials: CredentialProvider | None = None, config: dict | None = None) -> Provider:
-    return _construct(name.lower(), credentials, config)
+def get_provider(
+    name: str | None = None,
+    *,
+    profile: str | None = None,
+    credentials: CredentialProvider | None = None,
+    config: dict | None = None,
+) -> Provider:
+    prof = _resolve_profile(profile)
+    name = name or (prof.provider if prof else None) or default_provider_name()
+    return _construct(name.lower(), _profile_credentials(prof, credentials), _profile_config(prof, config))
