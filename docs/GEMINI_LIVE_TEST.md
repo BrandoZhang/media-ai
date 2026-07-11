@@ -107,6 +107,11 @@ it (reference images, extension).
   `{"fileData": {"mimeType", "fileUri"}}`. Veo `predictLongRunning` does **not** accept
   `uri` or `fileData` for image inputs — both return `400 "isn't supported by this
   model"`.
+- **Usage.** Image `usageMetadata` is `{promptTokenCount, candidatesTokenCount,
+  totalTokenCount, promptTokensDetails, candidatesTokensDetails, serviceTier}`; the
+  adapter records `candidatesTokenCount`/`totalTokenCount` (correct) and returns the
+  full block in the result `usage`. Veo operations carry **no** usage/duration field at
+  all (just `generatedSamples[].video.uri`) — see bug #3.
 
 ## Bugs found and fixed
 
@@ -123,7 +128,16 @@ it (reference images, extension).
    takes a **URI** (remote ref); a local path is refused with a clear `validation`
    error. *Re-verified live by extending a freshly generated clip.*
 
-Both fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
+3. **Video usage recorded no `seconds`.** Veo operations return no duration, and
+   `_finalize_video` recorded none — so the ledger's `video_seconds` counted **0** for
+   every Veo run (volc/openai/Sora all record it). Fixed: bill by the requested
+   duration on the synchronous path, falling back to probing the downloaded clip with
+   ffmpeg when the duration isn't known (async `job query`). *Verified against the real
+   Veo outputs: 4 s / 8 s clips probe to 4.00 s / 8.00 s; the image `usageMetadata`
+   fields the adapter reads (`candidatesTokenCount`, `totalTokenCount`) match live
+   responses.*
+
+All fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
 `PROVIDERS.md`.
 
 ## Not covered / known gaps

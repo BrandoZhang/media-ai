@@ -31,7 +31,7 @@ from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from ..core.usage import record_usage
-from ..media import pillow
+from ..media import ffmpeg, pillow
 from . import _gemini_files
 from ._base import HttpProvider
 
@@ -278,30 +278,35 @@ class GeminiProvider(HttpProvider):
             raise MediaError("Veo returned no operation name", category=ErrorCategory.PROVIDER, provider=self.name)
         if not req.wait:
             return JobHandle(provider=self.name, model=model, id=op_name, output=str(req.output))
-        return self._poll_operation(client, headers, op_name, Path(req.output), model)
+        return self._poll_operation(client, headers, op_name, Path(req.output), model, seconds=req.duration or 0)
 
-    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str) -> GenerationResult:
+    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str, *, seconds: int = 0) -> GenerationResult:
         deadline = time.monotonic() + self.poll_timeout
         while time.monotonic() < deadline:
             res = client.request_json("GET", f"/{op_name}", headers=headers)
             if res.get("done"):
-                return self._finalize_video(client, headers, op_name, out, model, res)
+                return self._finalize_video(client, headers, op_name, out, model, res, seconds=seconds)
             time.sleep(self.poll_interval)
         raise MediaError(f"Veo operation {op_name} timed out after {self.poll_timeout}s",
                          category=ErrorCategory.TIMEOUT, provider=self.name)
 
-    def _finalize_video(self, client, headers, op_name: str, out: Path, model: str, res: dict) -> GenerationResult:
+    def _finalize_video(self, client, headers, op_name: str, out: Path, model: str, res: dict,
+                        *, seconds: int = 0) -> GenerationResult:
         if res.get("error"):
             raise _operation_error(res["error"], op_name, self.name)
         uri = _veo_video_uri(res)
         if not uri:
             raise MediaError(f"Veo operation {op_name} done but no video uri", category=ErrorCategory.PROVIDER, provider=self.name)
         client.download(uri, out, headers=headers)  # the file URI needs the API key
+        # Veo operations return no usage/duration, so bill by the requested length
+        # (the synchronous path knows it), falling back to probing the downloaded
+        # clip when it isn't known (e.g. an async `job query`).
+        secs = seconds or int(round(ffmpeg.probe_duration(out)))
         record_usage({"tool": "video.generate", "operation": "video.generate", "provider": self.name,
-                      "model": model, "kind": "video"})
+                      "model": model, "kind": "video", "seconds": secs})
         return GenerationResult(modality="video", operation="video.generate", provider=self.name, model=model,
                                 artifacts=[Artifact.from_path(out, "video", mime="video/mp4")], usage={},
-                                meta={"operation": op_name})
+                                meta={"operation": op_name, "seconds": secs})
 
     def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
         client, headers = self._prepare()

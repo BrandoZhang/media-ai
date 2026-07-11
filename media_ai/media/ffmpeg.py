@@ -5,11 +5,14 @@ bundled ``imageio-ffmpeg`` binary.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from ..core.errors import ErrorCategory, MediaError
+
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
 
 DEFAULT_W = 768
 DEFAULT_H = 432  # 16:9
@@ -62,6 +65,23 @@ def has_audio(path: Path) -> bool:
     except Exception:  # noqa: BLE001 - treat probe failure as "no audio"
         return False
     return "Audio:" in (proc.stderr or "")
+
+
+def probe_duration(path: Path) -> float:
+    """Best-effort media duration in seconds (parses ``ffmpeg -i``; no ffprobe needed).
+
+    Returns ``0.0`` when the duration can't be determined (missing ffmpeg, unreadable
+    file, no ``Duration:`` line) — callers use it as a cost-accounting hint, never a
+    hard dependency."""
+    try:
+        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True)
+    except Exception:  # noqa: BLE001 - probe failure -> unknown duration
+        return 0.0
+    m = _DURATION_RE.search(proc.stderr or "")
+    if not m:
+        return 0.0
+    hours, minutes, seconds = m.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
 def concat_clips(inputs: list[Path], out: Path, *, w: int = DEFAULT_W, h: int = DEFAULT_H, fps: int = DEFAULT_FPS) -> Path:
