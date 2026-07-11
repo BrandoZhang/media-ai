@@ -52,7 +52,7 @@ def _do(args) -> object:
     )
     provider, model = registry.build(common.provider_name(args), args.model, Modality.IMAGE)
     req.model = model
-    for w in validate_request(req, provider.capabilities(model), common.policy(args)):
+    for w in validate_request(req, provider.capabilities(model, Modality.IMAGE), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
     return provider.generate_image(req)
 

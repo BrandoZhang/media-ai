@@ -64,7 +64,7 @@ class GeminiProvider(HttpProvider):
     def default_model(self, modality: Modality | None) -> str:
         return self.video_model if modality == Modality.VIDEO else self.image_model
 
-    def capabilities(self, model: str | None = None) -> ModelCapabilities:
+    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
         fam = _family(model)
         if fam == "veo":

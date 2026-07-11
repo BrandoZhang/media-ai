@@ -57,7 +57,7 @@ class MockProvider(Provider):
     def default_model(self, modality: Modality | None) -> str:
         return "mock"
 
-    def capabilities(self, model: str | None = None) -> ModelCapabilities:
+    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         return ModelCapabilities(
             provider=self.name,
             model="mock",

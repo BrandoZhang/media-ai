@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
+from media_ai.core.capabilities import validate_request
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, VideoRequest
+from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from media_ai.providers.volc import VolcProvider
 
 
@@ -160,3 +161,47 @@ def test_get_job_failed_raises_categorized(fake_provider, tmp_path):
     with pytest.raises(MediaError) as ei:
         prov.get_job(JobRef(provider="volc", id="t"))
     assert ei.value.category == ErrorCategory.PROVIDER and ei.value.retryable is True
+
+
+# --- endpoint-ID classification (the reported false-negative) ---
+
+ENDPOINT = "ep-20260214051115-zrbtw"
+
+
+def test_endpoint_id_video_not_misclassified(fake_provider, tmp_path):
+    # `video generate --model ep-...` must classify as video from the COMMAND's
+    # modality, not the (modality-free) endpoint id, so validation doesn't block it.
+    prov, fake = fake_provider(VolcProvider, [{"id": "task-1"}])
+    caps = prov.capabilities(ENDPOINT, Modality.VIDEO)
+    assert Modality.VIDEO in caps.modalities and caps.video is not None
+    req = VideoRequest(prompt="a shot", output=tmp_path / "v.mp4", model=ENDPOINT,
+                       geometry=GeometrySpec(resolution="480p"), duration=5, wait=False)
+    validate_request(req, caps)  # must NOT raise (previously: unsupported: model does not support video)
+    prov.generate_video(req)
+    assert fake.calls[0]["path"] == "/contents/generations/tasks"
+
+
+def test_endpoint_geometry_is_permissive(fake_provider, tmp_path):
+    # an unusual resolution/ratio isn't pre-rejected for an endpoint — the Ark API
+    # is the authority (fail open, not closed).
+    prov, _ = fake_provider(VolcProvider, [])
+    caps = prov.capabilities(ENDPOINT, Modality.VIDEO)
+    req = VideoRequest(prompt="x", output=tmp_path / "v.mp4", model=ENDPOINT,
+                       geometry=GeometrySpec(resolution="2160p", aspect_ratio="32:9"), duration=11)
+    validate_request(req, caps)  # no raise despite non-standard geometry
+    img_caps = prov.capabilities(ENDPOINT, Modality.IMAGE)
+    validate_request(ImageRequest(prompt="x", output=tmp_path / "o.png", model=ENDPOINT,
+                                  geometry=GeometrySpec(width=123, height=456)), img_caps)  # odd pixels ok
+
+
+def test_explicit_modality_wins_over_name():
+    prov = VolcProvider()
+    # command says image, even for a seedance-looking name -> image caps (defer to API)
+    assert Modality.IMAGE in prov.capabilities("doubao-seedance-2-0-260128", Modality.IMAGE).modalities
+    assert Modality.VIDEO in prov.capabilities("doubao-seedream-4-5-251128", Modality.VIDEO).modalities
+
+
+def test_discovery_without_modality_still_uses_name_heuristic():
+    prov = VolcProvider()
+    assert Modality.VIDEO in prov.capabilities("doubao-seedance-2-0-260128").modalities  # no modality hint
+    assert Modality.IMAGE in prov.capabilities("doubao-seedream-4-5-251128").modalities

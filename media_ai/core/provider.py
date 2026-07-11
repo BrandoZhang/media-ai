@@ -45,7 +45,11 @@ class Provider:
     def default_model(self, modality: Modality) -> str | None:  # pragma: no cover
         raise NotImplementedError
 
-    def capabilities(self, model: str | None = None) -> ModelCapabilities:  # pragma: no cover
+    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:  # pragma: no cover
+        # ``modality`` is the modality the caller is about to use (from the
+        # command, e.g. ``video generate``). Adapters whose model ids don't encode
+        # modality (e.g. Ark endpoint ids ``ep-…``) should trust it rather than
+        # guessing from the name; name-encoded providers may ignore it.
         raise NotImplementedError
 
     def all_capabilities(self) -> list[ModelCapabilities]:

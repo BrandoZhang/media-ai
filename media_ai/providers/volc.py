@@ -51,18 +51,37 @@ class VolcProvider(HttpProvider):
     def default_model(self, modality: Modality | None) -> str:
         return self.video_model if modality == Modality.VIDEO else self.image_model
 
-    def _is_video_model(self, model: str) -> bool:
+    @staticmethod
+    def _is_endpoint(model: str) -> bool:
+        # Ark custom inference endpoint IDs look like ``ep-20260214051115-zrbtw``
+        # and encode neither modality nor geometry constraints.
+        return model.lower().startswith("ep-")
+
+    def _is_video_model(self, model: str, modality: Modality | None = None) -> bool:
+        # Trust the modality the command declared; only guess from the name during
+        # discovery (modality is None), which is best-effort.
+        if modality is not None:
+            return modality == Modality.VIDEO
         return "seedance" in model.lower() or model == self.video_model
 
-    def capabilities(self, model: str | None = None) -> ModelCapabilities:
+    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        if self._is_video_model(model):
+        # For an opaque endpoint ID we can't know the underlying model version, so
+        # leave geometry unconstrained and let the Ark API be the authority rather
+        # than pre-rejecting a valid request (fail open, not closed).
+        endpoint = self._is_endpoint(model)
+        note = (
+            "custom endpoint ID: modality is taken from the requested command and "
+            "geometry is validated by the Ark API, not pre-checked"
+            if endpoint else None
+        )
+        if self._is_video_model(model, modality):
             return ModelCapabilities(
                 provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
                 video=VideoCaps(
                     is_async=True,
-                    aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"),
-                    resolutions=("480p", "720p", "1080p"),
+                    aspect_ratios=() if endpoint else ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"),
+                    resolutions=() if endpoint else ("480p", "720p", "1080p"),
                     durations=(),  # model-version specific; left unconstrained
                     supports_first_frame=True, supports_last_frame=True,
                     supports_reference_images=True, supports_reference_videos=True,
@@ -70,20 +89,21 @@ class VolcProvider(HttpProvider):
                     supports_watermark_control=True, supports_return_last_frame=True,
                     options=("camera_fixed",),
                 ),
-                notes=("model IDs are account-specific; enable them in the Volcengine console",),
+                notes=(note,) if note else ("model IDs are account-specific; enable them in the Volcengine console",),
             )
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
                 geometry_mode=GeometryMode.BOTH,
-                aspect_ratios=("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
-                named_sizes=("1K", "2K", "4K"),
-                pixel_min=(1280, 720), pixel_max=(4096, 4096),
+                aspect_ratios=() if endpoint else ("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
+                named_sizes=() if endpoint else ("1K", "2K", "4K"),
+                pixel_min=None if endpoint else (1280, 720),
+                pixel_max=None if endpoint else (4096, 4096),
                 max_count=15, output_formats=("png",),
                 supports_seed=True, max_references=9, options=("watermark",),
             ),
-            notes=("size below 2560x1440 falls back to the '2K' preset",),
+            notes=(note,) if note else ("size below 2560x1440 falls back to the '2K' preset",),
         )
 
     # ---- images ----------------------------------------------------------

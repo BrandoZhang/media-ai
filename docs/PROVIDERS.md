@@ -26,7 +26,16 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
   `--return-last-frame`, `--option camera_fixed=…`. A blocking `--wait true` cancels
   the billed task on SIGTERM/SIGINT/timeout so a killed call doesn't orphan a task.
 - Model IDs are **account-specific** — enable them in the console
-  (<https://www.volcengine.com/docs/82379/1330310>).
+  (<https://www.volcengine.com/docs/82379/1330310>). Both plain model names
+  (`doubao-seedance-2-0-260128`) and **custom endpoint IDs** (`ep-2026…`) work.
+- **Endpoint IDs encode no modality**, so the modality comes from the *command*
+  (`media-ai video generate …` ⇒ video), not the id — you don't need to set
+  `ARK_VIDEO_MODEL` to match. For endpoint IDs, geometry is left to the Ark API to
+  validate rather than pre-checked (pre-flight validation fails open, not closed),
+  so a valid endpoint request is never blocked by a name-based guess. Pass
+  `--provider volc` explicitly with an endpoint id (the id alone can't imply the
+  provider). Discovery (`media-ai capabilities`) still classifies known model names
+  by name; for a bare endpoint id it is best-effort.
 - **Errors are classified by Ark error `code`** (`media_ai/providers/_volc_errors.py`):
   content-safety codes (input *or* output `SensitiveContentDetected`/`RiskDetection`)
   → `safety` (exit 8); `ModelNotOpen`/`InvalidEndpointOrModel` → `not_found` (exit 9,

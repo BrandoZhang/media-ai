@@ -31,7 +31,7 @@ def _out_args(a: argparse.Namespace) -> Namespace:
 def _dispatch_image(req: ImageRequest, a) -> ImageRequest:
     provider, model = registry.build(a.backend, a.model, Modality.IMAGE)
     req.model = model
-    for w in validate_request(req, provider.capabilities(model), common.policy(_out_args(a))):
+    for w in validate_request(req, provider.capabilities(model, Modality.IMAGE), common.policy(_out_args(a))):
         get_logger().warning("unsupported (proceeding): %s", w)
     return provider.generate_image(req)
 
@@ -39,7 +39,7 @@ def _dispatch_image(req: ImageRequest, a) -> ImageRequest:
 def _dispatch_video(req: VideoRequest, a):
     provider, model = registry.build(a.backend, a.model, Modality.VIDEO)
     req.model = model
-    for w in validate_request(req, provider.capabilities(model), common.policy(_out_args(a))):
+    for w in validate_request(req, provider.capabilities(model, Modality.VIDEO), common.policy(_out_args(a))):
         get_logger().warning("unsupported (proceeding): %s", w)
     return provider.generate_video(req)
 
