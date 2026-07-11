@@ -100,6 +100,8 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   a `safety` error (exit 8), not an empty file.
 - Extra env: `GEMINI_BASE_URL`, `GEMINI_IMAGE_MODEL`, `GEMINI_VIDEO_MODEL`,
   `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`.
+- Every image/video path (incl. local-file inputs) was exercised against the live API
+  — see [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
 
 ## Capability matrix (summary)
 
