@@ -81,6 +81,20 @@ def test_live_gemini_speech(tmp_path):
     assert res["provider"] == "gemini" and res["modality"] == "audio"
 
 
+@pytest.mark.skipif(not (_LIVE and _any("ELEVENLABS_API_KEY", "ELEVEN_API_KEY")),
+                    reason="set MEDIA_LIVE_TESTS=1 and ELEVENLABS_API_KEY/ELEVEN_API_KEY")
+def test_live_elevenlabs_speech(tmp_path):
+    out = tmp_path / "eleven.mp3"
+    proc = _cli("speech", "generate", "--provider", "elevenlabs",
+                "--text", "The first move is what sets everything in motion.",
+                "--voice", "JBFqnCBsd6RMkjVDRZzb",  # a stable premade voice, no extra config
+                "--output", str(out))
+    assert proc.returncode == 0, f"elevenlabs live speech failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
+    res = _last_json(proc)
+    assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
+    assert res["provider"] == "elevenlabs" and res["modality"] == "audio"
+
+
 @pytest.mark.skipif(not (_LIVE and _has("ARK_API_KEY", "ARK_IMAGE_MODEL")),
                     reason="set MEDIA_LIVE_TESTS=1, ARK_API_KEY and ARK_IMAGE_MODEL (account-specific)")
 def test_live_volc_image(tmp_path):
