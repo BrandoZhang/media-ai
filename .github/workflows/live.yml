@@ -1,0 +1,51 @@
+name: live
+# Real-API regression tests. Runs **manually only** (Actions → live → Run workflow).
+# If no provider secrets are configured the job is a green no-op (all live steps are
+# skipped), so forks / unconfigured repos never fail here.
+#
+# To also run automatically on merge to main later, add back:
+#   push:
+#     branches: [main]
+#     paths: ["media_ai/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/live.yml"]
+on:
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    env:
+      MEDIA_LIVE_TESTS: "1"
+      # Provider credentials + optional overrides (add these in repo Settings → Secrets).
+      # Absent secrets resolve to "" and the matching provider's test simply skips.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
+      ARK_API_KEY: ${{ secrets.ARK_API_KEY }}
+      ARK_BASE_URL: ${{ secrets.ARK_BASE_URL }}
+      ARK_IMAGE_MODEL: ${{ secrets.ARK_IMAGE_MODEL }}
+      ARK_VIDEO_MODEL: ${{ secrets.ARK_VIDEO_MODEL }}
+      # Set repo variable MEDIA_LIVE_VIDEO=1 to also run the (slow, costly) video smoke.
+      MEDIA_LIVE_VIDEO: ${{ vars.MEDIA_LIVE_VIDEO }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect provider secrets
+        id: keys
+        run: |
+          if [ -n "$OPENAI_API_KEY" ] || [ -n "$GEMINI_API_KEY" ] || [ -n "$ARK_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=live tests skipped::No provider secrets configured (OPENAI_API_KEY / GEMINI_API_KEY / ARK_API_KEY). Add them in Settings → Secrets to enable live regression tests."
+          fi
+      - name: Install uv
+        if: steps.keys.outputs.present == 'true'
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - name: Sync
+        if: steps.keys.outputs.present == 'true'
+        run: uv sync
+      - name: Live regression tests
+        if: steps.keys.outputs.present == 'true'
+        run: uv run pytest -m live -v

@@ -1,50 +1,44 @@
-"""Unified dispatcher: ``media-ai <tool> [args...]`` / ``python -m media_ai <tool> ...``.
+"""Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
-Each tool is also installed as its own console script (``text2image``, ...);
-this dispatcher is a convenience umbrella over the same ``main()`` functions.
+Groups: ``image``, ``video``, ``concat``, ``job``, ``capabilities``, ``usage``.
+Each group is also reachable directly; this umbrella reshapes argv so the group's
+own argparse sees a clean program name. The eight legacy console-scripts
+(``text2image`` …) remain installed separately as compatibility shims.
 """
 
 from __future__ import annotations
 
 import sys
 
-from media_ai.cli import (
-    concat_video,
-    image2image,
-    image2video,
-    media_usage,
-    ref2video,
-    text2image,
-    text2video,
-    video_task,
-)
+from .cli import capabilities, concat, image, job, usage, video
 
-_COMMANDS = {
-    "text2image": text2image.main,
-    "image2image": image2image.main,
-    "text2video": text2video.main,
-    "image2video": image2video.main,
-    "ref2video": ref2video.main,
-    "concat_video": concat_video.main,
-    "video_task": video_task.main,
-    "media_usage": media_usage.main,
+_GROUPS = {
+    "image": image.main,
+    "video": video.main,
+    "concat": concat.main,
+    "job": job.main,
+    "capabilities": capabilities.main,
+    "usage": usage.main,
 }
 
 
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
-        print("usage: media-ai <command> [args...]\n\ncommands:")
-        for name in _COMMANDS:
+        print("usage: media-ai <group> <op> [args...]\n\ngroups:")
+        for name in _GROUPS:
             print(f"  {name}")
+        print("\nexamples:")
+        print("  media-ai image generate --prompt 'a red bicycle' --output bike.png")
+        print("  media-ai video generate --prompt 'twin suns setting' --output clip.mp4")
+        print("  media-ai capabilities --provider openai")
         return 0 if argv else 2
-    cmd, rest = argv[0], argv[1:]
-    if cmd not in _COMMANDS:
-        print(f"media-ai: unknown command {cmd!r}. Try: {', '.join(_COMMANDS)}", file=sys.stderr)
+    group, rest = argv[0], argv[1:]
+    if group not in _GROUPS:
+        print(f"media-ai: unknown group {group!r}. Try: {', '.join(_GROUPS)}", file=sys.stderr)
         return 2
-    # Re-shape argv so the subcommand's argparse sees a clean program name.
-    sys.argv = [f"media-ai {cmd}", *rest]
-    return _COMMANDS[cmd]()
+    sys.argv = [f"media-ai {group}", *rest]
+    return _GROUPS[group]()
 
 
 if __name__ == "__main__":
