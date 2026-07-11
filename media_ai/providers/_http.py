@@ -75,8 +75,13 @@ class HttpClient:
         raw = self._send(method, self._url(path), data=body, headers=hdrs)
         return json.loads(raw) if raw else {}
 
-    def request_bytes(self, method: str, path: str, *, headers: dict | None = None) -> bytes:
-        return self._send(method, self._url(path), data=None, headers=headers or {}, decode=False)
+    def request_bytes(self, method: str, path: str, *, body: dict | None = None, headers: dict | None = None) -> bytes:
+        """Return the raw response bytes (e.g. audio/video). ``body`` (optional) is
+        JSON-encoded, so a POST that sends JSON and returns binary is expressible.
+        A POST is still non-idempotent, so ``_send`` won't retry it on transient 5xx."""
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        hdrs = {**({"Content-Type": "application/json"} if body is not None else {}), **(headers or {})}
+        return self._send(method, self._url(path), data=data, headers=hdrs, decode=False)
 
     def download(self, url: str, out: Path, *, headers: dict | None = None) -> Path:
         out.parent.mkdir(parents=True, exist_ok=True)

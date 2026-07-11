@@ -11,7 +11,7 @@ backend's idiosyncrasies live only inside its adapter.
 ```mermaid
 flowchart TB
     subgraph CLI["cli/ — thin front end (argparse + machine contract)"]
-        C1["image · video · concat · job · capabilities · usage"]
+        C1["image · video · speech · concat · job · capabilities · usage"]
         C2["legacy shims: text2image, image2video, video_task, …"]
         C3["common.py: run() · emit_result/emit_error · one JSON line + exit code"]
     end
@@ -19,7 +19,7 @@ flowchart TB
     subgraph CORE["core/ — provider-agnostic (never imports providers/)"]
         R["registry.py — register_provider · build() · model→provider routing"]
         P["provider.py — Provider interface (transport-agnostic)"]
-        T["types.py — ImageRequest / VideoRequest / MediaRef / GeometrySpec"]
+        T["types.py — ImageRequest / VideoRequest / SpeechRequest / DialogueRequest / MediaRef / GeometrySpec"]
         CAP["capabilities.py — ModelCapabilities + validate_request()"]
         ERR["errors.py — MediaError · category → exit code"]
         RES["result.py — GenerationResult · Artifact · JobHandle · JobStatus"]
@@ -102,7 +102,7 @@ and finalizes (downloads) via the same adapter.
 
 | Area | What it owns |
 |---|---|
-| `core/types.py` | Normalized `ImageRequest`/`VideoRequest`, `MediaRef` (any input source), `GeometrySpec` |
+| `core/types.py` | Normalized `ImageRequest`/`VideoRequest`/`SpeechRequest`/`DialogueRequest`, `MediaRef` (any input source), `GeometrySpec` |
 | `core/capabilities.py` | Per-model `ModelCapabilities` schema + `validate_request()` — drives discovery **and** gating |
 | `core/registry.py` | Dynamic provider registry, `register_provider()`, entry-point discovery, model→provider routing |
 | `core/provider.py` | The `Provider` interface (no transport assumptions) |
@@ -137,6 +137,8 @@ and finalizes (downloads) via the same adapter.
   use `media_ai.retry()`. See [EXTENDING.md](EXTENDING.md).
 - **New credential source** — add a resolver to the chain in
   `credentials/resolver.py` / `stores.py`.
-- **New modality/operation** (audio, upscaling, …) — the one change that *does*
-  touch core: add an `Operation` enum value + a CLI command group; the
-  capability/validation/registry machinery then extends to it unchanged.
+- **New modality/operation** (upscaling, …) — the one change that *does*
+  touch core: add a `Modality`/`Operation` enum value + a CLI command group; the
+  capability/validation/registry machinery then extends to it unchanged. The
+  `audio` modality (ElevenLabs text-to-speech / dialogue, via `media-ai speech`)
+  was added exactly this way — see `providers/elevenlabs.py` and `cli/speech.py`.

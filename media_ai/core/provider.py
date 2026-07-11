@@ -15,7 +15,7 @@ from ..credentials.secret import Credential
 from .capabilities import ModelCapabilities
 from .errors import ErrorCategory, MediaError
 from .result import GenerationResult, JobHandle, JobStatus
-from .types import ImageRequest, JobRef, Modality, VideoRequest
+from .types import DialogueRequest, ImageRequest, JobRef, Modality, SpeechRequest, VideoRequest
 
 
 class Provider:
@@ -61,6 +61,12 @@ class Provider:
 
     def generate_video(self, req: VideoRequest) -> GenerationResult | JobHandle:
         raise self._unsupported("video generation")
+
+    def generate_speech(self, req: SpeechRequest) -> GenerationResult:
+        raise self._unsupported("speech generation")
+
+    def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
+        raise self._unsupported("dialogue generation")
 
     def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
         raise self._unsupported("async jobs")

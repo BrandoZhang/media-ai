@@ -2,15 +2,16 @@
 
 Provider- and model-agnostic multimodal generation CLI — **no agent-framework
 dependency**. Drop it into any agent sandbox (uni-agent, Claude Code, Codex,
-OpenCode, a plain shell, …) and an Agent Skill generates images and video by
-running ordinary commands. One normalized interface drives multiple backends:
+OpenCode, a plain shell, …) and an Agent Skill generates images, video, and speech
+by running ordinary commands. One normalized interface drives multiple backends:
 
-| Provider | Images | Video | Auth env |
-|---|---|---|---|
-| **`mock`** (default, offline) | ✓ Pillow placeholders | ✓ ffmpeg clips | — |
-| **`volc`** — Volcengine Ark (Doubao Seedream/Seedance) | ✓ | ✓ (async) | `ARK_API_KEY` |
-| **`openai`** — GPT Image / DALL·E (+ Sora, experimental) | ✓ | ⚗️ (async) | `OPENAI_API_KEY` |
-| **`gemini`** — Gemini native image (Nano Banana) / Veo | ✓ | ✓ (async) | `GEMINI_API_KEY` |
+| Provider | Images | Video | Speech | Auth env |
+|---|---|---|---|---|
+| **`mock`** (default, offline) | ✓ Pillow placeholders | ✓ ffmpeg clips | ✓ WAV placeholders | — |
+| **`volc`** — Volcengine Ark (Doubao Seedream/Seedance) | ✓ | ✓ (async) | — | `ARK_API_KEY` |
+| **`openai`** — GPT Image / DALL·E (+ Sora, experimental) | ✓ | ⚗️ (async) | — | `OPENAI_API_KEY` |
+| **`gemini`** — Gemini native image (Nano Banana) / Veo | ✓ | ✓ (async) | — | `GEMINI_API_KEY` |
+| **`elevenlabs`** — text-to-speech + multi-voice dialogue | — | — | ✓ (+ timestamps) | `ELEVENLABS_API_KEY` |
 
 Highlights: **capability discovery** (`media-ai capabilities`), **deterministic
 structured errors** (JSON + category exit codes), **secret-safe credentials**
@@ -43,13 +44,15 @@ backend — no system packages needed. Real providers use only the stdlib.
 media-ai image generate --prompt "a red bicycle" --output bike.png
 media-ai image edit     --reference bike.png --prompt "make it blue" --output blue.png
 media-ai video generate --prompt "twin suns setting" --output clip.mp4 --resolution 480p
+media-ai speech generate --text "the first move sets everything in motion" --output vo.mp3 --provider elevenlabs
+media-ai speech dialogue --turn <voiceA> "knock knock" --turn <voiceB> "who is there?" --output d.mp3 --provider elevenlabs
 media-ai concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
 media-ai job    query   --provider gemini --id <op> --output clip.mp4
 media-ai capabilities   [--provider P] [--model M]
 media-ai usage
 ```
 
-Pick a backend with `--provider {mock,volc,openai,gemini}` (or `$MEDIA_PROVIDER`,
+Pick a backend with `--provider {mock,volc,openai,gemini,elevenlabs}` (or `$MEDIA_PROVIDER`,
 default `mock`) and a model with `--model`. A model id can imply its provider
 (`--model gpt-image-2` ⇒ openai). The eight original console-scripts
 (`text2image`, `image2image`, `text2video`, `image2video`, `ref2video`,

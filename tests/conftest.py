@@ -43,8 +43,12 @@ class FakeClient:
         self.calls.append({"method": method, "path": path, "fields": fields, "files": files, "multipart": True})
         return self._next()
 
-    def request_bytes(self, method, path, *, headers=None):
-        self.calls.append({"method": method, "path": path, "bytes": True})
+    def request_bytes(self, method, path, *, body=None, headers=None):
+        self.calls.append({"method": method, "path": path, "body": body, "bytes": True})
+        # Pop a queued response only when it's actually bytes (or an Exception to raise);
+        # otherwise return the constant so existing JSON-queue tests (volc/openai) stay green.
+        if self.responses and isinstance(self.responses[0], (bytes, bytearray, Exception)):
+            return self._next()
         return b"FAKE-VIDEO-BYTES"
 
     def download(self, url, out, *, headers=None):
@@ -79,6 +83,7 @@ def _ledger(tmp_path, monkeypatch, request):
         return tmp_path / "usage.jsonl"
     monkeypatch.setenv("MEDIA_PROVIDER", "mock")
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL",
                 "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path / "usage.jsonl"

@@ -6,9 +6,11 @@ machine-readable descriptor. This page is the human summary + setup.
 ## mock (default, offline)
 
 No credentials. Deterministic given `(prompt, seed)`. Draws Pillow placeholder
-images and ffmpeg clips; synthesizes token counts with the same formulas the real
-APIs document so the cost path is exercised offline. Supports a stateless fake
-async job so the `job query` path is testable without a network.
+images and ffmpeg clips, and synthesizes placeholder speech/dialogue as stdlib
+`wave` WAV tones (no ffmpeg needed, incl. a fake `--timestamps` sidecar);
+synthesizes token/character counts with the same formulas the real APIs document
+so the cost path is exercised offline. Supports a stateless fake async job so the
+`job query` path is testable without a network.
 
 ## volc — Volcengine Ark (Doubao Seedream / Seedance)
 
@@ -105,6 +107,34 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
 - Every image/video path (incl. local-file inputs) was exercised against the live API
   — see [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
+
+## elevenlabs — text-to-speech + dialogue
+
+```bash
+export MEDIA_PROVIDER=elevenlabs ELEVENLABS_API_KEY=…   # or ELEVEN_API_KEY
+```
+
+- **Audio** is **synchronous** (`audio` modality, `media-ai speech`). Auth is the
+  `xi-api-key` header.
+- **`speech generate`** — single voice via `POST /v1/text-to-speech/{voice_id}`
+  (raw audio bytes). `--voice`, `--output-format` (e.g. `mp3_44100_128`; full codec
+  enum in `capabilities`), `--language-code`, `--seed`. Voice knobs go through
+  `--option stability=… similarity_boost=… style=… speed=… use_speaker_boost=…`
+  (plus `previous_text`/`next_text`/`apply_text_normalization`/`enable_logging`/
+  `optimize_streaming_latency`).
+- **`speech dialogue`** — multi-voice via `POST /v1/text-to-dialogue`; turns come
+  from repeated `--turn VOICE_ID TEXT` and/or a `--script file.json`
+  (`[{"voice_id":…,"text":…}]`). ≤10 unique voices; keep total text ≲2000 chars.
+- **`--timestamps true`** switches either op to the `/with-timestamps` endpoint and
+  writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
+  also gets `voice_segments`) as a second artifact.
+- Models: `eleven_multilingual_v2` (TTS default), `eleven_turbo_v2_5`,
+  `eleven_flash_v2_5`, `eleven_v3` (dialogue default). `mp3_44100_192` needs Creator
+  tier+; PCM/WAV 44.1 kHz needs Pro tier+.
+- Base URL is configurable (`ELEVENLABS_BASE_URL` or a profile `base_url`) to target a
+  regional residency endpoint (`api.us`/`api.eu.residency`/`api.in.residency`/
+  `api.sg.residency`.elevenlabs.io). Extra env: `ELEVENLABS_MODEL`,
+  `ELEVENLABS_DIALOGUE_MODEL`, `ELEVENLABS_VOICE_ID`.
 
 ## Capability matrix (summary)
 

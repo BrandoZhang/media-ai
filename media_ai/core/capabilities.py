@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 from .errors import ErrorCategory, MediaError
-from .types import GeometrySpec, ImageRequest, Modality, Operation, VideoRequest
+from .types import DialogueRequest, GeometrySpec, ImageRequest, Modality, Operation, SpeechRequest, VideoRequest
 
 
 class GeometryMode(str, Enum):
@@ -77,12 +77,28 @@ class VideoCaps:
 
 
 @dataclass
+class AudioCaps:
+    operations: frozenset[Operation] = frozenset({Operation.SPEECH_GENERATE})
+    voices: tuple[str, ...] = ()  # known/preset voice ids (informational)
+    default_voice: str | None = None
+    output_formats: tuple[str, ...] = ("mp3_44100_128",)  # codec_samplerate_bitrate
+    supports_seed: bool = False
+    supports_language_code: bool = False
+    supports_timestamps: bool = False  # per-character alignment sidecar
+    supports_dialogue: bool = False  # multi-voice (speech.dialogue)
+    max_dialogue_voices: int = 0  # 0 = dialogue unsupported
+    max_characters: int | None = None  # per-request text budget
+    options: tuple[str, ...] = ()
+
+
+@dataclass
 class ModelCapabilities:
     provider: str
     model: str
     modalities: frozenset[Modality]
     image: ImageCaps | None = None
     video: VideoCaps | None = None
+    audio: AudioCaps | None = None
     notes: tuple[str, ...] = ()
     experimental: bool = False
     aliases: tuple[str, ...] = field(default_factory=tuple)
@@ -97,7 +113,7 @@ class ModelCapabilities:
 
         d = asdict(self)
         d["modalities"] = sorted(m.value for m in self.modalities)
-        for key in ("image", "video"):
+        for key in ("image", "video", "audio"):
             if d[key] is not None:
                 sub = d[key]
                 sub["operations"] = sorted(o.value for o in getattr(self, key).operations)
@@ -160,6 +176,10 @@ def validate_request(req, caps: ModelCapabilities, policy: UnsupportedPolicy = U
         _validate_image(req, caps, issues)
     elif isinstance(req, VideoRequest):
         _validate_video(req, caps, issues)
+    elif isinstance(req, SpeechRequest):
+        _validate_speech(req, caps, issues)
+    elif isinstance(req, DialogueRequest):
+        _validate_dialogue(req, caps, issues)
 
     if not issues:
         return []
@@ -237,6 +257,51 @@ def _validate_video(req: VideoRequest, caps: ModelCapabilities, issues: _Issues)
     if req.return_last_frame and not vc.supports_return_last_frame:
         issues.add("return-last-frame", "model cannot return the output's last frame")
     _check_options(req.options, vc.options, issues)
+
+
+def _validate_speech(req: SpeechRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None:
+        issues.add("modality", "model does not support speech generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if req.output_format and ac.output_formats and req.output_format not in ac.output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.output_formats)}")
+    if req.seed is not None and not ac.supports_seed:
+        issues.add("seed", "model does not accept a seed")
+    if req.language_code and not ac.supports_language_code:
+        issues.add("language-code", "model does not accept a language code")
+    if req.timestamps and not ac.supports_timestamps:
+        issues.add("timestamps", "model does not support character timestamps")
+    if ac.max_characters is not None and len(req.text) > ac.max_characters:
+        issues.add("text", f"exceeds max {ac.max_characters} characters")
+    _check_options(req.options, ac.options, issues)
+
+
+def _validate_dialogue(req: DialogueRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None or not ac.supports_dialogue:
+        issues.add("modality", "model does not support dialogue generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if not req.turns:
+        issues.add("turns", "dialogue requires at least one turn")
+    voices = req.voices()
+    if ac.max_dialogue_voices and len(voices) > ac.max_dialogue_voices:
+        issues.add("turns", f"max {ac.max_dialogue_voices} unique voices per dialogue")
+    if req.output_format and ac.output_formats and req.output_format not in ac.output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.output_formats)}")
+    if req.seed is not None and not ac.supports_seed:
+        issues.add("seed", "model does not accept a seed")
+    if req.language_code and not ac.supports_language_code:
+        issues.add("language-code", "model does not accept a language code")
+    if req.timestamps and not ac.supports_timestamps:
+        issues.add("timestamps", "model does not support character timestamps")
+    if ac.max_characters is not None and sum(len(t.text) for t in req.turns) > ac.max_characters:
+        issues.add("text", f"total dialogue text exceeds max {ac.max_characters} characters")
+    _check_options(req.options, ac.options, issues)
 
 
 def _check_options(options: dict, allowed: tuple[str, ...], issues: _Issues) -> None:

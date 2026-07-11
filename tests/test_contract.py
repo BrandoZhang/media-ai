@@ -14,7 +14,7 @@ import pytest
 from media_ai.core import registry
 from media_ai.core.capabilities import UnsupportedPolicy, validate_request
 from media_ai.core.errors import MediaError
-from media_ai.core.types import ImageRequest, Modality, Operation, VideoRequest
+from media_ai.core.types import ImageRequest, Modality, Operation, SpeechRequest, VideoRequest
 
 
 def _all_models():
@@ -41,12 +41,13 @@ def test_capabilities_wellformed_and_serializable(provider, model):
     # modality <-> caps object consistency
     assert (Modality.IMAGE in caps.modalities) == (caps.image is not None)
     assert (Modality.VIDEO in caps.modalities) == (caps.video is not None)
+    assert (Modality.AUDIO in caps.modalities) == (caps.audio is not None)
 
 
 @pytest.mark.parametrize("provider,model", ALL, ids=[f"{p}:{m}" for p, m in ALL])
 def test_declared_operations_are_known(provider, model):
     caps = registry.get_provider(provider).capabilities(model)
-    for sub in (caps.image, caps.video):
+    for sub in (caps.image, caps.video, caps.audio):
         if sub is not None:
             for op in sub.operations:
                 assert isinstance(op, Operation)
@@ -61,6 +62,10 @@ def test_unsupported_option_is_rejected(provider, model):
             validate_request(req, caps, UnsupportedPolicy.ERROR)
     elif caps.video is not None:
         req = VideoRequest(prompt="x", output=Path("o.mp4"), options={"__definitely_not_a_real_option__": 1})
+        with pytest.raises(MediaError):
+            validate_request(req, caps, UnsupportedPolicy.ERROR)
+    elif caps.audio is not None:
+        req = SpeechRequest(text="x", output=Path("o.mp3"), options={"__definitely_not_a_real_option__": 1})
         with pytest.raises(MediaError):
             validate_request(req, caps, UnsupportedPolicy.ERROR)
 
@@ -80,4 +85,5 @@ def test_registry_infers_provider_from_model_id():
     # a removed Imagen id still routes to gemini (for a clear removal error, not mock)
     assert registry.provider_for_model("imagen-4.0-generate-001") == "gemini"
     assert registry.provider_for_model("doubao-seedance-2-0-260128") == "volc"
+    assert registry.provider_for_model("eleven_multilingual_v2") == "elevenlabs"
     assert registry.provider_for_model("totally-unknown") is None

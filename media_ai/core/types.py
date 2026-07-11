@@ -17,15 +17,20 @@ from pathlib import Path
 class Modality(str, Enum):
     IMAGE = "image"
     VIDEO = "video"
+    AUDIO = "audio"
 
 
 class Operation(str, Enum):
     IMAGE_GENERATE = "image.generate"
     IMAGE_EDIT = "image.edit"
     VIDEO_GENERATE = "video.generate"
+    SPEECH_GENERATE = "speech.generate"
+    SPEECH_DIALOGUE = "speech.dialogue"
 
     @property
     def modality(self) -> Modality:
+        if self.value.startswith(("speech", "audio")):
+            return Modality.AUDIO
         return Modality.VIDEO if self.value.startswith("video") else Modality.IMAGE
 
 
@@ -131,6 +136,64 @@ class VideoRequest:
             refs.append(self.last_frame)
         refs += self.reference_images + self.reference_videos + self.reference_audios
         return refs
+
+
+@dataclass
+class SpeechRequest:
+    """Single-voice text-to-speech. ``voice`` is the provider's voice id; provider-
+    specific voice knobs (stability, similarity_boost, style, …) travel in ``options``
+    and are capability-gated. ``timestamps`` requests character-level alignment."""
+
+    text: str
+    output: Path
+    operation: Operation = Operation.SPEECH_GENERATE
+    voice: str | None = None  # provider voice id (falls back to a provider default)
+    output_format: str | None = None  # e.g. mp3_44100_128 (provider wire format)
+    language_code: str | None = None  # ISO 639-1
+    seed: int | None = None
+    timestamps: bool = False  # also request per-character timing (sidecar artifact)
+    model: str | None = None  # resolved model id (registry fills this in)
+    options: dict = field(default_factory=dict)  # capability-gated provider extras
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+
+@dataclass(frozen=True)
+class DialogueTurn:
+    """One line of a multi-voice dialogue: what is said and by which voice."""
+
+    text: str
+    voice: str  # provider voice id for this line
+
+
+@dataclass
+class DialogueRequest:
+    """Multi-voice dialogue: an ordered list of (text, voice) turns rendered into one
+    audio track. Cross-provider fields are first-class; provider knobs go in ``options``."""
+
+    turns: list[DialogueTurn]
+    output: Path
+    operation: Operation = Operation.SPEECH_DIALOGUE
+    output_format: str | None = None
+    language_code: str | None = None
+    seed: int | None = None
+    timestamps: bool = False
+    model: str | None = None
+    options: dict = field(default_factory=dict)
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+    def voices(self) -> list[str]:
+        """Unique voice ids used across the dialogue, in first-seen order."""
+        seen: list[str] = []
+        for t in self.turns:
+            if t.voice not in seen:
+                seen.append(t.voice)
+        return seen
 
 
 @dataclass(frozen=True)

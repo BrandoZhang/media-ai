@@ -20,6 +20,7 @@ ENV_VARS: dict[str, tuple[str, ...]] = {
     "openai": ("OPENAI_API_KEY",),
     "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "volc": ("ARK_API_KEY", "VOLC_API_KEY"),
+    "elevenlabs": ("ELEVENLABS_API_KEY", "ELEVEN_API_KEY"),
 }
 
 _SECRET_MANAGER_PREFIXES = ("op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
