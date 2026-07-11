@@ -1,0 +1,51 @@
+---
+name: media-ai-usage
+description: >-
+  Report accumulated token/artifact cost from the media-ai usage ledger. Use when
+  asked how much a generation run cost, to summarize token usage or spend across
+  media-ai image/video generations, or to account for a batch/pipeline of commands.
+version: 1.0.0
+metadata:
+  requires:
+    bins: ["media-ai"]
+  cliHelp: "media-ai usage --help"
+---
+
+# media-ai-usage — account for generation cost
+
+> Read `../media-ai-shared/SKILL.md` for the machine contract. This reads a local
+> ledger — no provider or credentials needed.
+
+Every generation appends one line to a JSONL **usage ledger**. `media-ai usage`
+aggregates it into token/artifact totals for the run.
+
+## The ledger
+
+- Default path: `$MEDIA_USAGE_LOG`, else `./media_usage.jsonl`.
+- **Isolate concurrent runs:** point `MEDIA_USAGE_LOG` (and each `--output`) at a
+  per-task directory so parallel pipelines don't collide.
+
+```bash
+export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
+media-ai image generate --provider gemini --prompt "..." --output /tmp/run/a.png
+media-ai video generate --provider volc   --prompt "..." --output /tmp/run/b.mp4 --resolution 480p
+media-ai usage                       # summarize $MEDIA_USAGE_LOG
+media-ai usage --log /tmp/run/usage.jsonl --pretty   # or an explicit ledger path
+```
+
+## Command & flags
+
+| flag | notes |
+|---|---|
+| `--log PATH` | ledger path (default `$MEDIA_USAGE_LOG` → `./media_usage.jsonl`) |
+| `--pretty` | indent the JSON |
+| `--metadata-out PATH` | also write the JSON to a file |
+
+## Output
+
+```json
+{"ok": true, "schema_version": 1, "ledger": "/tmp/run/usage.jsonl", "totals": {...}}
+```
+
+`totals` aggregates the per-generation token/artifact usage recorded across the run.
+The legacy `media_usage --log <path>` console-script maps to this same command.
