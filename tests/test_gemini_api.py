@@ -202,3 +202,67 @@ def test_veo_caps_reference_and_resolution_by_version():
     assert v31.supports_reference_images and v31.supports_reference_videos and "4k" in v31.resolutions
     lite = prov.capabilities("veo-3.1-lite-generate-preview").video
     assert not lite.supports_reference_images and "4k" not in lite.resolutions and lite.resolutions == ("720p", "1080p")
+
+
+# ---- structured error classification (troubleshooting guide) -------------
+
+import json  # noqa: E402
+
+
+def _err_body(code, status, message="boom"):
+    return json.dumps({"error": {"code": code, "status": status, "message": message}})
+
+
+def test_error_maps_google_status_strings():
+    prov = GeminiProvider()
+    cases = {
+        (400, "INVALID_ARGUMENT"): ErrorCategory.VALIDATION,
+        (400, "FAILED_PRECONDITION"): ErrorCategory.VALIDATION,
+        (403, "PERMISSION_DENIED"): ErrorCategory.AUTH,
+        (404, "NOT_FOUND"): ErrorCategory.NOT_FOUND,
+        (429, "RESOURCE_EXHAUSTED"): ErrorCategory.RATE_LIMIT,
+        (504, "DEADLINE_EXCEEDED"): ErrorCategory.TIMEOUT,
+        (500, "INTERNAL"): ErrorCategory.PROVIDER,
+        (503, "UNAVAILABLE"): ErrorCategory.PROVIDER,
+    }
+    for (code, status), expected in cases.items():
+        err = prov._error(code, _err_body(code, status))
+        assert err.category == expected, (status, err.category)
+        assert err.details.get("google_status") == status
+
+
+def test_error_failed_precondition_has_billing_hint():
+    err = GeminiProvider()._error(400, _err_body(400, "FAILED_PRECONDITION", "free tier not available"))
+    assert err.category == ErrorCategory.VALIDATION and "billing" in err.message.lower()
+
+
+def test_error_leaked_key_is_auth_with_hint():
+    body = _err_body(403, "PERMISSION_DENIED", "Your API key was reported as leaked. Please use another API key.")
+    err = GeminiProvider()._error(403, body)
+    assert err.category == ErrorCategory.AUTH and "leaked" in err.message.lower()
+
+
+def test_error_falls_back_to_http_status_for_unstructured_body():
+    # 504 with a plain-text (non-JSON) body still classifies as a timeout
+    err = GeminiProvider()._error(504, "upstream timed out")
+    assert err.category == ErrorCategory.TIMEOUT
+    # unknown status with no parseable body -> provider
+    assert GeminiProvider()._error(418, "teapot").category == ErrorCategory.PROVIDER
+
+
+def test_veo_operation_error_classifies_by_grpc_code(fake_provider):
+    # gRPC 8 = RESOURCE_EXHAUSTED -> rate_limit (was a generic provider error before)
+    prov, _ = fake_provider(GeminiProvider, [
+        {"name": "op", "done": True, "error": {"code": 8, "message": "quota exceeded"}}])
+    with pytest.raises(MediaError) as ei:
+        prov.get_job(JobRef(provider="gemini", id="op"))
+    assert ei.value.category == ErrorCategory.RATE_LIMIT
+    assert ei.value.details.get("google_status") == "RESOURCE_EXHAUSTED"
+
+
+def test_veo_operation_error_detects_safety(fake_provider):
+    prov, _ = fake_provider(GeminiProvider, [
+        {"name": "op", "done": True, "error": {"code": 3, "message": "the request was blocked by safety filters"}}])
+    with pytest.raises(MediaError) as ei:
+        prov.get_job(JobRef(provider="gemini", id="op"))
+    assert ei.value.category == ErrorCategory.SAFETY

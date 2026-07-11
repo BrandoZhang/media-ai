@@ -3,9 +3,9 @@
 Generalizes the original Volc backend's request logic:
 
 * **Idempotency-aware retry** — a ``429`` (rejected, not processed) is always safe
-  to retry; a transient ``5xx``/network error is retried **only** on idempotent
-  methods (``GET``/``DELETE``), so a non-idempotent ``POST`` create-task can't
-  double-submit a billed job.
+  to retry; a transient ``408``/``5xx``/network error is retried **only** on
+  idempotent methods (``GET``/``DELETE``), so a non-idempotent ``POST`` create-task
+  can't double-submit a billed job.
 * **Backoff** — honors ``Retry-After`` when present, else exponential backoff with
   jitter.
 * **Error mapping** — a provider supplies an ``error_mapper(status, body)`` that
@@ -29,7 +29,7 @@ from typing import Callable
 from ..core.errors import ErrorCategory, MediaError
 from ..credentials.redaction import redact
 
-_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
 class HttpClient:

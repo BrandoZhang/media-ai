@@ -20,6 +20,7 @@ watermarking is unconditional; ``generateAudio`` is unreliable on the Developer 
 from __future__ import annotations
 
 import base64
+import json
 import os
 import time
 from pathlib import Path
@@ -252,7 +253,7 @@ class GeminiProvider(HttpProvider):
 
     def _finalize_video(self, client, headers, op_name: str, out: Path, model: str, res: dict) -> GenerationResult:
         if res.get("error"):
-            raise MediaError(f"Veo operation failed: {str(res['error'])[:200]}", category=ErrorCategory.PROVIDER, provider=self.name)
+            raise _operation_error(res["error"], op_name, self.name)
         uri = _veo_video_uri(res)
         if not uri:
             raise MediaError(f"Veo operation {op_name} done but no video uri", category=ErrorCategory.PROVIDER, provider=self.name)
@@ -269,8 +270,7 @@ class GeminiProvider(HttpProvider):
         done = bool(res.get("done"))
         if done and res.get("error"):
             # a done-with-error operation is a failure, not a success
-            raise MediaError(f"Veo operation {ref.id} failed: {str(res['error'])[:200]}",
-                             category=ErrorCategory.PROVIDER, provider=self.name)
+            raise _operation_error(res["error"], ref.id, self.name)
         result = None
         if done and output is not None:
             result = self._finalize_video(client, headers, ref.id, Path(output), ref.model or self.video_model, res)
@@ -283,12 +283,22 @@ class GeminiProvider(HttpProvider):
 
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:
-        low = body.lower()
-        if "safety" in low or "blocked" in low or "prohibited" in low:
-            return MediaError(f"Gemini safety block: {body}", category=ErrorCategory.SAFETY, provider=self.name)
-        cat = {400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
-               404: ErrorCategory.NOT_FOUND, 429: ErrorCategory.RATE_LIMIT}.get(status, ErrorCategory.PROVIDER)
-        return MediaError(f"Gemini HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
+        """Map a Gemini HTTP error to the shared taxonomy.
+
+        Prefers Google's structured ``{"error": {"code","message","status"}}`` body
+        (so ``FAILED_PRECONDITION``, ``RESOURCE_EXHAUSTED``, ``DEADLINE_EXCEEDED`` …
+        classify precisely) and falls back to the HTTP status when it can't parse.
+        """
+        gstatus, message, _ = _parse_error(body)
+        cat, hint = _categorize(gstatus, message, status)
+        label = gstatus or f"HTTP {status}"
+        msg = f"Gemini {label}: {message}"
+        if hint:
+            msg += f" — {hint}"
+        details = {"status": status}
+        if gstatus:
+            details["google_status"] = gstatus
+        return MediaError(msg, category=cat, code=gstatus or None, provider=self.name, details=details)
 
 
 # --------------------------------------------------------------------------
@@ -315,6 +325,107 @@ def _grounding_tools(req: ImageRequest) -> list[dict]:
     if req.options.get("image_search"):
         search["search_types"] = ["web_search", "image_search"]
     return [{"google_search": search}]
+
+
+# --------------------------------------------------------------------------
+# error classification
+# --------------------------------------------------------------------------
+
+# Google's canonical error `status` string -> shared taxonomy. Mirrors the
+# backend error-code table from the Gemini troubleshooting guide.
+_STATUS_CATEGORY = {
+    "INVALID_ARGUMENT": ErrorCategory.VALIDATION,
+    "FAILED_PRECONDITION": ErrorCategory.VALIDATION,  # free-tier/region/billing (400)
+    "OUT_OF_RANGE": ErrorCategory.VALIDATION,
+    "UNAUTHENTICATED": ErrorCategory.AUTH,
+    "PERMISSION_DENIED": ErrorCategory.AUTH,
+    "NOT_FOUND": ErrorCategory.NOT_FOUND,
+    "RESOURCE_EXHAUSTED": ErrorCategory.RATE_LIMIT,  # RPM/TPM/RPD/spend (429)
+    "CANCELLED": ErrorCategory.TIMEOUT,  # client closed the connection (499)
+    "DEADLINE_EXCEEDED": ErrorCategory.TIMEOUT,  # server couldn't finish in time (504)
+    "ABORTED": ErrorCategory.PROVIDER,
+    "INTERNAL": ErrorCategory.PROVIDER,  # unexpected server error (500)
+    "UNAVAILABLE": ErrorCategory.PROVIDER,  # temporarily overloaded/down (503)
+    "UNKNOWN": ErrorCategory.PROVIDER,
+}
+
+# Long-running Veo operations report failures as a google.rpc.Status with a
+# numeric gRPC `code` rather than the string `status`; map it back.
+_GRPC_STATUS = {
+    1: "CANCELLED", 3: "INVALID_ARGUMENT", 4: "DEADLINE_EXCEEDED", 5: "NOT_FOUND",
+    7: "PERMISSION_DENIED", 8: "RESOURCE_EXHAUSTED", 9: "FAILED_PRECONDITION",
+    10: "ABORTED", 13: "INTERNAL", 14: "UNAVAILABLE", 16: "UNAUTHENTICATED",
+}
+
+# Fallback when the body carries no canonical status (429/408/504 are transient).
+_HTTP_CATEGORY = {
+    400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
+    404: ErrorCategory.NOT_FOUND, 408: ErrorCategory.TIMEOUT, 429: ErrorCategory.RATE_LIMIT,
+    499: ErrorCategory.TIMEOUT, 504: ErrorCategory.TIMEOUT,
+}
+
+
+def _parse_error(body: str) -> tuple[str, str, int | None]:
+    """Extract ``(status_string, message, code)`` from a Gemini error body.
+
+    Tolerant of the ``{"error": {"code","message","status"}}`` shape (HTTP errors
+    and google.rpc.Status alike) and of plain text. ``code`` is the numeric field as
+    sent (an HTTP status for REST errors, a gRPC code for operation errors)."""
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return "", body, None
+    err = data.get("error") if isinstance(data, dict) else None
+    if isinstance(err, str):
+        return "", err, None
+    if not isinstance(err, dict):
+        return "", body if isinstance(body, str) else str(body), None
+    code = err.get("code")
+    status = str(err.get("status") or "")
+    if not status and isinstance(code, int) and code < 100:
+        status = _GRPC_STATUS.get(code, "")
+    return status, err.get("message") or body, code if isinstance(code, int) else None
+
+
+def _categorize(gstatus: str, message: str, http_status: int | None) -> tuple[ErrorCategory, str | None]:
+    """Map a Google status + message (+ HTTP status) to ``(category, hint)``."""
+    low = f"{gstatus} {message or ''}".lower()
+    if "leaked" in low:  # a reported-leaked key is dead — rotation is the only fix
+        return ErrorCategory.AUTH, "key reported as leaked — generate a new one in Google AI Studio"
+    if any(k in low for k in ("safety", "blocked", "prohibited")):
+        return ErrorCategory.SAFETY, None
+    cat = _STATUS_CATEGORY.get(gstatus)
+    if cat is None:
+        cat = _HTTP_CATEGORY.get(http_status, ErrorCategory.PROVIDER) if http_status else ErrorCategory.PROVIDER
+    hint = None
+    if gstatus == "FAILED_PRECONDITION":
+        hint = "free tier may be unavailable in your region — enable billing in Google AI Studio"
+    elif cat == ErrorCategory.RATE_LIMIT:
+        hint = "rate/quota limit — back off and retry, or request a higher limit"
+    elif cat == ErrorCategory.TIMEOUT:
+        hint = "increase the client timeout (GEMINI_POLL_TIMEOUT for video) or reduce input size"
+    return cat, hint
+
+
+def _operation_error(err, op_name: str, provider: str) -> MediaError:
+    """Classify a terminal Veo long-running-operation failure (``res['error']``)."""
+    if isinstance(err, dict):
+        code = err.get("code")
+        message = err.get("message") or str(err)
+        gstatus = str(err.get("status") or "") or (_GRPC_STATUS.get(code, "") if isinstance(code, int) else "")
+    else:
+        code, gstatus, message = None, "", str(err)
+    cat, hint = _categorize(gstatus, message, None)
+    label = gstatus or (f"code {code}" if code is not None else "error")
+    msg = f"Veo operation {op_name} failed: [{label}] {message}"[:400]
+    if hint:
+        msg += f" — {hint}"
+    details = {"operation": op_name}
+    if gstatus:
+        details["google_status"] = gstatus
+    if code is not None:
+        details["code"] = code
+    return MediaError(msg, category=cat, code=gstatus or None, provider=provider, details=details)
 
 
 # --------------------------------------------------------------------------
