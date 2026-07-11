@@ -50,25 +50,33 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
   output-safety block on a finished-but-rejected video still exits 8.
 - Extra env: `ARK_BASE_URL`, `ARK_IMAGE_SIZE`, `ARK_POLL_INTERVAL`, `ARK_POLL_TIMEOUT`.
 
-## openai — GPT Image / DALL·E / Sora
+## openai — GPT Image / DALL·E
 
 ```bash
 export MEDIA_PROVIDER=openai OPENAI_API_KEY=…
 export OPENAI_ORG=… OPENAI_PROJECT=…     # optional scoping headers
 ```
 
-- **Image** is **synchronous**; GPT Image returns **base64** (no hosted URL).
+- **Image-only** and **synchronous**; GPT Image returns **base64** (no hosted URL).
   `POST /v1/images/generations` and `POST /v1/images/edits` (multipart, up to 16
-  references + an alpha `--mask`).
-- Models: `gpt-image-2` (arbitrary sizes ÷16, ratio 1:3–3:1, ≤3840×2160; **no
-  transparent background**), `gpt-image-1` / `gpt-image-1-mini` (fixed sizes,
-  transparency ok), `dall-e-3` (n=1, quality standard/hd, `--option style=…`),
-  `dall-e-2` (edits/variations). `--quality`, `--background`, `--format`,
-  `--option moderation=… output_compression=… input_fidelity=…`.
-- **Video (Sora)** — `sora-2` / `sora-2-pro`, async job. **Experimental** (see
-  LIMITATIONS.md). `--duration {4,8,12}`, `--option size=…`.
+  references + an alpha `--mask`). OpenAI no longer exposes a video API, so
+  `video generate --provider openai` fails pre-flight with `unsupported` (exit 3).
+- Models: `gpt-image-2` (arbitrary sizes — both edges ÷16, max edge 3840px, edge
+  ratio ≤3:1, total pixels 655360–8294400; **no transparent background**),
+  `gpt-image-1.5` / `gpt-image-1` / `gpt-image-1-mini` (fixed sizes
+  1024×1024 / 1536×1024 / 1024×1536, transparency ok), `dall-e-3` (n=1,
+  `--option style=…`), `dall-e-2` (edits/variations). `--quality {low,medium,high,auto}`,
+  `--background`, `--format {png,jpeg,webp}`, `--option moderation=… output_compression=…`.
+- **`input_fidelity`** is a knob only on `gpt-image-1` / `gpt-image-1.5`
+  (`--option input_fidelity=high`); `gpt-image-2` always processes inputs at high
+  fidelity (the param is rejected and never sent) and the mini tier doesn't expose it.
+- For `gpt-image-2`, a `--resolution 2K|4K` alongside `--aspect-ratio` selects a
+  documented larger size (e.g. `16:9` + `4K` → `3840×2160`).
+- **Moderation blocks** map to a `safety` error (exit 8) carrying the stable
+  `error.code` and coarse `moderation_details` (stage + categories) in the error
+  `details` for developer logs.
 - GPT Image may require org verification in the OpenAI dashboard.
-- Extra env: `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`, `OPENAI_VIDEO_MODEL`.
+- Extra env: `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`.
 
 ## gemini — Gemini native image / Imagen / Veo
 
@@ -96,7 +104,7 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
 
 ## Capability matrix (summary)
 
-| | volc image | openai gpt-image-2 | gemini native | imagen-4 | volc/openai/gemini video |
+| | volc image | openai gpt-image-2 | gemini native | imagen-4 | volc/gemini video |
 |---|---|---|---|---|---|
 | edit / references | ✓ | ✓ (+mask) | ✓ | ✗ | i2v/first-frame |
 | geometry | px or tier | px (arbitrary) | aspect-ratio | aspect-ratio | ratio+resolution |

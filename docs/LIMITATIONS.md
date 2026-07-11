@@ -7,14 +7,19 @@ before relying on them in production; the adapters are written to fail safely
 
 ## OpenAI
 
-- **Sora video is experimental.** The Videos API (`POST /v1/videos` → poll) is
-  implemented but its availability/shape was not fully verifiable, and some
-  third-party sources claim a deprecation timeline we could not confirm in the
-  official docs. Treat `--provider openai` video as best-effort. `[verify]`
-- **`input_fidelity` on gpt-image-2** — declared as an option; docs say
-  "gpt-image-1 and gpt-image-1.5 and later," which is ambiguous for gpt-image-2. `[verify]`
-- **Streaming partial images** (`partial_images`) are declared in capabilities but
-  not yet wired to write `<stem>_partial_N` artifacts (sync full-image path only).
+- **Image-only.** OpenAI no longer exposes a public video API, so this adapter
+  drops video entirely; `video generate --provider openai` fails pre-flight with a
+  deterministic `unsupported` error (exit 3).
+- **`input_fidelity`** is scoped to `gpt-image-1` / `gpt-image-1.5` only. Per the
+  docs, `gpt-image-2` always processes inputs at high fidelity and rejects the
+  parameter, so it is neither declared as an option nor forwarded for that model.
+- **Streaming partial images** (`partial_images`) are intentionally not supported:
+  the CLI's machine contract emits one final JSON object, so it takes the
+  synchronous full-image path and does not write `<stem>_partial_N` artifacts.
+- **gpt-image-2 sizes** are validated against the documented constraints (both
+  edges ÷16, max edge 3840px, edge ratio ≤3:1, total pixels 655360–8294400) rather
+  than a fixed enum; a `--resolution 2K|4K` + `--aspect-ratio` maps to a documented
+  larger size.
 - **DALL·E** returns a temporary URL by default; we force `response_format=b64_json`
   to unify on bytes. Flat-priced (no token `usage`).
 

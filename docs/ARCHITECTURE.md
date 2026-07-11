@@ -38,7 +38,7 @@ flowchart TB
         BASE["_base.py HttpProvider · _http.py HttpClient (retry/idempotency)"]
         MOCK["mock (offline default)"]
         VOLC["volc (Ark)"]
-        OAI["openai (GPT Image/DALL·E/Sora)"]
+        OAI["openai (GPT Image/DALL·E)"]
         GEM["gemini (native/Imagen/Veo)"]
         EXT["custom plugins (entry point / register_provider)"]
     end
@@ -126,8 +126,8 @@ and finalizes (downloads) via the same adapter.
 - **Machine contract** — one JSON object on stdout (success or failure), redacted
   logs on stderr, category-specific exit codes. Built once in `cli/common.run()`.
 - **Async jobs** — a `JobHandle`/`JobStatus` abstraction over per-provider ids
-  (Volc task-id, OpenAI video-id, Gemini `operations/…`), with a finalize/download
-  step and signal-driven cancel for blocking Volc polls.
+  (Volc task-id, Gemini `operations/…`), with a finalize/download step and
+  signal-driven cancel for blocking Volc polls. (OpenAI is image-only/synchronous.)
 
 ## Extension points
 
