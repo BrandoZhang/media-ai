@@ -39,6 +39,7 @@ class HttpClient:
         base_url: str,
         provider: str,
         error_mapper: Callable[[int, str], MediaError] | None = None,
+        retry_classifier: Callable[[int, str], bool] | None = None,
         timeout: float = 120.0,
         max_retries: int = 4,
         retry_base: float = 2.0,
@@ -47,6 +48,10 @@ class HttpClient:
         self.base_url = base_url.rstrip("/")
         self.provider = provider
         self.error_mapper = error_mapper or self._default_error
+        # Optional hook to VETO a would-be retry after inspecting the response body
+        # (e.g. a 429 QuotaExceeded is a hard cap, not a transient rate limit). It
+        # can only turn a retry off, never force one on.
+        self.retry_classifier = retry_classifier
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_base = retry_base
@@ -96,12 +101,20 @@ class HttpClient:
                     return raw.decode("utf-8") if decode else raw
             except urllib.error.HTTPError as e:
                 status = e.code
+                raw = ""
+                if hasattr(e, "read"):
+                    try:
+                        raw = e.read().decode("utf-8", "replace")[:2000]
+                    except Exception:  # noqa: BLE001
+                        raw = ""
+                # 429 is always safe to retry (rejected, not processed); transient
+                # 5xx/network only on idempotent methods. A classifier may then veto
+                # a retry it knows is pointless (e.g. quota exhausted).
                 retryable = status == 429 or (status in self.retry_statuses and idempotent)
-                if retryable and attempt < self.max_retries:
+                if retryable and attempt < self.max_retries and self._retry_ok(status, raw):
                     self._sleep(e, attempt)
                     continue
-                body = redact(e.read().decode("utf-8", "replace")[:800]) if hasattr(e, "read") else ""
-                raise self.error_mapper(status, body)
+                raise self.error_mapper(status, redact(raw[:800]))
             except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
                 is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
                     getattr(exc, "reason", None), (socket.timeout, TimeoutError)
@@ -114,6 +127,16 @@ class HttpClient:
                     f"{self.provider} request failed: {redact(str(exc))}", category=cat, provider=self.provider
                 ) from None
         raise MediaError(f"{self.provider} request failed after retries", category=ErrorCategory.PROVIDER, provider=self.provider)
+
+    def _retry_ok(self, status: int, body: str) -> bool:
+        """Let a provider veto a would-be retry (default: allow). A classifier
+        error never blocks a legitimate retry."""
+        if self.retry_classifier is None:
+            return True
+        try:
+            return bool(self.retry_classifier(status, body))
+        except Exception:  # noqa: BLE001
+            return True
 
     def _sleep(self, err: urllib.error.HTTPError, attempt: int) -> None:
         retry_after = err.headers.get("Retry-After") if err.headers else None

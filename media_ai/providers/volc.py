@@ -26,7 +26,7 @@ from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
-from ._volc_errors import task_failure_error, to_media_error
+from ._volc_errors import classify, parse_error_body, task_failure_error, to_media_error
 
 _ARK_MIN_IMAGE_PIXELS = 2560 * 1440  # Seedream method-2 floor
 _TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
@@ -175,9 +175,13 @@ class VolcProvider(HttpProvider):
             "resolution": (geo.resolution if geo else None) or "720p",
             "ratio": normalize_ratio(geo.aspect_ratio if geo else None) or "adaptive",
             "duration": req.duration or 5,
-            "camera_fixed": bool(req.options.get("camera_fixed", False)),
             "watermark": bool(req.watermark) if req.watermark is not None else False,
         }
+        # camera_fixed is only sent when the caller explicitly set it via
+        # `--option camera_fixed=...`; some models reject the parameter otherwise
+        # (InvalidParameter camera_fixed). Don't force a default.
+        if "camera_fixed" in req.options:
+            body["camera_fixed"] = bool(req.options["camera_fixed"])
         if req.seed is not None and req.seed >= 0:
             body["seed"] = req.seed
         if req.audio is not None:
@@ -282,3 +286,9 @@ class VolcProvider(HttpProvider):
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:
         return to_media_error(status, body, self.name)
+
+    def retry_classifier(self, status: int, body: str) -> bool:
+        """Veto a pointless retry: a 429 QuotaExceeded/SetLimitExceeded is a hard
+        cap (don't retry), while a transient RPM/TPM 429 stays retryable."""
+        code, message, _ = parse_error_body(body)
+        return classify(code or "", status, message)[1] is not False

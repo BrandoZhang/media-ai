@@ -43,6 +43,7 @@ class HttpProvider(Provider):
         base, headers = self._auth(cred)
         client = HttpClient(
             base_url=base, provider=self.name, error_mapper=self._error,
+            retry_classifier=getattr(self, "retry_classifier", None),
             timeout=client_kw.pop("timeout", self.http_timeout), **client_kw,
         )
         return client, headers

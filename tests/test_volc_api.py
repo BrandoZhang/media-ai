@@ -76,6 +76,30 @@ def test_create_task_omits_seed_and_audio_when_unset(fake_provider, tmp_path):
                                      geometry=GeometrySpec(resolution="480p"), duration=2, seed=-1, audio=None, wait=False))
     body = fake.calls[0]["body"]
     assert "seed" not in body and "generate_audio" not in body and "return_last_frame" not in body
+    assert "camera_fixed" not in body  # not forced when the caller didn't set it
+
+
+def test_camera_fixed_only_sent_when_requested(fake_provider, tmp_path):
+    # not provided -> absent (some models reject an unrequested camera_fixed)
+    prov, fake = fake_provider(VolcProvider, [{"id": "t"}])
+    prov.generate_video(VideoRequest(prompt="x", output=tmp_path / "v.mp4",
+                                     geometry=GeometrySpec(resolution="480p"), duration=2, wait=False))
+    assert "camera_fixed" not in fake.calls[0]["body"]
+    # explicitly provided via --option -> sent with the given value
+    prov2, fake2 = fake_provider(VolcProvider, [{"id": "t"}])
+    prov2.generate_video(VideoRequest(prompt="x", output=tmp_path / "v2.mp4",
+                                      geometry=GeometrySpec(resolution="480p"), duration=2, wait=False,
+                                      options={"camera_fixed": False}))
+    assert fake2.calls[0]["body"]["camera_fixed"] is False
+
+
+def test_retry_classifier_vetoes_quota_but_allows_rpm():
+    prov = VolcProvider()
+    import json as _json
+    quota = _json.dumps({"error": {"code": "QuotaExceeded", "message": "used up"}})
+    rpm = _json.dumps({"error": {"code": "RateLimitExceeded.EndpointRPMExceeded", "message": "rpm"}})
+    assert prov.retry_classifier(429, quota) is False  # hard cap -> don't retry
+    assert prov.retry_classifier(429, rpm) is True      # transient -> retry
 
 
 def test_video_needs_prompt_or_reference(fake_provider, tmp_path):

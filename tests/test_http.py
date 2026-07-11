@@ -88,6 +88,24 @@ def test_delete_retried_on_urlerror(client, monkeypatch):
     assert count["n"] == 2
 
 
+def test_retry_classifier_vetoes_retry(monkeypatch):
+    # a classifier that returns False turns a would-be 429 retry into an immediate fail
+    count = _install(monkeypatch, [_http_error(429), b'{"ok": true}'])
+    c = HttpClient(base_url="https://api.test", provider="test", max_retries=4, retry_base=0,
+                   retry_classifier=lambda status, body: False)
+    with pytest.raises(MediaError):
+        c.request_json("POST", "/tasks", body={"x": 1})
+    assert count["n"] == 1  # not retried
+
+
+def test_retry_classifier_allows_retry(monkeypatch):
+    count = _install(monkeypatch, [_http_error(429), b'{"ok": true}'])
+    c = HttpClient(base_url="https://api.test", provider="test", max_retries=4, retry_base=0,
+                   retry_classifier=lambda status, body: True)
+    assert c.request_json("POST", "/tasks", body={"x": 1}) == {"ok": True}
+    assert count["n"] == 2
+
+
 def test_error_mapper_categorizes(monkeypatch):
     calls = []
 
