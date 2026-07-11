@@ -76,18 +76,26 @@ export OPENAI_ORG=… OPENAI_PROJECT=…     # optional scoping headers
 export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
 ```
 
-- **Native image** (`gemini-2.5-flash-image`, `gemini-3-pro-image`) via
-  `generateContent` — conversational generate + edit + multi-image compose;
-  base64 inline out; geometry by `--aspect-ratio` (+ `--resolution 512|1K|2K|4K`
-  on the pro model). `--count` = candidateCount.
+- **Native image — Nano Banana** (`gemini-3.1-flash-image` (go-to),
+  `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`, legacy
+  `gemini-2.5-flash-image`) via `generateContent` — conversational generate + edit
+  + compose from up to 14 reference images; base64 inline out; geometry by
+  `--aspect-ratio` (+ `--resolution 512|1K|2K|4K`, per-model). `--count` =
+  candidateCount. Extras via `--option`: `grounding=true` (Google Search, Flash +
+  Pro), `image_search=true` (Google Image Search, 3.1 Flash), `thinking_level=high`
+  (3.1 Flash). Sizes/ratios/refs differ per model — see `capabilities`.
 - **Imagen** (`imagen-4.0-generate/-ultra/-fast-001`) via `:predict` — dedicated
   text→image; `--seed`, `--negative-prompt`, `--option person_generation=…`.
-- **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.0-generate-001`,
-  `veo-2.0-generate-001` via `:predictLongRunning` → poll operation →
-  **download the file URI with the API key**. First-frame (all) + last-frame /
-  reference images (3.1). Audio is native on Veo 3.x (`--audio` is unreliable on
-  the Developer API — see LIMITATIONS.md); Veo 2 is silent. Jobs **cannot be
-  cancelled** on the Developer API (`job cancel` → exit 3).
+  Deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model.
+- **Video (Veo)** — `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`,
+  `veo-3.1-lite-generate-preview` via `:predictLongRunning` → poll operation →
+  **download the file URI with the API key**. First-frame (all) + last-frame,
+  up to 3 `--reference-image`s (asset), and video extension via
+  `--reference-video` (continue a Veo clip; 3.1 non-Lite). `--seed` and
+  `--resolution 720p|1080p|4k` supported. Audio is native on Veo 3.x (`--audio` is
+  unreliable on the Developer API — see LIMITATIONS.md). Jobs **cannot be
+  cancelled** on the Developer API (`job cancel` → exit 3). Deprecated `veo-2.0` /
+  `veo-3.0` snapshots still resolve via `--model`.
 - **SynthID watermarking is unconditional** on this API (image + video).
 - A 200-OK response with **no image** (Gemini's silent safety drop) is surfaced as
   a `safety` error (exit 8), not an empty file.

@@ -29,8 +29,18 @@ before relying on them in production; the adapters are written to fail safely
   disable it, so `--option`/capabilities do not expose one.
 - **Generated Veo files expire (~48h)** on Google's servers — download promptly
   (the CLI does so in `job query --output` / `--wait true`).
-- **`imageSize` is ignored by `gemini-2.5-flash-image`** (always ~1K); honored by
-  `gemini-3-pro-image`. Capabilities reflect this per model.
+- **`imageSize` varies by model.** `gemini-3.1-flash-image` accepts 512px/1K/2K/4K;
+  `gemini-3-pro-image` 1K/2K/4K; `gemini-3.1-flash-lite-image` and legacy
+  `gemini-2.5-flash-image` are 1K only. Capabilities reflect this per model, and the
+  extreme banner ratios (`1:4`/`4:1`/`1:8`/`8:1`) are 3.1 Flash-only.
+- **Grounding / thinking wire shapes.** `--option grounding=true` sends
+  `tools:[{google_search:{}}]`; `image_search=true` adds `search_types` inside it;
+  `thinking_level=high` sends `generationConfig.thinkingConfig.thinkingLevel`. These
+  are capability-gated per model but the exact `generateContent` acceptance of
+  `search_types`/`thinkingLevel` is not exercised offline. `[verify]`
+- **Veo extension** maps `--reference-video` to the Veo `video` parameter. Google
+  only extends **Veo-generated** clips (≤141s, 720p) and requires `durationSeconds=8`;
+  a non-Veo source or wrong length is rejected by the API, not pre-checked. `[verify]`
 - **Inline request size limit** (~20 MB, reportedly raised toward ~100 MB) is not
   enforced client-side, and the **Files API** upload path for very large inputs is
   not yet implemented — large local media may be rejected by the API. `[verify]`

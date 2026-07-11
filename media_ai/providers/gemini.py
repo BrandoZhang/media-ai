@@ -2,11 +2,16 @@
 (``:predict``), and Veo video (``:predictLongRunning``).
 
 Three wire shapes behind one adapter:
-  * **Gemini native image** (gemini-2.5-flash-image / gemini-3-pro-image):
-    conversational, multimodal edit/compose; base64 image out inline. Synchronous.
-  * **Imagen** (imagen-4.0-*): dedicated text→image ``:predict``; base64 out.
-  * **Veo** (veo-*): async long-running operation → poll → **download the file URI
-    with the API key**.
+  * **Nano Banana native image** (``gemini-3.1-flash-image`` / ``-flash-lite-image``
+    / ``gemini-3-pro-image`` / legacy ``gemini-2.5-flash-image``): conversational,
+    multimodal edit/compose with up to 14 reference images, optional Google Search
+    grounding, and (3.1 Flash) ``thinking_level`` control. Base64 image out inline;
+    synchronous.
+  * **Imagen** (``imagen-4.0-*``): dedicated text→image ``:predict``; base64 out.
+    Deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model.
+  * **Veo** (``veo-3.1-*``): async long-running operation → poll → **download the
+    file URI with the API key**. First/last frame, up to 3 reference images, and
+    video extension on Veo 3.1.
 
 Notable Gemini quirks handled here: a 200-OK response that carries *no image* is a
 silent safety drop (surfaced as a ``SAFETY`` error, not an empty file); SynthID
@@ -25,12 +30,15 @@ from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Oper
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import to_base64
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
+from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
 
-_NATIVE_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
-_PRO_RATIOS = _NATIVE_RATIOS + ("1:4", "4:1", "1:8", "8:1")
+# The 10 aspect ratios every Nano Banana model shares. Gemini 3.1 Flash Image adds
+# the four extreme banner ratios; Pro / Lite / 2.5 stay on the standard set.
+_STD_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
+_ULTRAWIDE_RATIOS = ("1:4", "4:1", "1:8", "8:1")
+_FLASH_RATIOS = _STD_RATIOS + _ULTRAWIDE_RATIOS
 _IMAGEN_RATIOS = ("1:1", "3:4", "4:3", "9:16", "16:9")
 
 
@@ -43,6 +51,23 @@ def _family(model: str) -> str:
     return "native"
 
 
+def _native_tier(model: str) -> str:
+    """Classify a Nano Banana model id into its capability tier.
+
+    ``gemini-3.1-flash-lite-image`` → ``lite``; ``gemini-3-pro-image`` → ``pro``;
+    ``gemini-2.5-flash-image`` → ``legacy``; everything else (``gemini-3.1-flash-image``
+    and future defaults) → ``flash``.
+    """
+    m = model.lower()
+    if "lite" in m:
+        return "lite"
+    if "pro" in m:
+        return "pro"
+    if "2.5" in m:
+        return "legacy"
+    return "flash"
+
+
 class GeminiProvider(HttpProvider):
     name = "gemini"
     auth_scheme = "x-goog"
@@ -51,16 +76,23 @@ class GeminiProvider(HttpProvider):
         super().__init__(credentials=credentials, config=config)
         self.base_url = (self.config.get("base_url") or os.getenv("GEMINI_BASE_URL")
                          or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-        self.image_model = os.getenv("GEMINI_IMAGE_MODEL") or "gemini-2.5-flash-image"
-        self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.0-generate-001"
+        # Nano Banana 2 (gemini-3.1-flash-image) is Google's recommended go-to image
+        # model; Veo 3.1 supersedes the deprecated Veo 2/3.0 line.
+        self.image_model = os.getenv("GEMINI_IMAGE_MODEL") or "gemini-3.1-flash-image"
+        self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
         self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
         self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return ["gemini-2.5-flash-image", "gemini-3-pro-image", "imagen-4.0-generate-001",
+        # Deprecated snapshots (veo-2.0 / veo-3.0) still resolve via --model and
+        # capabilities(), but are omitted from discovery in favour of the current
+        # Nano Banana + Veo 3.1 lineup.
+        return ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
+                "gemini-2.5-flash-image", "imagen-4.0-generate-001",
                 "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001",
-                "veo-3.1-generate-preview", "veo-3.0-generate-001", "veo-2.0-generate-001"]
+                "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview",
+                "veo-3.1-lite-generate-preview"]
 
     def default_model(self, modality: Modality | None) -> str:
         return self.video_model if modality == Modality.VIDEO else self.image_model
@@ -69,47 +101,88 @@ class GeminiProvider(HttpProvider):
         model = model or self.image_model
         fam = _family(model)
         if fam == "veo":
-            v3 = model.startswith("veo-3")
-            v31 = model.startswith("veo-3.1")
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
-                experimental=model.endswith("preview"),
-                video=VideoCaps(
-                    is_async=True, aspect_ratios=("16:9", "9:16"),
-                    resolutions=("720p", "1080p") if v3 else ("720p",),
-                    durations=(4, 6, 8) if v3 else (5, 6, 7, 8),
-                    supports_first_frame=True, supports_last_frame=v31, supports_reference_images=v31,
-                    supports_seed=True, supports_negative_prompt=True, supports_audio=v3, audio_default=v3 or None,
-                    supports_cancel=False, options=("person_generation",),
-                ),
-                notes=("SynthID watermark is unconditional; on the Developer API generateAudio is unreliable "
-                       "(Veo 3.x audio is native, Veo 2 is silent)",),
-            )
+            return self._veo_caps(model)
         if fam == "imagen":
-            ultra = "ultra" in model
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-                image=ImageCaps(
-                    operations=frozenset({Operation.IMAGE_GENERATE}),
-                    geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=_IMAGEN_RATIOS,
-                    named_sizes=("1K", "2K"), max_count=1 if ultra else 4, output_formats=("png", "jpeg"),
-                    supports_seed=True, supports_negative_prompt=True, max_references=0,
-                    options=("person_generation", "guidance_scale", "language"),
-                ),
-                notes=("Imagen :predict; SynthID unconditional; no image editing (use a gemini-*-image model)",),
-            )
-        pro = "pro" in model
+            return self._imagen_caps(model)
+        return self._native_caps(model)
+
+    def _veo_caps(self, model: str) -> ModelCapabilities:
+        m = model.lower()
+        v31 = m.startswith("veo-3.1")
+        lite = "lite" in m
+        v2 = m.startswith("veo-2")
+        full_31 = v31 and not lite  # Veo 3.1 & 3.1 Fast: references, extension, 4K
+        if v2:
+            resolutions, durations, audio = ("720p",), (5, 6, 7, 8), False
+        elif lite:
+            resolutions, durations, audio = ("720p", "1080p"), (4, 6, 8), True
+        else:  # Veo 3.x (incl. deprecated 3.0) & Fast
+            resolutions, durations, audio = ("720p", "1080p", "4k"), (4, 6, 8), True
+        if full_31:
+            note = ("Veo 3.1: first/last frame, up to 3 reference images (--reference-image), and video "
+                    "extension (--reference-video continues a Veo clip ≤141s); durationSeconds must be 8 "
+                    "for extension/reference-images/1080p/4K")
+        elif lite:
+            note = "Veo 3.1 Lite: text/image-to-video, 720p/1080p; no reference images, extension, or 4K"
+        else:
+            note = "deprecated snapshot — prefer veo-3.1-generate-preview"
+        return ModelCapabilities(
+            provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
+            experimental=m.endswith("preview"),
+            video=VideoCaps(
+                is_async=True, aspect_ratios=("16:9", "9:16"),
+                resolutions=resolutions, durations=durations,
+                supports_first_frame=True, supports_last_frame=v31,
+                supports_reference_images=full_31, supports_reference_videos=full_31,
+                supports_seed=True, supports_negative_prompt=True,
+                supports_audio=audio, audio_default=audio or None,
+                supports_cancel=False, options=("person_generation",),
+            ),
+            notes=(note, "SynthID watermark is unconditional; on the Developer API generateAudio is unreliable "
+                   "(Veo 3.x audio is native, Veo 2 is silent); jobs cannot be cancelled"),
+        )
+
+    def _imagen_caps(self, model: str) -> ModelCapabilities:
+        ultra = "ultra" in model
+        return ModelCapabilities(
+            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
+            image=ImageCaps(
+                operations=frozenset({Operation.IMAGE_GENERATE}),
+                geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=_IMAGEN_RATIOS,
+                named_sizes=("1K", "2K"), max_count=1 if ultra else 4, output_formats=("png", "jpeg"),
+                supports_seed=True, supports_negative_prompt=True, max_references=0,
+                options=("person_generation", "guidance_scale", "language"),
+            ),
+            notes=("Imagen :predict; no image editing (use a gemini-*-image model); SynthID unconditional",
+                   "deprecated by Google (shutdown 2026-08-17) — prefer a Nano Banana model"),
+        )
+
+    def _native_caps(self, model: str) -> ModelCapabilities:
+        tier = _native_tier(model)
+        if tier == "lite":
+            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K",), 14, ()
+            note = "Nano Banana 2 Lite: 1K only, no grounding; tuned for speed and scale"
+        elif tier == "pro":
+            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K", "2K", "4K"), 14, ("grounding",)
+            note = ("Nano Banana Pro: 1K/2K/4K, Google Search grounding, interleaved output; "
+                    "thinking is always on")
+        elif tier == "legacy":
+            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K",), 3, ()
+            note = "Nano Banana (2.5, legacy): imageSize fixed at 1K, up to 3 refs; prefer gemini-3.1-flash-image"
+        else:  # flash — Nano Banana 2
+            ratios, sizes, max_refs = _FLASH_RATIOS, ("512", "1K", "2K", "4K"), 14
+            options = ("grounding", "image_search", "thinking_level")
+            note = ("Nano Banana 2: 512px/1K/2K/4K, Google Search + Image Search grounding, "
+                    "thinking_level minimal|high, video-to-image")
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.ASPECT_RATIO,
-                aspect_ratios=_PRO_RATIOS if pro else _NATIVE_RATIOS,
-                named_sizes=("512", "1K", "2K", "4K") if pro else ("1K",),
-                max_count=4, output_formats=("png",), max_references=9,
+                geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=ratios,
+                named_sizes=sizes, max_count=4, output_formats=("png",),
+                max_references=max_refs, options=options,
             ),
-            notes=("native conversational image gen/edit; SynthID unconditional"
-                   + ("" if pro else "; imageSize fixed at 1K"),),
+            notes=(note, "native conversational image gen/edit; SynthID watermark is unconditional"),
         )
 
     # ---- images ----------------------------------------------------------
@@ -128,6 +201,9 @@ class GeminiProvider(HttpProvider):
         gen_cfg: dict = {"responseModalities": ["TEXT", "IMAGE"]}
         if req.count > 1:
             gen_cfg["candidateCount"] = req.count
+        if req.options.get("thinking_level"):
+            # 3.1 Flash Image: minimal (default) | high — trade latency for quality.
+            gen_cfg["thinkingConfig"] = {"thinkingLevel": req.options["thinking_level"]}
         img_cfg = {}
         if req.geometry and req.geometry.aspect_ratio:
             img_cfg["aspectRatio"] = req.geometry.aspect_ratio
@@ -136,6 +212,9 @@ class GeminiProvider(HttpProvider):
         if img_cfg:
             gen_cfg["imageConfig"] = img_cfg
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": gen_cfg}
+        tools = _grounding_tools(req)
+        if tools:
+            body["tools"] = tools
         data = client.request_json("POST", f"/models/{model}:generateContent", body=body, headers=headers)
         images = _extract_inline_images(data)
         if not images:
@@ -187,11 +266,17 @@ class GeminiProvider(HttpProvider):
         model = req.model or self.video_model
         instance: dict = {"prompt": req.prompt}
         if req.first_frame:
-            b64, mime = to_base64(req.first_frame)
-            instance["image"] = {"bytesBase64Encoded": b64, "mimeType": mime}
+            instance["image"] = _veo_media(req.first_frame)
         if req.last_frame:
-            b64, mime = to_base64(req.last_frame)
-            instance["lastFrame"] = {"bytesBase64Encoded": b64, "mimeType": mime}
+            instance["lastFrame"] = _veo_media(req.last_frame)
+        if req.reference_images:
+            # Up to 3 asset references (person/character/product) preserved in the clip.
+            instance["referenceImages"] = [{"image": _veo_media(r), "referenceType": "asset"}
+                                           for r in req.reference_images]
+        if req.reference_videos:
+            # Veo extension: continue a previously generated Veo clip. Only the first
+            # is used (multi-video prompting is unsupported).
+            instance["video"] = _veo_media(req.reference_videos[0])
         params: dict = {}
         if req.geometry and req.geometry.aspect_ratio and req.geometry.aspect_ratio != "adaptive":
             params["aspectRatio"] = req.geometry.aspect_ratio
@@ -201,6 +286,8 @@ class GeminiProvider(HttpProvider):
             params["durationSeconds"] = req.duration
         if req.negative_prompt:
             params["negativePrompt"] = req.negative_prompt
+        if req.seed is not None and req.seed >= 0:
+            params["seed"] = req.seed
         if req.audio is not None:
             params["generateAudio"] = req.audio
         if "person_generation" in req.options:
@@ -263,6 +350,32 @@ class GeminiProvider(HttpProvider):
         cat = {400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
                404: ErrorCategory.NOT_FOUND, 429: ErrorCategory.RATE_LIMIT}.get(status, ErrorCategory.PROVIDER)
         return MediaError(f"Gemini HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
+
+
+# --------------------------------------------------------------------------
+# request builders
+# --------------------------------------------------------------------------
+
+
+def _veo_media(ref: MediaRef) -> dict:
+    """Inline a local image/video ref for a Veo ``:predictLongRunning`` instance."""
+    b64, mime = to_base64(ref)
+    return {"bytesBase64Encoded": b64, "mimeType": mime}
+
+
+def _grounding_tools(req: ImageRequest) -> list[dict]:
+    """Build the Google Search tool for a grounded image request, if requested.
+
+    ``--option grounding=true`` enables web-search grounding; ``--option
+    image_search=true`` (3.1 Flash) additionally pulls Google Image Search results
+    in as visual context. Either flag turns the tool on.
+    """
+    if not (req.options.get("grounding") or req.options.get("image_search")):
+        return []
+    search: dict = {}
+    if req.options.get("image_search"):
+        search["search_types"] = ["web_search", "image_search"]
+    return [{"google_search": search}]
 
 
 # --------------------------------------------------------------------------
