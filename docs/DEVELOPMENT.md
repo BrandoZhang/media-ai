@@ -112,11 +112,12 @@ the video smoke needs `MEDIA_LIVE_VIDEO=1` too). Keep them cheap — one small i
 per provider.
 
 **CI:** `.github/workflows/ci.yml` runs the offline suite (`-m "not live"`) on every
-push/PR. `.github/workflows/live.yml` runs `-m live` on merge to `main` (and via
-*Run workflow*), reading keys from repo **Secrets** (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`ARK_API_KEY`, plus optional `*_BASE_URL` / `ARK_IMAGE_MODEL` / `ARK_VIDEO_MODEL`).
-If no provider secret is configured, the live job is a **green no-op** (all steps
-skip), so forks and unconfigured repos never fail.
+push/PR. `.github/workflows/live.yml` runs `-m live` **manually only** (Actions →
+*live* → *Run workflow*), reading keys from repo **Secrets** (`OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `ARK_API_KEY`, plus optional `*_BASE_URL` / `ARK_IMAGE_MODEL` /
+`ARK_VIDEO_MODEL`). If no provider secret is configured, the live job is a **green
+no-op** (all steps skip), so forks and unconfigured repos never fail. (To run it
+automatically on merge to `main` later, uncomment the `push:` trigger in the file.)
 
 ## Before you push
 

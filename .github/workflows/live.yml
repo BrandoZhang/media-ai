@@ -1,11 +1,13 @@
 name: live
-# Real-API regression tests. Runs on merge to main and on demand. If no provider
-# secrets are configured the job is a green no-op (all live steps are skipped), so
-# forks / unconfigured repos never fail here.
+# Real-API regression tests. Runs **manually only** (Actions → live → Run workflow).
+# If no provider secrets are configured the job is a green no-op (all live steps are
+# skipped), so forks / unconfigured repos never fail here.
+#
+# To also run automatically on merge to main later, add back:
+#   push:
+#     branches: [main]
+#     paths: ["media_ai/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/live.yml"]
 on:
-  push:
-    branches: [main]
-    paths: ["media_ai/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/live.yml"]
   workflow_dispatch:
 
 jobs:
