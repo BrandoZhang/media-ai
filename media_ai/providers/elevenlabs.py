@@ -127,11 +127,15 @@ class ElevenLabsProvider(HttpProvider):
 
     # ---- dialogue (multi-voice) ------------------------------------------
     def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
-        if not req.turns:
-            raise MediaError("dialogue requires at least one turn", category=ErrorCategory.VALIDATION, provider=self.name)
+        if not req.turns or not req.cast:
+            raise MediaError("dialogue requires turns and a cast", category=ErrorCategory.VALIDATION, provider=self.name)
+        missing = sorted({t.speaker for t in req.turns} - set(req.cast))
+        if missing:
+            raise MediaError(f"speaker(s) not in cast: {', '.join(missing)}",
+                             category=ErrorCategory.VALIDATION, provider=self.name)
         client, headers = self._prepare()
         model = req.model or self.dialogue_model
-        body: dict = {"inputs": [{"text": t.text, "voice_id": t.voice} for t in req.turns], "model_id": model}
+        body: dict = {"inputs": [{"text": t.text, "voice_id": req.cast[t.speaker]} for t in req.turns], "model_id": model}
         if req.language_code:
             body["language_code"] = req.language_code
         if req.seed is not None:

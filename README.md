@@ -10,7 +10,7 @@ by running ordinary commands. One normalized interface drives multiple backends:
 | **`mock`** (default, offline) | ✓ Pillow placeholders | ✓ ffmpeg clips | ✓ WAV placeholders | — |
 | **`volc`** — Volcengine Ark (Doubao Seedream/Seedance) | ✓ | ✓ (async) | — | `ARK_API_KEY` |
 | **`openai`** — GPT Image / DALL·E (+ Sora, experimental) | ✓ | ⚗️ (async) | — | `OPENAI_API_KEY` |
-| **`gemini`** — Gemini native image (Nano Banana) / Veo | ✓ | ✓ (async) | — | `GEMINI_API_KEY` |
+| **`gemini`** — Gemini native image (Nano Banana) / Veo / TTS | ✓ | ✓ (async) | ✓ (+ multi-speaker) | `GEMINI_API_KEY` |
 | **`elevenlabs`** — text-to-speech + multi-voice dialogue | — | — | ✓ (+ timestamps) | `ELEVENLABS_API_KEY` |
 
 Highlights: **capability discovery** (`media-ai capabilities`), **deterministic
@@ -45,14 +45,17 @@ media-ai image generate --prompt "a red bicycle" --output bike.png
 media-ai image edit     --reference bike.png --prompt "make it blue" --output blue.png
 media-ai video generate --prompt "twin suns setting" --output clip.mp4 --resolution 480p
 media-ai speech generate --text "the first move sets everything in motion" --output vo.mp3 --provider elevenlabs
-media-ai speech dialogue --turn <voiceA> "knock knock" --turn <voiceB> "who is there?" --output d.mp3 --provider elevenlabs
+media-ai speech dialogue --speaker Joe=<voiceA> --speaker Jane=<voiceB> --turn Joe "knock knock" --turn Jane "who is there?" --output d.mp3
 media-ai concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
 media-ai job    query   --provider gemini --id <op> --output clip.mp4
 media-ai capabilities   [--provider P] [--model M]
 media-ai usage
 ```
 
-Pick a backend with `--provider {mock,volc,openai,gemini,elevenlabs}` (or `$MEDIA_PROVIDER`,
+Speech works on `gemini` (Gemini 2.5/3.1 TTS — style directed in the prompt text, 30
+named voices, ≤2-speaker dialogue) and `elevenlabs` (voice settings + `--timestamps`
+alignment, ≤10-voice dialogue). Pick a backend with
+`--provider {mock,volc,openai,gemini,elevenlabs}` (or `$MEDIA_PROVIDER`,
 default `mock`) and a model with `--model`. A model id can imply its provider
 (`--model gpt-image-2` ⇒ openai). The eight original console-scripts
 (`text2image`, `image2image`, `text2video`, `image2video`, `ref2video`,

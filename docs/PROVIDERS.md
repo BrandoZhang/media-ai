@@ -101,10 +101,19 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   cancelled** on the Developer API (`job cancel` → exit 3). Deprecated `veo-2.0` /
   `veo-3.0` snapshots still resolve via `--model`.
 - **SynthID watermarking is unconditional** on this API (image + video).
+- **TTS** (`gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`,
+  `gemini-3.1-flash-tts-preview`) via `:generateContent` with
+  `responseModalities:["AUDIO"]` — **synchronous**, returns headerless 24 kHz PCM which
+  the adapter wraps into a WAV. Style/tone/accent/pace and inline `[whispers]`/`[laughs]`
+  tags are directed **in the prompt text**; language is auto-detected; there are 30 named
+  voices (see `capabilities`). `speech generate --voice Kore`; `speech dialogue`
+  (≤2 speakers) takes a cast + turns and an optional global `--instruction`. Output is
+  WAV only (no format/seed/timestamps knobs). A 200-OK with no audio (safety) → `safety`
+  error (exit 8). Env: `GEMINI_TTS_MODEL`.
 - A 200-OK response with **no image** (Gemini's silent safety drop) is surfaced as
   a `safety` error (exit 8), not an empty file.
 - Extra env: `GEMINI_BASE_URL`, `GEMINI_IMAGE_MODEL`, `GEMINI_VIDEO_MODEL`,
-  `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
+  `GEMINI_TTS_MODEL`, `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
 - Every image/video path (incl. local-file inputs) was exercised against the live API
   — see [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
 
@@ -122,9 +131,10 @@ export MEDIA_PROVIDER=elevenlabs ELEVENLABS_API_KEY=…   # or ELEVEN_API_KEY
   `--option stability=… similarity_boost=… style=… speed=… use_speaker_boost=…`
   (plus `previous_text`/`next_text`/`apply_text_normalization`/`enable_logging`/
   `optimize_streaming_latency`).
-- **`speech dialogue`** — multi-voice via `POST /v1/text-to-dialogue`; turns come
-  from repeated `--turn VOICE_ID TEXT` and/or a `--script file.json`
-  (`[{"voice_id":…,"text":…}]`). ≤10 unique voices; keep total text ≲2000 chars.
+- **`speech dialogue`** — multi-voice via `POST /v1/text-to-dialogue`. Define a cast
+  with `--speaker NAME=VOICE` (repeatable), then the script with `--turn NAME TEXT`
+  (repeatable) and/or a `--script file.json`. ≤10 unique voices; keep total text ≲2000
+  chars. (No global `--instruction` — that's Gemini-only.)
 - **`--timestamps true`** switches either op to the `/with-timestamps` endpoint and
   writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
   also gets `voice_segments`) as a second artifact.

@@ -60,7 +60,8 @@ def test_speech_timestamps_writes_sidecar(fake_provider, tmp_path):
 def test_dialogue_body_and_path(fake_provider, tmp_path):
     prov, fake = fake_provider(ElevenLabsProvider, [b"dialogue-mp3"])
     req = DialogueRequest(
-        turns=[DialogueTurn("Knock knock", "voiceA"), DialogueTurn("Who is there?", "voiceB")],
+        turns=[DialogueTurn("Joe", "Knock knock"), DialogueTurn("Jane", "Who is there?")],
+        cast={"Joe": "voiceA", "Jane": "voiceB"},
         output=tmp_path / "d.mp3", model="eleven_v3", output_format="mp3_44100_128",
         options={"stability": 0.6},
     )
@@ -69,11 +70,20 @@ def test_dialogue_body_and_path(fake_provider, tmp_path):
     assert call["path"].startswith("/text-to-dialogue")
     assert "with-timestamps" not in call["path"]
     body = call["body"]
+    # voice_id is looked up from the cast by each turn's speaker
     assert body["inputs"] == [{"text": "Knock knock", "voice_id": "voiceA"},
                               {"text": "Who is there?", "voice_id": "voiceB"}]
     assert body["model_id"] == "eleven_v3" and body["settings"] == {"stability": 0.6}
     assert Path(res.primary().path).read_bytes() == b"dialogue-mp3"
     assert res.operation == "speech.dialogue"
+
+
+def test_dialogue_unknown_speaker_rejected(fake_provider, tmp_path):
+    prov, _ = fake_provider(ElevenLabsProvider, [b"x"])
+    req = DialogueRequest(turns=[DialogueTurn("Ghost", "boo")], cast={"Joe": "voiceA"}, output=tmp_path / "d.mp3")
+    with pytest.raises(MediaError) as ei:
+        prov.generate_dialogue(req)
+    assert ei.value.category == ErrorCategory.VALIDATION
 
 
 def test_dialogue_timestamps_includes_voice_segments(fake_provider, tmp_path):
@@ -82,7 +92,8 @@ def test_dialogue_timestamps_includes_voice_segments(fake_provider, tmp_path):
                                 "character_start_index": 0, "character_end_index": 5, "dialogue_input_index": 0}]}
     prov, fake = fake_provider(ElevenLabsProvider, [resp])
     out = tmp_path / "d.mp3"
-    prov.generate_dialogue(DialogueRequest(turns=[DialogueTurn("Hello", "voiceA")], output=out, timestamps=True))
+    prov.generate_dialogue(DialogueRequest(turns=[DialogueTurn("Joe", "Hello")], cast={"Joe": "voiceA"},
+                                           output=out, timestamps=True))
     assert fake.calls[0]["path"].startswith("/text-to-dialogue/with-timestamps")
     saved = json.loads((tmp_path / "d.mp3.timestamps.json").read_text())
     assert saved["voice_segments"][0]["voice_id"] == "voiceA"

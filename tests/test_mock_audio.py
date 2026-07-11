@@ -38,10 +38,13 @@ def test_mock_speech_timestamps_sidecar(tmp_path):
 
 def test_mock_dialogue_writes_wav_and_voice_segments(tmp_path):
     out = tmp_path / "d.wav"
-    turns = [DialogueTurn("Knock knock", "mock-voice-a"), DialogueTurn("Who is there?", "mock-voice-b")]
-    res = MockProvider().generate_dialogue(DialogueRequest(turns=turns, output=out, timestamps=True))
+    turns = [DialogueTurn("Joe", "Knock knock"), DialogueTurn("Jane", "Who is there?")]
+    cast = {"Joe": "mock-voice-a", "Jane": "mock-voice-b"}
+    res = MockProvider().generate_dialogue(
+        DialogueRequest(turns=turns, cast=cast, instruction="a cheerful skit", output=out, timestamps=True))
     assert _is_valid_wav(out)
     assert res.operation == "speech.dialogue" and res.meta["voices"] == ["mock-voice-a", "mock-voice-b"]
+    assert res.meta["instruction"] == "a cheerful skit"
     segs = json.loads((tmp_path / "d.wav.timestamps.json").read_text())["voice_segments"]
     assert [s["voice_id"] for s in segs] == ["mock-voice-a", "mock-voice-b"]
     assert segs[0]["dialogue_input_index"] == 0

@@ -103,6 +103,7 @@ class MockProvider(Provider):
                 supports_language_code=True,
                 supports_timestamps=True,
                 supports_dialogue=True,
+                supports_instruction=True,
                 max_dialogue_voices=10,
                 options=("stability", "similarity_boost", "style", "speed", "use_speaker_boost"),
             ),
@@ -199,8 +200,8 @@ class MockProvider(Provider):
         )
 
     def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
-        if not req.turns:
-            raise MediaError("dialogue requires at least one turn", category=ErrorCategory.VALIDATION, provider=self.name)
+        if not req.turns or not req.cast:
+            raise MediaError("dialogue requires turns and a cast", category=ErrorCategory.VALIDATION, provider=self.name)
         out = Path(req.output)
         total_chars = sum(len(t.text) for t in req.turns)
         secs = audio.tone_seconds(total_chars)
@@ -208,7 +209,7 @@ class MockProvider(Provider):
         artifacts = [Artifact.from_path(out, "audio", mime="audio/wav")]
         if req.timestamps:
             payload = {"alignment": audio.fake_alignment("".join(t.text for t in req.turns), secs),
-                       "voice_segments": _mock_voice_segments(req.turns, secs)}
+                       "voice_segments": _mock_voice_segments(req.turns, req.cast, secs)}
             artifacts.append(self._write_alignment(out, payload))
         usage = {"characters": total_chars}
         record_usage({"tool": "speech.dialogue", "operation": "speech.dialogue", "provider": self.name,
@@ -216,7 +217,8 @@ class MockProvider(Provider):
         return GenerationResult(
             modality="audio", operation="speech.dialogue", provider=self.name, model="mock",
             artifacts=artifacts, usage=usage,
-            meta={"voices": req.voices(), "seconds": round(secs, 3), "timestamps": req.timestamps},
+            meta={"voices": req.voices(), "instruction": req.instruction, "seconds": round(secs, 3),
+                  "timestamps": req.timestamps},
         )
 
     def _write_alignment(self, out: Path, payload: dict) -> Artifact:
@@ -237,13 +239,13 @@ class MockProvider(Provider):
                          raw={"note": "mock generates synchronously; nothing to cancel"})
 
 
-def _mock_voice_segments(turns, seconds: float) -> list[dict]:
+def _mock_voice_segments(turns, cast: dict, seconds: float) -> list[dict]:
     """Fabricate per-turn voice segments (mock stand-in for the API's voice_segments)."""
     n = len(turns) or 1
     step = seconds / n
     segs, ci = [], 0
     for i, t in enumerate(turns):
-        segs.append({"voice_id": t.voice, "start_time_seconds": round(i * step, 4),
+        segs.append({"voice_id": cast.get(t.speaker, t.speaker), "start_time_seconds": round(i * step, 4),
                      "end_time_seconds": round((i + 1) * step, 4), "character_start_index": ci,
                      "character_end_index": ci + len(t.text), "dialogue_input_index": i})
         ci += len(t.text)

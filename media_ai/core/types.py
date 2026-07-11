@@ -162,20 +162,25 @@ class SpeechRequest:
 
 @dataclass(frozen=True)
 class DialogueTurn:
-    """One line of a multi-voice dialogue: what is said and by which voice."""
+    """One line of a multi-voice dialogue: which named speaker says what. The voice
+    for a speaker is assigned once via :attr:`DialogueRequest.cast`."""
 
+    speaker: str  # cast name (mapped to a voice by DialogueRequest.cast)
     text: str
-    voice: str  # provider voice id for this line
 
 
 @dataclass
 class DialogueRequest:
-    """Multi-voice dialogue: an ordered list of (text, voice) turns rendered into one
-    audio track. Cross-provider fields are first-class; provider knobs go in ``options``."""
+    """Multi-voice dialogue. A ``cast`` maps each speaker name to a provider voice id;
+    ``turns`` is the ordered script referencing those speakers. Rendered into one audio
+    track. Some providers (e.g. Gemini) accept a global ``instruction`` directing the
+    whole performance; provider knobs go in ``options`` (capability-gated)."""
 
     turns: list[DialogueTurn]
     output: Path
+    cast: dict[str, str] = field(default_factory=dict)  # speaker name -> voice id
     operation: Operation = Operation.SPEECH_DIALOGUE
+    instruction: str | None = None  # global director note (provider-gated)
     output_format: str | None = None
     language_code: str | None = None
     seed: int | None = None
@@ -187,12 +192,16 @@ class DialogueRequest:
     def modality(self) -> Modality:
         return Modality.AUDIO
 
+    def speakers(self) -> list[str]:
+        """Cast speaker names, in declared order."""
+        return list(self.cast.keys())
+
     def voices(self) -> list[str]:
-        """Unique voice ids used across the dialogue, in first-seen order."""
+        """Unique voice ids across the cast, in first-seen order."""
         seen: list[str] = []
-        for t in self.turns:
-            if t.voice not in seen:
-                seen.append(t.voice)
+        for v in self.cast.values():
+            if v not in seen:
+                seen.append(v)
         return seen
 
 

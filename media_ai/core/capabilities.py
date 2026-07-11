@@ -86,6 +86,7 @@ class AudioCaps:
     supports_language_code: bool = False
     supports_timestamps: bool = False  # per-character alignment sidecar
     supports_dialogue: bool = False  # multi-voice (speech.dialogue)
+    supports_instruction: bool = False  # global director note for dialogue
     max_dialogue_voices: int = 0  # 0 = dialogue unsupported
     max_characters: int | None = None  # per-request text budget
     options: tuple[str, ...] = ()
@@ -288,9 +289,15 @@ def _validate_dialogue(req: DialogueRequest, caps: ModelCapabilities, issues: _I
         issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
     if not req.turns:
         issues.add("turns", "dialogue requires at least one turn")
-    voices = req.voices()
-    if ac.max_dialogue_voices and len(voices) > ac.max_dialogue_voices:
-        issues.add("turns", f"max {ac.max_dialogue_voices} unique voices per dialogue")
+    if not req.cast:
+        issues.add("cast", "dialogue requires a cast mapping speaker names to voices")
+    unknown = sorted({t.speaker for t in req.turns} - set(req.cast))
+    if unknown:
+        issues.add("turns", f"speaker(s) not in cast: {', '.join(unknown)}")
+    if ac.max_dialogue_voices and len(req.voices()) > ac.max_dialogue_voices:
+        issues.add("cast", f"max {ac.max_dialogue_voices} unique voices per dialogue")
+    if req.instruction and not ac.supports_instruction:
+        issues.add("instruction", "model does not support a global dialogue instruction")
     if req.output_format and ac.output_formats and req.output_format not in ac.output_formats:
         issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.output_formats)}")
     if req.seed is not None and not ac.supports_seed:

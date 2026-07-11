@@ -22,20 +22,30 @@ def tone_seconds(char_count: int) -> float:
     return max(0.4, min(_MAX_SECONDS, char_count / 15.0))
 
 
+def _write_wav(out: Path, frames: bytes, *, rate: int, channels: int = 1, sample_width: int = 2) -> Path:
+    """Wrap raw little-endian PCM ``frames`` in a WAV container."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(sample_width)
+        w.setframerate(rate)
+        w.writeframes(frames)
+    return out
+
+
+def write_pcm_wav(out: Path, pcm_bytes: bytes, *, rate: int = 24000, channels: int = 1, sample_width: int = 2) -> Path:
+    """Wrap headerless PCM (e.g. Gemini TTS `audio/L16;...;rate=24000`) in a WAV file."""
+    return _write_wav(out, pcm_bytes, rate=rate, channels=channels, sample_width=sample_width)
+
+
 def write_tone_wav(out: Path, seconds: float, *, freq: float = 220.0, sample_rate: int = _SAMPLE_RATE) -> Path:
     """Write a mono 16-bit PCM WAV sine tone. Deterministic given the inputs."""
-    out.parent.mkdir(parents=True, exist_ok=True)
     n = max(1, int(seconds * sample_rate))
     amp = 12000  # ~0.37 of full scale; audible but not clipping
     frames = bytearray()
     for i in range(n):
         frames += struct.pack("<h", int(amp * math.sin(2 * math.pi * freq * (i / sample_rate))))
-    with wave.open(str(out), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sample_rate)
-        w.writeframes(bytes(frames))
-    return out
+    return _write_wav(out, bytes(frames), rate=sample_rate)
 
 
 def fake_alignment(text: str, seconds: float) -> dict:

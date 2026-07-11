@@ -140,5 +140,6 @@ and finalizes (downloads) via the same adapter.
 - **New modality/operation** (upscaling, …) — the one change that *does*
   touch core: add a `Modality`/`Operation` enum value + a CLI command group; the
   capability/validation/registry machinery then extends to it unchanged. The
-  `audio` modality (ElevenLabs text-to-speech / dialogue, via `media-ai speech`)
-  was added exactly this way — see `providers/elevenlabs.py` and `cli/speech.py`.
+  `audio` modality (text-to-speech / multi-voice dialogue, via `media-ai speech`)
+  was added exactly this way — one normalized `SpeechRequest`/`DialogueRequest`
+  drives both `providers/elevenlabs.py` and Gemini TTS (`providers/gemini.py`).
