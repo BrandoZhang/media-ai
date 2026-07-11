@@ -249,28 +249,42 @@ def _done_video(uri="https://x/files/S:download"):
     return {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": uri}}]}}
 
 
-def test_veo_records_requested_seconds_in_result_and_ledger(fake_provider, tmp_path):
-    # Veo returns no usage/duration; the ledger must still count the requested seconds
-    # (otherwise `media-ai usage` reports 0 video_seconds for every Veo run).
+def test_veo_seconds_uses_true_probed_output_length(fake_provider, tmp_path, monkeypatch):
+    # The ledger bills the TRUE output length, not the request: an extension whose
+    # combined clip is 11s must record 11 even though only 8s was requested.
     from media_ai.core.usage import usage_log_path
+    import media_ai.providers.gemini as gem
+    monkeypatch.setattr(gem.ffmpeg, "probe_duration", lambda p: 11.0)
+    prov, _ = fake_provider(GeminiProvider, [
+        {"name": "op"}, {"name": "op", "done": True, "response": _done_video()}])
+    prov.poll_interval = 0
+    res = prov.generate_video(VideoRequest(prompt="x", output=tmp_path / "v.mp4",
+                                           model="veo-3.1-generate-preview", duration=8, wait=True))
+    assert res.meta["seconds"] == 11  # probed output length wins over the requested 8
+    videos = [json.loads(ln) for ln in usage_log_path().read_text().splitlines() if ln.strip()]
+    videos = [e for e in videos if e.get("kind") == "video"]
+    assert videos and videos[-1]["seconds"] == 11
+
+
+def test_veo_seconds_probed_on_async_job_query(fake_provider, tmp_path, monkeypatch):
+    # async `job query` never knew a requested duration -> the probe is the only source
+    import media_ai.providers.gemini as gem
+    monkeypatch.setattr(gem.ffmpeg, "probe_duration", lambda p: 4.0)
+    prov, _ = fake_provider(GeminiProvider, [{"name": "op", "done": True, "response": _done_video()}])
+    st = prov.get_job(JobRef(provider="gemini", id="op"), output=tmp_path / "v.mp4")
+    assert st.result is not None and st.result.meta["seconds"] == 4
+
+
+def test_veo_seconds_falls_back_to_requested_when_probe_fails(fake_provider, tmp_path, monkeypatch):
+    # if ffmpeg can't read the clip (probe -> 0), fall back to the requested duration
+    import media_ai.providers.gemini as gem
+    monkeypatch.setattr(gem.ffmpeg, "probe_duration", lambda p: 0.0)
     prov, _ = fake_provider(GeminiProvider, [
         {"name": "op"}, {"name": "op", "done": True, "response": _done_video()}])
     prov.poll_interval = 0
     res = prov.generate_video(VideoRequest(prompt="x", output=tmp_path / "v.mp4",
                                            model="veo-3.1-generate-preview", duration=6, wait=True))
     assert res.meta["seconds"] == 6
-    videos = [json.loads(ln) for ln in usage_log_path().read_text().splitlines() if ln.strip()]
-    videos = [e for e in videos if e.get("kind") == "video"]
-    assert videos and videos[-1]["seconds"] == 6
-
-
-def test_veo_seconds_probed_when_duration_unknown(fake_provider, tmp_path, monkeypatch):
-    # async `job query` doesn't know the requested duration -> probe the downloaded clip
-    import media_ai.providers.gemini as gem
-    monkeypatch.setattr(gem.ffmpeg, "probe_duration", lambda p: 4.0)
-    prov, _ = fake_provider(GeminiProvider, [{"name": "op", "done": True, "response": _done_video()}])
-    st = prov.get_job(JobRef(provider="gemini", id="op"), output=tmp_path / "v.mp4")
-    assert st.result is not None and st.result.meta["seconds"] == 4
 
 
 # ---- capabilities: current Nano Banana + Veo 3.1 lineup ------------------

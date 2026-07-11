@@ -130,12 +130,13 @@ it (reference images, extension).
 
 3. **Video usage recorded no `seconds`.** Veo operations return no duration, and
    `_finalize_video` recorded none — so the ledger's `video_seconds` counted **0** for
-   every Veo run (volc/openai/Sora all record it). Fixed: bill by the requested
-   duration on the synchronous path, falling back to probing the downloaded clip with
-   ffmpeg when the duration isn't known (async `job query`). *Verified against the real
-   Veo outputs: 4 s / 8 s clips probe to 4.00 s / 8.00 s; the image `usageMetadata`
-   fields the adapter reads (`candidatesTokenCount`, `totalTokenCount`) match live
-   responses.*
+   every Veo run (volc/openai/Sora all record it). Fixed: bill by the **true output
+   length**, probed from the downloaded clip with ffmpeg (this captures an extension's
+   combined length, which the request would undercount), falling back to the requested
+   duration only if the probe can't read the file. *Verified against the real Veo
+   outputs: 4 s / 8 s clips probe to 4.00 s / 8.00 s and the extension to 11.01 s; the
+   image `usageMetadata` fields the adapter reads (`candidatesTokenCount`,
+   `totalTokenCount`) match live responses.*
 
 All fixes are covered by offline tests and reflected in `LIMITATIONS.md` /
 `PROVIDERS.md`.

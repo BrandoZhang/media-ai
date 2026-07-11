@@ -298,10 +298,11 @@ class GeminiProvider(HttpProvider):
         if not uri:
             raise MediaError(f"Veo operation {op_name} done but no video uri", category=ErrorCategory.PROVIDER, provider=self.name)
         client.download(uri, out, headers=headers)  # the file URI needs the API key
-        # Veo operations return no usage/duration, so bill by the requested length
-        # (the synchronous path knows it), falling back to probing the downloaded
-        # clip when it isn't known (e.g. an async `job query`).
-        secs = seconds or int(round(ffmpeg.probe_duration(out)))
+        # Veo operations return no usage/duration, so bill by the TRUE output length:
+        # probe the downloaded clip (this also captures an extension's combined length,
+        # which the requested duration would undercount). Fall back to the requested
+        # duration only if the probe can't read it (missing ffmpeg / unreadable file).
+        secs = int(round(ffmpeg.probe_duration(out))) or seconds
         record_usage({"tool": "video.generate", "operation": "video.generate", "provider": self.name,
                       "model": model, "kind": "video", "seconds": secs})
         return GenerationResult(modality="video", operation="video.generate", provider=self.name, model=model,
