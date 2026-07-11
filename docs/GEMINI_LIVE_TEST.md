@@ -142,7 +142,7 @@ it (reference images, extension).
 
 3. **Video usage recorded no `seconds`.** Veo operations return no duration, and
    `_finalize_video` recorded none — so the ledger's `video_seconds` counted **0** for
-   every Veo run (volc/openai/Sora all record it). Fixed: bill by the **true output
+   every Veo run (volc and gemini both record it). Fixed: bill by the **true output
    length**, probed from the downloaded clip with ffmpeg (this captures an extension's
    combined length, which the request would undercount), falling back to the requested
    duration only if the probe can't read the file. *Verified against the real Veo
