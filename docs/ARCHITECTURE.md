@@ -11,7 +11,7 @@ backend's idiosyncrasies live only inside its adapter.
 ```mermaid
 flowchart TB
     subgraph CLI["cli/ — thin front end (argparse + machine contract)"]
-        C1["image · video · speech · concat · job · capabilities · usage"]
+        C1["image · video · speech · music · sound · concat · job · capabilities · usage"]
         C2["legacy shims: text2image, image2video, video_task, …"]
         C3["common.py: run() · emit_result/emit_error · one JSON line + exit code"]
     end
@@ -102,7 +102,7 @@ and finalizes (downloads) via the same adapter.
 
 | Area | What it owns |
 |---|---|
-| `core/types.py` | Normalized `ImageRequest`/`VideoRequest`/`SpeechRequest`/`DialogueRequest`, `MediaRef` (any input source), `GeometrySpec` |
+| `core/types.py` | Normalized `ImageRequest`/`VideoRequest`/`SpeechRequest`/`DialogueRequest`/`MusicRequest`/`SoundEffectRequest`, `MediaRef` (any input source), `GeometrySpec` |
 | `core/capabilities.py` | Per-model `ModelCapabilities` schema + `validate_request()` — drives discovery **and** gating |
 | `core/registry.py` | Dynamic provider registry, `register_provider()`, entry-point discovery, model→provider routing |
 | `core/provider.py` | The `Provider` interface (no transport assumptions) |

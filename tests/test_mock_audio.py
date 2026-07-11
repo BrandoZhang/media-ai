@@ -8,7 +8,15 @@ import wave
 
 from media_ai.core.capabilities import UnsupportedPolicy, validate_request
 from media_ai.core.errors import MediaError
-from media_ai.core.types import DialogueRequest, DialogueTurn, Modality, SpeechRequest
+from media_ai.core.types import (
+    DialogueRequest,
+    DialogueTurn,
+    Modality,
+    MusicPlanRequest,
+    MusicRequest,
+    SoundEffectRequest,
+    SpeechRequest,
+)
 from media_ai.providers.mock import MockProvider
 
 
@@ -54,6 +62,7 @@ def test_mock_audio_capabilities_declare_speech(tmp_path):
     caps = MockProvider().capabilities(modality=Modality.AUDIO)
     assert Modality.AUDIO in caps.modalities and caps.audio is not None
     assert caps.audio.supports_dialogue and caps.audio.supports_timestamps
+    assert caps.audio.supports_music and caps.audio.supports_composition_plan and caps.audio.supports_sound
     # a bogus option is rejected pre-flight
     req = SpeechRequest(text="x", output=tmp_path / "o.wav", options={"__nope__": 1})
     try:
@@ -62,3 +71,45 @@ def test_mock_audio_capabilities_declare_speech(tmp_path):
     except MediaError:
         raised = True
     assert raised
+
+
+def test_mock_music_from_prompt(tmp_path):
+    out = tmp_path / "song.wav"
+    res = MockProvider().generate_music(MusicRequest(output=out, prompt="lofi beat", duration_ms=6000))
+    assert _is_valid_wav(out) and res.operation == "music.generate"
+    assert res.meta["from_plan"] is False
+
+
+def test_mock_music_detailed_writes_metadata(tmp_path):
+    out = tmp_path / "song.wav"
+    res = MockProvider().generate_music(MusicRequest(output=out, prompt="epic", detailed=True))
+    assert [a.kind for a in res.artifacts] == ["audio", "metadata"]
+    meta = json.loads((tmp_path / "song.wav.metadata.json").read_text())
+    assert "positive_global_styles" in meta and meta["sections"]
+
+
+def test_mock_music_requires_one_source(tmp_path):
+    try:
+        MockProvider().generate_music(MusicRequest(output=tmp_path / "s.wav"))  # neither
+        raised = False
+    except MediaError:
+        raised = True
+    assert raised
+
+
+def test_mock_music_plan_and_reuse(tmp_path):
+    plan_out = tmp_path / "plan.json"
+    MockProvider().generate_music_plan(MusicPlanRequest(prompt="jazzy", output=plan_out, duration_ms=9000))
+    plan = json.loads(plan_out.read_text())
+    assert plan["sections"][0]["duration_ms"] == 9000
+    # feed the plan back into generate_music
+    song = tmp_path / "song.wav"
+    MockProvider().generate_music(MusicRequest(output=song, composition_plan=plan))
+    assert _is_valid_wav(song)
+
+
+def test_mock_sound_effect(tmp_path):
+    out = tmp_path / "sfx.wav"
+    res = MockProvider().generate_sound(SoundEffectRequest(text="whoosh", output=out, duration_seconds=1.5))
+    assert _is_valid_wav(out) and res.operation == "sound.generate"
+    assert res.usage["characters"] == len("whoosh")

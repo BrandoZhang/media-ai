@@ -15,7 +15,17 @@ from ..credentials.secret import Credential
 from .capabilities import ModelCapabilities
 from .errors import ErrorCategory, MediaError
 from .result import GenerationResult, JobHandle, JobStatus
-from .types import DialogueRequest, ImageRequest, JobRef, Modality, SpeechRequest, VideoRequest
+from .types import (
+    DialogueRequest,
+    ImageRequest,
+    JobRef,
+    Modality,
+    MusicPlanRequest,
+    MusicRequest,
+    SoundEffectRequest,
+    SpeechRequest,
+    VideoRequest,
+)
 
 
 class Provider:
@@ -67,6 +77,15 @@ class Provider:
 
     def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
         raise self._unsupported("dialogue generation")
+
+    def generate_music(self, req: MusicRequest) -> GenerationResult:
+        raise self._unsupported("music generation")
+
+    def generate_music_plan(self, req: MusicPlanRequest) -> GenerationResult:
+        raise self._unsupported("composition-plan generation")
+
+    def generate_sound(self, req: SoundEffectRequest) -> GenerationResult:
+        raise self._unsupported("sound-effect generation")
 
     def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
         raise self._unsupported("async jobs")

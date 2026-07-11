@@ -1,4 +1,4 @@
-"""Network-free tests for the ElevenLabs adapter (text-to-speech + dialogue)."""
+"""Network-free tests for the ElevenLabs adapter (text-to-speech + dialogue + music + sfx)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,16 @@ from pathlib import Path
 
 import pytest
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.core.types import DialogueRequest, DialogueTurn, SpeechRequest
+from media_ai.core.types import (
+    DialogueRequest,
+    DialogueTurn,
+    MusicPlanRequest,
+    MusicRequest,
+    SoundEffectRequest,
+    SpeechRequest,
+)
 from media_ai.credentials.secret import Secret
-from media_ai.providers.elevenlabs import ElevenLabsProvider
+from media_ai.providers.elevenlabs import ElevenLabsProvider, _parse_multipart
 
 
 def test_speech_generate_body_and_path(fake_provider, tmp_path):
@@ -135,3 +142,93 @@ def test_dialogue_requires_turns(fake_provider, tmp_path):
     with pytest.raises(MediaError) as ei:
         prov.generate_dialogue(DialogueRequest(turns=[], output=tmp_path / "d.mp3"))
     assert ei.value.category == ErrorCategory.VALIDATION
+
+
+# ---- music -----------------------------------------------------------------
+
+def test_music_generate_from_prompt(fake_provider, tmp_path):
+    prov, fake = fake_provider(ElevenLabsProvider, [b"ID3-music"])
+    req = MusicRequest(output=tmp_path / "song.mp3", prompt="lofi hip hop beat",
+                       duration_ms=8000, output_format="mp3_44100_128",
+                       options={"force_instrumental": True})
+    res = prov.generate_music(req)
+    call = fake.calls[0]
+    assert call["path"].startswith("/music") and "detailed" not in call["path"]
+    assert "output_format=mp3_44100_128" in call["path"]
+    body = call["body"]
+    assert body == {"model_id": "music_v1", "prompt": "lofi hip hop beat",
+                    "music_length_ms": 8000, "force_instrumental": True}
+    assert Path(res.primary().path).read_bytes() == b"ID3-music"
+    assert res.operation == "music.generate"
+
+
+def test_music_generate_from_plan(fake_provider, tmp_path):
+    prov, fake = fake_provider(ElevenLabsProvider, [b"mp3"])
+    plan = {"positive_global_styles": ["pop"], "negative_global_styles": [], "sections": []}
+    prov.generate_music(MusicRequest(output=tmp_path / "s.mp3", composition_plan=plan, seed=7))
+    body = fake.calls[0]["body"]
+    assert body["composition_plan"] == plan and body["seed"] == 7
+    assert "prompt" not in body
+
+
+def test_music_requires_exactly_one_source(fake_provider, tmp_path):
+    prov, _ = fake_provider(ElevenLabsProvider, [b"x"])
+    with pytest.raises(MediaError) as ei:  # neither prompt nor plan
+        prov.generate_music(MusicRequest(output=tmp_path / "s.mp3"))
+    assert ei.value.category == ErrorCategory.VALIDATION
+
+
+def test_music_detailed_parses_multipart_sidecar(fake_provider, tmp_path):
+    meta = {"composition_plan": {"positive_global_styles": ["pop"]}, "song_metadata": {"title": "T"}}
+    boundary = b"abc123"
+    body = (b"--" + boundary + b"\r\nContent-Type: application/json\r\n\r\n"
+            + json.dumps(meta).encode() + b"\r\n"
+            + b"--" + boundary + b"\r\nContent-Type: audio/mpeg\r\n\r\n"
+            + b"ID3-detailed-audio\r\n"
+            + b"--" + boundary + b"--\r\n")
+    prov, fake = fake_provider(ElevenLabsProvider, [body])
+    out = tmp_path / "song.mp3"
+    res = prov.generate_music(MusicRequest(output=out, prompt="epic", detailed=True))
+    assert fake.calls[0]["path"].startswith("/music/detailed")
+    assert out.read_bytes() == b"ID3-detailed-audio"
+    saved = json.loads((tmp_path / "song.mp3.metadata.json").read_text())
+    assert saved["song_metadata"]["title"] == "T"
+    assert [a.kind for a in res.artifacts] == ["audio", "metadata"]
+
+
+def test_parse_multipart_helper():
+    b = (b"--B\r\nContent-Type: application/json\r\n\r\n{\"a\": 1}\r\n"
+         b"--B\r\nContent-Type: audio/mpeg\r\n\r\nRAWAUDIO\r\n--B--\r\n")
+    meta, audio = _parse_multipart(b)
+    assert meta == {"a": 1} and audio == b"RAWAUDIO"
+    # a non-multipart body is treated as raw audio
+    assert _parse_multipart(b"justbytes") == (None, b"justbytes")
+
+
+def test_music_plan_is_json(fake_provider, tmp_path):
+    plan = {"positive_global_styles": ["pop"], "negative_global_styles": [], "sections": []}
+    prov, fake = fake_provider(ElevenLabsProvider, [plan])
+    out = tmp_path / "plan.json"
+    res = prov.generate_music_plan(MusicPlanRequest(prompt="jazzy", output=out, duration_ms=12000))
+    call = fake.calls[0]
+    assert call["path"] == "/music/plan"
+    assert call["body"] == {"prompt": "jazzy", "model_id": "music_v1", "music_length_ms": 12000}
+    assert json.loads(out.read_text())["positive_global_styles"] == ["pop"]
+    assert res.primary().kind == "plan" and res.primary().mime == "application/json"
+
+
+# ---- sound effects ---------------------------------------------------------
+
+def test_sound_generate_body_and_path(fake_provider, tmp_path):
+    prov, fake = fake_provider(ElevenLabsProvider, [b"ID3-sfx"])
+    req = SoundEffectRequest(text="a spooky whoosh", output=tmp_path / "sfx.mp3",
+                             duration_seconds=3.0, output_format="mp3_44100_128",
+                             options={"loop": True, "prompt_influence": 0.5})
+    res = prov.generate_sound(req)
+    call = fake.calls[0]
+    assert call["path"].startswith("/sound-generation")
+    body = call["body"]
+    assert body == {"text": "a spooky whoosh", "model_id": "eleven_text_to_sound_v2",
+                    "duration_seconds": 3.0, "loop": True, "prompt_influence": 0.5}
+    assert Path(res.primary().path).read_bytes() == b"ID3-sfx"
+    assert res.usage["characters"] == len("a spooky whoosh")

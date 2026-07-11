@@ -118,14 +118,14 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   multi-speaker) were exercised against the live API — see
   [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
 
-## elevenlabs — text-to-speech + dialogue
+## elevenlabs — text-to-speech + dialogue + music + sound effects
 
 ```bash
 export MEDIA_PROVIDER=elevenlabs ELEVENLABS_API_KEY=…   # or ELEVEN_API_KEY
 ```
 
-- **Audio** is **synchronous** (`audio` modality, `media-ai speech`). Auth is the
-  `xi-api-key` header.
+- **Audio** is **synchronous** (`audio` modality; `media-ai speech` / `music` / `sound`).
+  Auth is the `xi-api-key` header.
 - **`speech generate`** — single voice via `POST /v1/text-to-speech/{voice_id}`
   (raw audio bytes). `--voice`, `--output-format` (e.g. `mp3_44100_128`; full codec
   enum in `capabilities`), `--language-code`, `--seed`. Voice knobs go through
@@ -139,13 +139,28 @@ export MEDIA_PROVIDER=elevenlabs ELEVENLABS_API_KEY=…   # or ELEVEN_API_KEY
 - **`--timestamps true`** switches either op to the `/with-timestamps` endpoint and
   writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
   also gets `voice_segments`) as a second artifact.
+- **`music generate`** — compose a song via `POST /v1/music` from a `--prompt` **or** a
+  `--plan` composition-plan JSON (exactly one). `--duration-ms` (prompt mode, 3s–600s),
+  `--output-format` (incl. `auto`), `--seed` (plan mode only). `--option
+  force_instrumental=… respect_sections_durations=… store_for_inpainting=… sign_with_c2pa=…`.
+  `--detailed true` uses `POST /v1/music/detailed` (multipart) and writes a
+  `<output>.metadata.json` sidecar with the model's composition plan + song metadata.
+- **`music plan`** — `POST /v1/music/plan`: a **credit-free** helper that returns a
+  composition plan (JSON) from a prompt; edit it and feed it back via `music generate --plan`.
+- **`sound generate`** — text→sound effect via `POST /v1/sound-generation`. `--text`,
+  `--duration-seconds` (0.5–30, optional), `--output-format`, `--option loop=… prompt_influence=…`.
+- **`--timestamps true`** switches either **speech** op to the `/with-timestamps` endpoint and
+  writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
+  also gets `voice_segments`) as a second artifact.
 - Models: `eleven_multilingual_v2` (TTS default), `eleven_turbo_v2_5`,
-  `eleven_flash_v2_5`, `eleven_v3` (dialogue default). `mp3_44100_192` needs Creator
-  tier+; PCM/WAV 44.1 kHz needs Pro tier+.
+  `eleven_flash_v2_5`, `eleven_v3` (dialogue default); `music_v1`/`music_v2` (music);
+  `eleven_text_to_sound_v2` (sound). `mp3_44100_192` needs Creator tier+; PCM/WAV 44.1 kHz
+  needs Pro tier+.
 - Base URL is configurable (`ELEVENLABS_BASE_URL` or a profile `base_url`) to target a
   regional residency endpoint (`api.us`/`api.eu.residency`/`api.in.residency`/
   `api.sg.residency`.elevenlabs.io). Extra env: `ELEVENLABS_MODEL`,
-  `ELEVENLABS_DIALOGUE_MODEL`, `ELEVENLABS_VOICE_ID`.
+  `ELEVENLABS_DIALOGUE_MODEL`, `ELEVENLABS_MUSIC_MODEL`, `ELEVENLABS_SOUND_MODEL`,
+  `ELEVENLABS_VOICE_ID`.
 
 ## Capability matrix (summary)
 
