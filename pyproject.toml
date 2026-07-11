@@ -30,6 +30,11 @@ media_usage = "media_ai.cli.legacy:media_usage"
 test = ["pytest>=7"]
 keychain = ["keyring>=24"]
 
+# Dev tooling for the uv workflow (installed by default by `uv sync`).
+# The `test` extra above is kept for the pip / CI path.
+[dependency-groups]
+dev = ["pytest>=7", "ruff>=0.6"]
+
 [tool.setuptools]
 packages = [
     "media_ai",

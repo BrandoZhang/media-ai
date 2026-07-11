@@ -19,13 +19,23 @@ structured errors** (JSON + category exit codes), **secret-safe credentials**
 
 ## Install
 
+Development uses **[uv](https://docs.astral.sh/uv/)** (full guide:
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)):
+
+```bash
+uv sync                          # .venv + editable install + dev tools (pytest, ruff)
+uv run media-ai image generate --prompt "a red bicycle" --output bike.png
+```
+
+Or with pip:
+
 ```bash
 pip install -e .                 # from a clone
 pip install -e ".[keychain]"     # + OS keychain credential source
 ```
 
 Pulls in Pillow and a bundled ffmpeg (`imageio-ffmpeg`) for the offline mock
-backend. Real providers use only the stdlib.
+backend — no system packages needed. Real providers use only the stdlib.
 
 ## Commands
 
@@ -112,6 +122,7 @@ media-ai usage
 
 ## Docs
 
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
 - [docs/PROVIDERS.md](docs/PROVIDERS.md) — per-provider setup + capability matrix
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker

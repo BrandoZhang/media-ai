@@ -4,16 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+This repo uses **uv** for env/deps (see `docs/DEVELOPMENT.md`). Prefer `uv run`:
+
 ```bash
-pip install -e ".[test]"          # editable install + pytest; add ,keychain for OS-keychain creds
-ruff check media_ai tests         # lint (config in pyproject: line-length 130, py311, ignore E402/E741)
-ruff check media_ai tests --fix   # autofix
-pytest -q                         # full suite (offline: no creds, no network)
-pytest -q tests/test_gemini_api.py::test_veo_lro_poll_and_download   # a single test
-python -m media_ai image generate --prompt "x" --output /tmp/x.png   # run the CLI (mock by default)
+uv sync                                 # .venv + editable install + dev group (pytest, ruff); writes uv.lock
+uv run pytest -q                        # full suite (offline: no creds, no network)
+uv run pytest -q tests/test_gemini_api.py::test_veo_lro_poll_and_download   # a single test
+uv run ruff check media_ai tests        # lint (config in pyproject: line-length 130, py311, ignore E402/E741)
+uv run ruff check media_ai tests --fix  # autofix
+uv run media-ai image generate --prompt "x" --output /tmp/x.png   # run the CLI (mock by default)
+# pip fallback: pip install -e ".[test]" ruff  →  run ruff/pytest/`python -m media_ai` directly
 ```
 
-Requires Python **3.11+** (uses `tomllib`). CI (`.github/workflows/ci.yml`) installs ffmpeg, then runs `ruff check` + `pytest -q`. The CLI-integration tests self-skip if Pillow/ffmpeg are absent, so the suite stays green on a bare box.
+Requires Python **3.11+** (uses `tomllib`); `uv` fetches a matching interpreter. ffmpeg + Pillow come bundled via `imageio-ffmpeg`/`pillow` (no system install needed). CI (`.github/workflows/ci.yml`) runs `ruff check` + `pytest -q`. The CLI-integration tests self-skip if Pillow/ffmpeg are absent, so the suite stays green on a bare box.
 
 ## Architecture
 
