@@ -13,3 +13,6 @@ media_usage.jsonl
 .env
 .env.*
 !.env.example
+# real credential / profile config (only the *.example templates are committed)
+credentials.toml
+config.toml

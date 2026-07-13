@@ -2,8 +2,7 @@
 
 Groups: ``image``, ``video``, ``speech``, ``music``, ``sound``, ``concat``, ``job``,
 ``capabilities``, ``usage``. Each group is also reachable directly; this umbrella
-reshapes argv so the group's own argparse sees a clean program name. The eight legacy
-console-scripts (``text2image`` …) remain installed separately as compatibility shims.
+reshapes argv so the group's own argparse sees a clean program name.
 """
 
 from __future__ import annotations

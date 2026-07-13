@@ -30,12 +30,6 @@ class Operation(str, Enum):
     MUSIC_PLAN = "music.plan"
     SOUND_GENERATE = "sound.generate"
 
-    @property
-    def modality(self) -> Modality:
-        if self.value.startswith(("speech", "audio", "music", "sound")):
-            return Modality.AUDIO
-        return Modality.VIDEO if self.value.startswith("video") else Modality.IMAGE
-
 
 _REMOTE_PREFIXES = ("http://", "https://", "data:", "asset://", "gs://", "file-")
 

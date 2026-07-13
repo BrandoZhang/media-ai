@@ -51,7 +51,6 @@ _OPTIONS = _VOICE_SETTINGS + _BODY_OPTIONS + _QUERY_OPTIONS
 _CODEC_MIME = {"mp3": "audio/mpeg", "wav": "audio/wav", "pcm": "audio/L16",
                "opus": "audio/opus", "ulaw": "audio/basic", "alaw": "audio/basic"}
 _TTS_MODELS = ("eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3")
-_MAX_DIALOGUE_CHARS = 2000  # docs: keep total inputs[].text at/below this per request
 
 # Music (compose) — models, output formats (incl. "auto"), and --option knobs.
 _MUSIC_MODELS = ("music_v1", "music_v2")
@@ -114,7 +113,10 @@ class ElevenLabsProvider(HttpProvider):
                 supports_timestamps=True,
                 supports_dialogue=True,
                 max_dialogue_voices=10,
-                max_characters=_MAX_DIALOGUE_CHARS,
+                # No client-side character cap: single-voice TTS budgets are large and
+                # model-specific, and the dialogue "total text" limit (~2000 chars) is
+                # advisory — the API is the authority and returns a clean validation error.
+                max_characters=None,
                 options=_OPTIONS,
                 # music (compose + composition plan)
                 supports_music=True,

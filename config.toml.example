@@ -1,0 +1,35 @@
+# media-ai profiles — named routing bundles (NON-SECRET; safe to share/commit).
+#
+# A profile binds a provider + default model + optional base_url + a credential
+# *reference* (never a raw key). Use it to route calls to different endpoints /
+# projects / tenants — e.g. an image endpoint on account A and a video endpoint on
+# account B, each with its own key. See docs/CREDENTIALS.md ("Profiles").
+#
+# This file does NOT hold secrets: `credential` is a reference (env://VAR, op://…,
+# a Vault path) resolved lazily through the same chain — put RAW keys in
+# credentials.toml instead (a raw key here is refused). That separation is why this
+# is a distinct file from credentials.toml: config.toml is shareable, credentials.toml
+# is chmod-600 secret storage.
+#
+# Setup:
+#   mkdir -p ~/.config/media-ai
+#   cp config.toml.example ~/.config/media-ai/config.toml
+# Override the location with $MEDIA_CONFIG_FILE. Select a profile at call time with
+#   --provider-profile <name>   (or $MEDIA_PROFILE)
+
+[profiles.prod_image]
+provider   = "volc"
+model      = "ep-image-A"                 # e.g. an Ark custom endpoint id
+credential = "env://ARK_ACCOUNT_A_KEY"    # reference, resolved at call time
+
+[profiles.prod_video]
+provider   = "volc"
+model      = "ep-video-B"
+base_url   = "https://ark.cn-beijing.volces.com/api/v3"   # optional
+credential = "env://ARK_ACCOUNT_B_KEY"
+
+# A credential-less profile is fine too — it falls back to the normal chain
+# (credentials.toml / env / keychain), so it still ends at e.g. ARK_API_KEY:
+# [profiles.dev]
+# provider = "gemini"
+# model    = "gemini-3.1-flash-image"

@@ -128,7 +128,7 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   `GEMINI_TTS_MODEL`, `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
 - Every image/video path (incl. local-file inputs) and the TTS paths (single +
   multi-speaker) were exercised against the live API — see
-  [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
+  [LIVE_TESTS.md](LIVE_TESTS.md) for the cross-provider coverage matrix and findings.
 
 ## elevenlabs — text-to-speech + dialogue + music + sound effects
 

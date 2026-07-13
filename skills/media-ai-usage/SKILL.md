@@ -52,5 +52,4 @@ media-ai usage --log /tmp/run/usage.jsonl --pretty   # or an explicit ledger pat
 
 `totals` aggregates the per-generation usage recorded across the run: `images_generated`
 (image), `video_seconds` (video), `speech_characters` (audio — speech/music/sound),
-and `total_tokens`, plus `by_tool` / `by_provider` breakdowns. The legacy
-`media_usage --log <path>` console-script maps to this same command.
+and `total_tokens`, plus `by_tool` / `by_provider` breakdowns.

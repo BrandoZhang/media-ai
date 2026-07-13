@@ -104,6 +104,19 @@ def test_validate_count_and_references():
                          _img_caps(max_references=0))
 
 
+def test_validate_named_size_tier_gated():
+    # An image model with a fixed set of size tiers rejects an out-of-range tier
+    # (parity with video resolution validation; capabilities drive pre-flight checks).
+    caps = _img_caps(geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=("1:1",), named_sizes=("1K",))
+    with pytest.raises(MediaError) as ei:
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"),
+                                      geometry=GeometrySpec(aspect_ratio="1:1", resolution="4K")), caps)
+    assert ei.value.category == ErrorCategory.UNSUPPORTED and "4K" in ei.value.message
+    # a supported tier passes
+    validate_request(ImageRequest(prompt="x", output=Path("o.png"),
+                                  geometry=GeometrySpec(aspect_ratio="1:1", resolution="1K")), caps)
+
+
 def test_validate_unknown_option_rejected_but_warn_mode_passes():
     req = ImageRequest(prompt="x", output=Path("o.png"), options={"bogus": 1})
     caps = _img_caps(options=("moderation",))
@@ -173,7 +186,7 @@ def test_record_and_summarize(_ledger):
 
 def test_summarize_tolerates_legacy_backend_key(tmp_path, monkeypatch):
     log = tmp_path / "u.jsonl"
-    log.write_text(json.dumps({"tool": "text2image", "backend": "volc", "total_tokens": 7}) + "\n")
+    log.write_text(json.dumps({"tool": "image.generate", "backend": "volc", "total_tokens": 7}) + "\n")
     monkeypatch.setenv("MEDIA_USAGE_LOG", str(log))
     assert usage.summarize_usage()["by_provider"] == {"volc": 7}
 

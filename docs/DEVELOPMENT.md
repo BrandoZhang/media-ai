@@ -47,7 +47,6 @@ an activated shell anyway: `source .venv/bin/activate`.
 | Lint | `uv run ruff check media_ai tests` |
 | Autofix lint | `uv run ruff check media_ai tests --fix` |
 | Run the CLI (mock by default) | `uv run media-ai image generate --prompt "a red bike" --output /tmp/x.png` |
-| Run a legacy shim | `uv run text2image --prompt "x" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
 
 `uv run` re-syncs the env if `pyproject.toml`/`uv.lock` changed, so after `git pull`

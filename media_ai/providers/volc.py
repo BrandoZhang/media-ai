@@ -101,7 +101,6 @@ class VolcProvider(HttpProvider):
                 geometry_mode=GeometryMode.BOTH,
                 aspect_ratios=() if endpoint else ("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
                 named_sizes=() if endpoint else ("1K", "2K", "4K"),
-                pixel_min=None if endpoint else (1280, 720),
                 pixel_max=None if endpoint else (4096, 4096),
                 max_count=15, output_formats=("png",),
                 supports_seed=True, max_references=9, options=("watermark",),

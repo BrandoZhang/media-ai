@@ -55,6 +55,3 @@ media-ai video generate --provider volc --prompt "shot 1" --output /tmp/run/s1.m
 media-ai video generate --provider volc --prompt "shot 2" --output /tmp/run/s2.mp4 --duration 3 --resolution 480p
 media-ai concat --inputs '["/tmp/run/s1.mp4","/tmp/run/s2.mp4"]' --output /tmp/run/final.mp4
 ```
-
-The legacy `concat_video --inputs ... --output ... --width ... --height ...`
-console-script maps to this same command.

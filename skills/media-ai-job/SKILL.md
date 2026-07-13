@@ -75,8 +75,3 @@ the id is provider-scoped.
 
 For Veo, if you must not pay for an unwanted job, avoid submitting it — there is no
 cancel. A `--id` the provider doesn't recognize → **exit 9** (`not_found`).
-
-## Legacy shim
-
-The `video_task --op query|cancel --id <id> --backend <p>` console-script maps to
-these same operations.

@@ -60,10 +60,7 @@ alignment, ≤10-voice dialogue). `elevenlabs` also does **music** (`media-ai mu
 generate/plan`) and **sound effects** (`media-ai sound generate`). Pick a backend with
 `--provider {mock,volc,openai,gemini,elevenlabs}` (or `$MEDIA_PROVIDER`,
 default `mock`) and a model with `--model`. A model id can imply its provider
-(`--model gpt-image-2` ⇒ openai). The eight original console-scripts
-(`text2image`, `image2image`, `text2video`, `image2video`, `ref2video`,
-`concat_video`, `video_task`, `media_usage`) remain installed as compatibility
-shims.
+(`--model gpt-image-2` ⇒ openai).
 
 ### Normalized geometry
 
@@ -138,6 +135,7 @@ media-ai usage
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker
 - [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) — invocation contract for Agent Skills
 - [docs/EXTENDING.md](docs/EXTENDING.md) — add a custom provider (no core changes)
+- [docs/LIVE_TESTS.md](docs/LIVE_TESTS.md) — real-API validation log (all providers)
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — unresolved provider-specific items
 
 ## Custom providers
