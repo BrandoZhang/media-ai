@@ -18,9 +18,30 @@ The CLI selects a provider by **name**; the registry binds a credential resolver
 to the adapter; the adapter reveals the value only inside its HTTP request builder
 (`media_ai/providers/_base.py`). Credentials never pass through `media_ai/cli/`.
 
+## Which config file do I use?
+
+There are three config surfaces, but they are **one precedence-ordered chain**, not
+competing options — so they can coexist without ambiguity. Pick the row that fits;
+you do **not** need more than one for keys.
+
+| File | Holds | Role | Committed? |
+|---|---|---|---|
+| `.env` (project-local) | provider env vars | quick dev / CI; **lowest** priority | no (`.env.example` is) |
+| `~/.config/media-ai/credentials.toml` | raw keys (or references), `chmod 600` | durable per-user secrets; **outranks `.env`** | no (`credentials.toml.example` is) |
+| `~/.config/media-ai/config.toml` | **non-secret** profiles (references + provider/model/base_url) | route to different endpoints/tenants | yes — safe to share (no secrets) |
+
+**Precedence when the same provider is set in more than one place:** broker →
+secret-manager reference → OS keychain → **`credentials.toml`** → **`.env`/env** (see
+the chain below). So if a key is in *both* `credentials.toml` and `.env`,
+**`credentials.toml` wins**. `config.toml` isn't a key source — it *selects* one (via
+a reference) and is deliberately separate so it can be shared without holding secrets.
+
 > **Just want to get running?** Copy [`.env.example`](../.env.example) to `.env`,
 > fill in your provider's block, and `uv run --env-file .env media-ai …` (or
-> `set -a && . ./.env && set +a`). It lists every variable below.
+> `set -a && . ./.env && set +a`). For durable local keys instead, copy
+> [`credentials.toml.example`](../credentials.toml.example) to
+> `~/.config/media-ai/credentials.toml` and `chmod 600` it. For per-endpoint routing,
+> copy [`config.toml.example`](../config.toml.example) to `~/.config/media-ai/config.toml`.
 
 ## Resolution chain (most-secure first, first hit wins)
 
@@ -37,8 +58,9 @@ so rotation and short-lived tokens are picked up automatically.
 3. **OS keychain** — via the optional `keyring` extra: item `media-ai`/`<provider>`.
    Disable with `MEDIA_DISABLE_KEYCHAIN=1`.
 4. **Config file** — `~/.config/media-ai/credentials.toml` (override with
-   `MEDIA_CREDENTIALS_FILE`). **Must be `chmod 600`** — a group/world-readable file
-   is refused.
+   `MEDIA_CREDENTIALS_FILE`; template: [`credentials.toml.example`](../credentials.toml.example)).
+   **Must be `chmod 600`** — a group/world-readable file is refused. Outranks the
+   environment, so a key here beats the same key in `.env`.
    ```toml
    [openai]
    api_key = "sk-…"
@@ -46,7 +68,7 @@ so rotation and short-lived tokens are picked up automatically.
    api_key = "…"           # or a reference: api_key = "op://vault/volc/key"
    ```
 5. **Environment** — `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`,
-   `ARK_API_KEY`/`VOLC_API_KEY`.
+   `ARK_API_KEY`/`VOLC_API_KEY`, `ELEVENLABS_API_KEY`/`ELEVEN_API_KEY` (e.g. via `.env`).
 
 If nothing resolves, the CLI exits **4** (auth) with an actionable message.
 
