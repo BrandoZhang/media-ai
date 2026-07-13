@@ -1,13 +1,14 @@
-"""OpenAI provider — Images API (GPT Image + DALL·E).
+"""OpenAI provider — Images API (GPT Image family).
 
 Image generation is **synchronous**: ``POST /v1/images/generations`` (JSON) and
 ``POST /v1/images/edits`` (multipart, for reference images + an inpaint mask). GPT
-Image returns base64 only (never a hosted URL); DALL·E can return either, so we
-force ``response_format=b64_json`` to unify on bytes.
+Image returns base64-encoded bytes only (never a hosted URL).
 
-OpenAI no longer offers a video generation API (Sora is not exposed here), so this
-adapter is image-only; a ``video generate --provider openai`` request fails the
-pre-flight capability check with a deterministic ``unsupported`` error.
+This adapter is **GPT-Image-only**. OpenAI's older DALL·E models are intentionally
+not supported: the current Images API rejects their ``response_format`` parameter,
+and GPT Image supersedes them. OpenAI also exposes no video API here (Sora is not
+public), so a ``video generate --provider openai`` request fails the pre-flight
+capability check with a deterministic ``unsupported`` error.
 
 Verified against developers.openai.com / platform.openai.com. Auth: ``OPENAI_API_KEY``.
 """
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
+from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
 from ..core.result import Artifact, GenerationResult
 from ..core.types import ImageRequest, Modality
@@ -30,8 +32,6 @@ from ._base import HttpProvider
 # GPT Image accepts a fixed size enum on the pre-gpt-image-2 models; gpt-image-2
 # takes an arbitrary size subject to the constraints declared in `capabilities`.
 _FIXED_GPT_SIZES = ("1024x1024", "1536x1024", "1024x1536", "auto")
-_DALLE3_SIZES = ("1024x1024", "1792x1024", "1024x1792")
-_DALLE2_SIZES = ("256x256", "512x512", "1024x1024")
 
 # gpt-image-2 size constraints (developers.openai.com — "Size and quality options").
 _GI2_MAX_EDGE = 3840
@@ -40,9 +40,9 @@ _GI2_TOTAL_MIN = 655_360
 _GI2_TOTAL_MAX = 8_294_400
 _GI2_MAX_EDGE_RATIO = 3.0
 
-
-def _family(model: str) -> str:
-    return "dalle" if "dall-e" in model.lower() else "gpt-image"
+# Map an output-file suffix to the GPT Image `output_format` it implies, used only to
+# flag a mismatch between the caller's filename and the format the API actually returned.
+_SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp"}
 
 
 def _is_gpt_image_2(model: str) -> bool:
@@ -61,7 +61,7 @@ def _supports_input_fidelity(model: str) -> bool:
 class OpenAIProvider(HttpProvider):
     name = "openai"
     auth_scheme = "bearer"
-    model_hints = ("gpt-image", "dall-e")
+    model_hints = ("gpt-image",)
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
@@ -78,7 +78,7 @@ class OpenAIProvider(HttpProvider):
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "dall-e-3", "dall-e-2"]
+        return ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"]
 
     def default_model(self, modality: Modality | None) -> str | None:
         # Image-only provider: no default video model.
@@ -86,22 +86,6 @@ class OpenAIProvider(HttpProvider):
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        if _family(model) == "dalle":
-            is3 = model == "dall-e-3"
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-                image=ImageCaps(
-                    operations=frozenset({Operation.IMAGE_GENERATE} if is3 else {Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                    # BOTH: a pixel --size is validated against the fixed enum below;
-                    # an --aspect-ratio is mapped to one of those sizes by `_size`.
-                    geometry_mode=GeometryMode.BOTH, pixel_sizes=(_DALLE3_SIZES if is3 else _DALLE2_SIZES),
-                    max_count=1 if is3 else 10, output_formats=("png",),
-                    supports_quality=is3, supports_mask=not is3, max_references=0 if is3 else 1,
-                    options=("style",) if is3 else (),
-                ),
-                notes=("DALL·E is flat-priced (no token usage); dall-e-3 forces n=1",),
-            )
-        # GPT Image family
         arbitrary = _is_gpt_image_2(model)
         options = ("moderation", "output_compression")
         if _supports_input_fidelity(model):
@@ -135,17 +119,12 @@ class OpenAIProvider(HttpProvider):
     # ---- size mapping ----------------------------------------------------
     def _size(self, model: str, req: ImageRequest) -> str:
         geo = req.geometry
-        fam = _family(model)
         if geo and geo.mode == "pixels":
             return f"{geo.width}x{geo.height}"
         if geo and geo.aspect_ratio:
             a, b = (geo.aspect_ratio.split(":", 1) + ["1"])[:2]
             landscape = float(a) > float(b)
             portrait = float(a) < float(b)
-            if model == "dall-e-3":
-                return "1792x1024" if landscape else "1024x1792" if portrait else "1024x1024"
-            if fam == "dalle":  # dall-e-2 only has square tiers
-                return "1024x1024"
             if _is_gpt_image_2(model):  # arbitrary sizes → pick a documented tier
                 tier = (geo.resolution or "").lower()
                 if landscape:
@@ -155,7 +134,7 @@ class OpenAIProvider(HttpProvider):
                 return "2048x2048" if tier in ("2k", "4k") else "1024x1024"
             # pre-gpt-image-2 GPT Image: fixed 1.5-MP sizes only
             return "1536x1024" if landscape else "1024x1536" if portrait else "1024x1024"
-        return "auto" if fam == "gpt-image" else "1024x1024"
+        return "auto"
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
@@ -165,41 +144,46 @@ class OpenAIProvider(HttpProvider):
             data = self._edit(client, headers, model, req)
         else:
             data = self._generate(client, headers, model, req)
-        items = [d for d in (data.get("data") or []) if d.get("b64_json") or d.get("url")]
+        items = [d for d in (data.get("data") or []) if d.get("b64_json")]
         if not items:
             raise MediaError("OpenAI image response had no images", category=ErrorCategory.PROVIDER, provider=self.name, model=model)
+        # The response echoes the format/size the model *actually* used; trust it over
+        # the request (e.g. size:"auto" resolves to a concrete size, and the bytes are
+        # whatever output_format the API returned regardless of the output filename).
+        fmt = data.get("output_format")
         out = Path(req.output)
-        artifacts = [self._save(items[0], out, client)]
+        self._warn_suffix_mismatch(out, fmt)
+        artifacts = [self._save(items[0], out, fmt)]
         for i, it in enumerate(items[1:], start=2):
-            artifacts.append(self._save(it, out.with_name(f"{out.stem}_{i}{out.suffix}"), client, role="group"))
+            artifacts.append(self._save(it, out.with_name(f"{out.stem}_{i}{out.suffix}"), fmt, role="group"))
         usage = data.get("usage") or {}
         record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
                       "model": model, "kind": "image", "generated_images": len(items),
+                      "input_tokens": usage.get("input_tokens", 0),
                       "output_tokens": usage.get("output_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        meta = {"prompt": req.prompt, "size": data.get("size") or self._size(model, req)}
+        # Surface the settings the API echoed back (what it actually did) for traceability.
+        for k in ("output_format", "quality", "background", "created"):
+            if data.get(k) is not None:
+                meta[k] = data[k]
         return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
-                                artifacts=artifacts, usage=usage, meta={"prompt": req.prompt, "size": self._size(model, req)})
+                                artifacts=artifacts, usage=usage, meta=meta)
 
     def _common_fields(self, model: str, req: ImageRequest) -> dict:
-        fam = _family(model)
         fields: dict = {"model": model, "prompt": req.prompt, "n": req.count, "size": self._size(model, req)}
         if req.quality:
             fields["quality"] = req.quality
-        if fam == "gpt-image":
-            if req.background:
-                fields["background"] = req.background
-            if req.output_format:
-                fields["output_format"] = req.output_format
-            for k in ("moderation", "output_compression"):
-                if k in req.options:
-                    fields[k] = req.options[k]
-            # input_fidelity is a knob only on gpt-image-1 / gpt-image-1.5; never
-            # forward it to a model that rejects it (gpt-image-2, mini).
-            if "input_fidelity" in req.options and _supports_input_fidelity(model):
-                fields["input_fidelity"] = req.options["input_fidelity"]
-        if fam == "dalle":
-            fields["response_format"] = "b64_json"  # unify on bytes
-            if model == "dall-e-3" and "style" in req.options:
-                fields["style"] = req.options["style"]
+        if req.background:
+            fields["background"] = req.background
+        if req.output_format:
+            fields["output_format"] = req.output_format
+        for k in ("moderation", "output_compression"):
+            if k in req.options:
+                fields[k] = req.options[k]
+        # input_fidelity is a knob only on gpt-image-1 / gpt-image-1.5; never
+        # forward it to a model that rejects it (gpt-image-2, mini).
+        if "input_fidelity" in req.options and _supports_input_fidelity(model):
+            fields["input_fidelity"] = req.options["input_fidelity"]
         return fields
 
     def _generate(self, client, headers, model: str, req: ImageRequest) -> dict:
@@ -209,8 +193,6 @@ class OpenAIProvider(HttpProvider):
         if not req.references:
             raise MediaError("image edit requires at least one reference image", category=ErrorCategory.VALIDATION, provider=self.name)
         fields = self._common_fields(model, req)
-        if _family(model) == "gpt-image":
-            fields.pop("response_format", None)
         files = []
         for r in req.references:
             content, mime = read_bytes(r)
@@ -221,13 +203,23 @@ class OpenAIProvider(HttpProvider):
         return client.request_multipart("POST", "/images/edits", fields=fields, files=files, headers=headers)
 
     @staticmethod
-    def _save(item: dict, out: Path, client, *, role=None) -> Artifact:
+    def _warn_suffix_mismatch(out: Path, fmt: str | None) -> None:
+        """Warn (stderr) when the output filename's extension disagrees with the format
+        the API actually returned — the bytes on disk are `fmt`, not what the name implies."""
+        want = _SUFFIX_FORMAT.get(out.suffix.lower())
+        if fmt and want and want != fmt:
+            get_logger().warning("output %s has a %s extension but the API returned %s bytes; wrote them as-is",
+                                 out.name, out.suffix, fmt)
+
+    @staticmethod
+    def _save(item: dict, out: Path, fmt: str | None, *, role=None) -> Artifact:
         out.parent.mkdir(parents=True, exist_ok=True)
-        if item.get("b64_json"):
-            out.write_bytes(base64.b64decode(item["b64_json"]))
-        elif item.get("url"):
-            client.download(item["url"], out)
-        return Artifact.from_path(out, "image", mime=guess_mime(out), role=role)
+        out.write_bytes(base64.b64decode(item["b64_json"]))
+        # The response's output_format is authoritative for the bytes; fall back to the
+        # filename's mime only when the API didn't echo a format. output_format is one of
+        # png/jpeg/webp, each of which is a valid `image/<fmt>` IANA subtype.
+        mime = f"image/{fmt}" if fmt else guess_mime(out)
+        return Artifact.from_path(out, "image", mime=mime, role=role)
 
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:

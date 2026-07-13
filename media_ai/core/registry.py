@@ -130,7 +130,7 @@ def _register_builtins() -> None:
 
     register_provider("mock", _mock, model_hints=("mock",))
     register_provider("volc", _volc, model_hints=("doubao", "seedream", "seedance"))
-    register_provider("openai", _openai, model_hints=("gpt-image", "dall-e"))
+    register_provider("openai", _openai, model_hints=("gpt-image",))
     register_provider("gemini", _gemini, model_hints=("gemini-", "imagen-", "veo-"))
 
 

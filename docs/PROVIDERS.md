@@ -50,7 +50,7 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
   output-safety block on a finished-but-rejected video still exits 8.
 - Extra env: `ARK_BASE_URL`, `ARK_IMAGE_SIZE`, `ARK_POLL_INTERVAL`, `ARK_POLL_TIMEOUT`.
 
-## openai — GPT Image / DALL·E
+## openai — GPT Image
 
 ```bash
 export MEDIA_PROVIDER=openai OPENAI_API_KEY=…
@@ -61,11 +61,12 @@ export OPENAI_ORG=… OPENAI_PROJECT=…     # optional scoping headers
   `POST /v1/images/generations` and `POST /v1/images/edits` (multipart, up to 16
   references + an alpha `--mask`). OpenAI no longer exposes a video API, so
   `video generate --provider openai` fails pre-flight with `unsupported` (exit 3).
+- **GPT-Image-only.** DALL·E is intentionally unsupported — the current Images API
+  rejects its `response_format` parameter, and GPT Image supersedes it.
 - Models: `gpt-image-2` (arbitrary sizes — both edges ÷16, max edge 3840px, edge
   ratio ≤3:1, total pixels 655360–8294400; **no transparent background**),
   `gpt-image-1.5` / `gpt-image-1` / `gpt-image-1-mini` (fixed sizes
-  1024×1024 / 1536×1024 / 1024×1536, transparency ok), `dall-e-3` (n=1,
-  `--option style=…`), `dall-e-2` (edits/variations). `--quality {low,medium,high,auto}`,
+  1024×1024 / 1536×1024 / 1024×1536, transparency ok). `--quality {low,medium,high,auto}`,
   `--background`, `--format {png,jpeg,webp}`, `--option moderation=… output_compression=…`.
 - **`input_fidelity`** is a knob only on `gpt-image-1` / `gpt-image-1.5`
   (`--option input_fidelity=high`); `gpt-image-2` always processes inputs at high
