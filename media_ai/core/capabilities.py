@@ -50,7 +50,6 @@ class ImageCaps:
     aspect_ratios: tuple[str, ...] = ()
     named_sizes: tuple[str, ...] = ()  # e.g. "1K", "2K"
     pixel_sizes: tuple[str, ...] = ()  # exact allowed WxH, if fixed-enum
-    pixel_min: tuple[int, int] | None = None
     pixel_max: tuple[int, int] | None = None  # per-edge max (applies to width *and* height)
     pixel_multiple: int | None = None
     pixel_total_min: int | None = None  # min width*height (e.g. gpt-image-2: 655360)
@@ -181,6 +180,8 @@ def _check_geometry(geo: GeometrySpec | None, caps: ImageCaps | VideoCaps, issue
             issues.add("aspect-ratio", "this model takes pixel --size, not --aspect-ratio")
         if geo.aspect_ratio and caps.aspect_ratios and geo.aspect_ratio not in caps.aspect_ratios:
             issues.add("aspect-ratio", f"unsupported ratio {geo.aspect_ratio!r}; allowed: {', '.join(caps.aspect_ratios)}")
+        if geo.resolution and caps.named_sizes and geo.resolution not in caps.named_sizes:
+            issues.add("resolution", f"unsupported size tier {geo.resolution!r}; allowed: {', '.join(caps.named_sizes)}")
         if geo.mode == "pixels" and caps.pixel_multiple and (geo.width % caps.pixel_multiple or geo.height % caps.pixel_multiple):  # type: ignore[operator]
             issues.add("size", f"width & height must be multiples of {caps.pixel_multiple}")
         if geo.mode == "pixels" and caps.pixel_max and (geo.width > caps.pixel_max[0] or geo.height > caps.pixel_max[1]):  # type: ignore[operator]

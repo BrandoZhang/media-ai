@@ -23,12 +23,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _do(args) -> dict:
     inputs = [Path(p) for p in common._listify(args.inputs)]
     out = ffmpeg.concat_clips(inputs, Path(args.output), w=args.width, h=args.height)
+    size = out.stat().st_size if out.is_file() else 0
     return {
         "ok": True, "schema_version": SCHEMA_VERSION, "modality": "video", "operation": "video.concat",
-        "provider": "local", "kind": "video", "path": str(out),
-        "bytes": out.stat().st_size if out.is_file() else 0, "clips": len(inputs),
-        "artifacts": [{"path": str(out), "kind": "video", "mime": "video/mp4",
-                       "bytes": out.stat().st_size if out.is_file() else 0, "role": None}],
+        "provider": "local", "model": None, "kind": "video", "path": str(out),
+        "bytes": size, "clips": len(inputs),
+        "artifacts": [{"path": str(out), "kind": "video", "mime": "video/mp4", "bytes": size, "role": None}],
+        "usage": {}, "meta": {"clips": len(inputs)},
     }
 
 

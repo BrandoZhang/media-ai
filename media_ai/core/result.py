@@ -118,7 +118,7 @@ class JobStatus:
         }
         if self.result is not None:
             rd = self.result.to_dict()
-            out.update({"kind": rd["kind"], "path": rd["path"], "artifacts": rd["artifacts"],
+            out.update({"kind": rd["kind"], "path": rd["path"], "bytes": rd["bytes"], "artifacts": rd["artifacts"],
                         "extra_paths": rd["extra_paths"], "usage": rd["usage"], "meta": rd["meta"]})
         if self.raw:
             out["raw"] = self.raw
