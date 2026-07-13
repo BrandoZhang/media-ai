@@ -19,7 +19,7 @@ from ._http import HttpClient
 
 class HttpProvider(Provider):
     base_url: str = ""
-    auth_scheme: str = "bearer"  # "bearer" | "x-goog"
+    auth_scheme: str = "bearer"  # "bearer" | "x-goog" | "xi-api-key"
     http_timeout: float = 120.0
 
     def _auth(self, cred: Credential) -> tuple[str, dict]:
@@ -34,6 +34,8 @@ class HttpProvider(Provider):
         key = cred.reveal()
         if self.auth_scheme == "x-goog":
             return self.base_url, {"x-goog-api-key": key}
+        if self.auth_scheme == "xi-api-key":
+            return self.base_url, {"xi-api-key": key}
         return self.base_url, {"Authorization": f"Bearer {key}"}
 
     def _prepare(self, **client_kw) -> tuple[HttpClient, dict]:

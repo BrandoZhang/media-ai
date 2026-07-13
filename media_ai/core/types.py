@@ -17,15 +17,23 @@ from pathlib import Path
 class Modality(str, Enum):
     IMAGE = "image"
     VIDEO = "video"
+    AUDIO = "audio"
 
 
 class Operation(str, Enum):
     IMAGE_GENERATE = "image.generate"
     IMAGE_EDIT = "image.edit"
     VIDEO_GENERATE = "video.generate"
+    SPEECH_GENERATE = "speech.generate"
+    SPEECH_DIALOGUE = "speech.dialogue"
+    MUSIC_GENERATE = "music.generate"
+    MUSIC_PLAN = "music.plan"
+    SOUND_GENERATE = "sound.generate"
 
     @property
     def modality(self) -> Modality:
+        if self.value.startswith(("speech", "audio", "music", "sound")):
+            return Modality.AUDIO
         return Modality.VIDEO if self.value.startswith("video") else Modality.IMAGE
 
 
@@ -131,6 +139,132 @@ class VideoRequest:
             refs.append(self.last_frame)
         refs += self.reference_images + self.reference_videos + self.reference_audios
         return refs
+
+
+@dataclass
+class SpeechRequest:
+    """Single-voice text-to-speech. ``voice`` is the provider's voice id; provider-
+    specific voice knobs (stability, similarity_boost, style, …) travel in ``options``
+    and are capability-gated. ``timestamps`` requests character-level alignment."""
+
+    text: str
+    output: Path
+    operation: Operation = Operation.SPEECH_GENERATE
+    voice: str | None = None  # provider voice id (falls back to a provider default)
+    output_format: str | None = None  # e.g. mp3_44100_128 (provider wire format)
+    language_code: str | None = None  # ISO 639-1
+    seed: int | None = None
+    timestamps: bool = False  # also request per-character timing (sidecar artifact)
+    model: str | None = None  # resolved model id (registry fills this in)
+    options: dict = field(default_factory=dict)  # capability-gated provider extras
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+
+@dataclass(frozen=True)
+class DialogueTurn:
+    """One line of a multi-voice dialogue: which named speaker says what. The voice
+    for a speaker is assigned once via :attr:`DialogueRequest.cast`."""
+
+    speaker: str  # cast name (mapped to a voice by DialogueRequest.cast)
+    text: str
+
+
+@dataclass
+class DialogueRequest:
+    """Multi-voice dialogue. A ``cast`` maps each speaker name to a provider voice id;
+    ``turns`` is the ordered script referencing those speakers. Rendered into one audio
+    track. Some providers (e.g. Gemini) accept a global ``instruction`` directing the
+    whole performance; provider knobs go in ``options`` (capability-gated)."""
+
+    turns: list[DialogueTurn]
+    output: Path
+    cast: dict[str, str] = field(default_factory=dict)  # speaker name -> voice id
+    operation: Operation = Operation.SPEECH_DIALOGUE
+    instruction: str | None = None  # global director note (provider-gated)
+    output_format: str | None = None
+    language_code: str | None = None
+    seed: int | None = None
+    timestamps: bool = False
+    model: str | None = None
+    options: dict = field(default_factory=dict)
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+    def speakers(self) -> list[str]:
+        """Cast speaker names, in declared order."""
+        return list(self.cast.keys())
+
+    def voices(self) -> list[str]:
+        """Unique voice ids across the cast, in first-seen order."""
+        seen: list[str] = []
+        for v in self.cast.values():
+            if v not in seen:
+                seen.append(v)
+        return seen
+
+
+@dataclass
+class MusicRequest:
+    """Compose a song from a text ``prompt`` **or** a structured ``composition_plan``
+    (exactly one). Provider-specific knobs (force_instrumental, sign_with_c2pa, …)
+    travel in ``options``. ``detailed`` also captures the model's plan + song metadata
+    as a sidecar artifact."""
+
+    output: Path
+    prompt: str | None = None
+    composition_plan: dict | None = None  # loaded from a --plan JSON file
+    operation: Operation = Operation.MUSIC_GENERATE
+    duration_ms: int | None = None  # song length (prompt mode only)
+    output_format: str | None = None  # e.g. mp3_44100_128, or "auto"
+    seed: int | None = None  # plan mode only
+    detailed: bool = False  # also write a <stem>.metadata.json sidecar
+    model: str | None = None
+    options: dict = field(default_factory=dict)  # capability-gated provider extras
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+
+@dataclass
+class MusicPlanRequest:
+    """Generate a composition plan (JSON) from a prompt — a credit-free helper whose
+    output can be edited and fed back into :class:`MusicRequest.composition_plan`."""
+
+    prompt: str
+    output: Path  # the plan JSON is written here
+    operation: Operation = Operation.MUSIC_PLAN
+    duration_ms: int | None = None
+    source_plan: dict | None = None  # optional source composition plan to refine
+    model: str | None = None
+    options: dict = field(default_factory=dict)
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
+
+
+@dataclass
+class SoundEffectRequest:
+    """Turn ``text`` into a sound effect. ``duration_seconds`` is optional (the model
+    guesses when omitted). Provider knobs (loop, prompt_influence) go in ``options``."""
+
+    text: str
+    output: Path
+    operation: Operation = Operation.SOUND_GENERATE
+    duration_seconds: float | None = None
+    output_format: str | None = None
+    model: str | None = None
+    options: dict = field(default_factory=dict)
+
+    @property
+    def modality(self) -> Modality:
+        return Modality.AUDIO
 
 
 @dataclass(frozen=True)

@@ -1,14 +1,34 @@
-"""Network-free tests for the Gemini adapter (generateContent + Veo)."""
+"""Network-free tests for the Gemini adapter (generateContent + Veo + TTS)."""
 
 from __future__ import annotations
 
+import base64
+import wave
 from pathlib import Path
 
 import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, VideoRequest
+from media_ai.core.types import (
+    DialogueRequest,
+    DialogueTurn,
+    GeometrySpec,
+    ImageRequest,
+    JobRef,
+    MediaRef,
+    Modality,
+    SpeechRequest,
+    VideoRequest,
+)
 from media_ai.providers.gemini import GeminiProvider
+
+_PCM_B64 = base64.b64encode(b"\x00\x01" * 240).decode()  # 240 headerless PCM frames
+_AUDIO_MIME = "audio/L16;codec=pcm;rate=24000"
+
+
+def _audio_resp(data=_PCM_B64, mime=_AUDIO_MIME):
+    return {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": mime, "data": data}}]}}],
+            "usageMetadata": {"totalTokenCount": 55}}
 
 
 def test_native_generatecontent_body_and_parse(fake_provider, tmp_path):
@@ -415,3 +435,72 @@ def test_veo_operation_error_detects_safety(fake_provider):
     with pytest.raises(MediaError) as ei:
         prov.get_job(JobRef(provider="gemini", id="op"))
     assert ei.value.category == ErrorCategory.SAFETY
+
+
+# ---- TTS -----------------------------------------------------------------
+
+def _valid_wav(path, expect_rate=24000) -> bool:
+    with wave.open(str(path), "rb") as w:
+        return w.getnframes() > 0 and w.getnchannels() == 1 and w.getframerate() == expect_rate
+
+
+def test_tts_single_speaker_body_and_wav(fake_provider, tmp_path):
+    prov, fake = fake_provider(GeminiProvider, [_audio_resp()])
+    req = SpeechRequest(text="Say cheerfully: Have a wonderful day!", output=tmp_path / "o.wav",
+                        model="gemini-2.5-flash-preview-tts", voice="Kore")
+    res = prov.generate_speech(req)
+    call = fake.calls[0]
+    assert call["path"] == "/models/gemini-2.5-flash-preview-tts:generateContent"
+    gc = call["body"]["generationConfig"]
+    assert gc["responseModalities"] == ["AUDIO"]  # NOT ["TEXT","AUDIO"] — TTS 400s on TEXT
+    assert gc["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Kore"
+    assert call["body"]["contents"][0]["parts"][0]["text"].startswith("Say cheerfully")
+    assert _valid_wav(res.primary().path) and res.primary().mime == "audio/wav"
+    assert res.modality == "audio" and res.operation == "speech.generate"
+
+
+def test_tts_pcm_rate_parsed_from_mime(fake_provider, tmp_path):
+    prov, _ = fake_provider(GeminiProvider, [_audio_resp(mime="audio/L16;codec=pcm;rate=16000")])
+    res = prov.generate_speech(SpeechRequest(text="hi", output=tmp_path / "o.wav",
+                                             model="gemini-2.5-flash-preview-tts"))
+    assert _valid_wav(res.primary().path, expect_rate=16000)
+
+
+def test_tts_multi_speaker_body_and_prompt(fake_provider, tmp_path):
+    prov, fake = fake_provider(GeminiProvider, [_audio_resp()])
+    req = DialogueRequest(
+        turns=[DialogueTurn("Joe", "How's it going?"), DialogueTurn("Jane", "Not bad!")],
+        cast={"Joe": "Kore", "Jane": "Puck"}, instruction="TTS this conversation:",
+        output=tmp_path / "d.wav", model="gemini-2.5-flash-preview-tts",
+    )
+    res = prov.generate_dialogue(req)
+    body = fake.calls[0]["body"]
+    cfgs = body["generationConfig"]["speechConfig"]["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
+    assert cfgs == [{"speaker": "Joe", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}},
+                    {"speaker": "Jane", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Puck"}}}]
+    prompt = body["contents"][0]["parts"][0]["text"]
+    assert prompt == "TTS this conversation:\n\nJoe: How's it going?\nJane: Not bad!"
+    assert _valid_wav(res.primary().path) and res.operation == "speech.dialogue"
+
+
+def test_tts_200_but_no_audio_is_safety(fake_provider, tmp_path):
+    resp = {"candidates": [{"content": {"parts": [{"text": "instructions read aloud..."}]},
+                            "finishReason": "PROHIBITED_CONTENT"}]}
+    prov, _ = fake_provider(GeminiProvider, [resp])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_speech(SpeechRequest(text="x", output=tmp_path / "o.wav",
+                                           model="gemini-2.5-flash-preview-tts"))
+    assert ei.value.category == ErrorCategory.SAFETY
+    assert not (tmp_path / "o.wav").exists()
+
+
+def test_tts_capabilities_and_family_routing():
+    prov = GeminiProvider()
+    caps = prov.capabilities("gemini-2.5-flash-preview-tts")
+    assert Modality.AUDIO in caps.modalities and caps.audio is not None
+    assert caps.image is None and caps.video is None
+    assert caps.audio.supports_dialogue and caps.audio.supports_instruction
+    assert caps.audio.max_dialogue_voices == 2 and len(caps.audio.voices) == 30
+    assert prov.default_model(Modality.AUDIO) == "gemini-2.5-flash-preview-tts"
+    # a non-TTS model still reports image caps (family routing unbroken)
+    assert prov.capabilities("gemini-3.1-flash-image").image is not None

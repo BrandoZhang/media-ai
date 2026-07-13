@@ -15,6 +15,7 @@ docs/EXTENDING.md.
 """
 
 from .core.capabilities import (
+    AudioCaps,
     GeometryMode,
     ImageCaps,
     ModelCapabilities,
@@ -28,12 +29,18 @@ from .core.registry import provider_names, register_provider, unregister_provide
 from .core.retry import retry
 from .core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from .core.types import (
+    DialogueRequest,
+    DialogueTurn,
     GeometrySpec,
     ImageRequest,
     JobRef,
     MediaRef,
     Modality,
+    MusicPlanRequest,
+    MusicRequest,
     Operation,
+    SoundEffectRequest,
+    SpeechRequest,
     VideoRequest,
 )
 from .providers._base import HttpProvider
@@ -50,6 +57,7 @@ __all__ = [
     "ModelCapabilities",
     "ImageCaps",
     "VideoCaps",
+    "AudioCaps",
     "GeometryMode",
     "UnsupportedPolicy",
     "validate_request",
@@ -57,6 +65,12 @@ __all__ = [
     "Operation",
     "ImageRequest",
     "VideoRequest",
+    "SpeechRequest",
+    "DialogueRequest",
+    "DialogueTurn",
+    "MusicRequest",
+    "MusicPlanRequest",
+    "SoundEffectRequest",
     "MediaRef",
     "GeometrySpec",
     "JobRef",

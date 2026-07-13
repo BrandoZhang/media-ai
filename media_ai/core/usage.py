@@ -51,6 +51,7 @@ def summarize_usage(path: Path | None = None) -> dict:
         "calls": 0,
         "images_generated": 0,
         "video_seconds": 0,
+        "speech_characters": 0,
         "total_tokens": 0,
         "by_tool": {},
         "by_provider": {},
@@ -68,6 +69,7 @@ def summarize_usage(path: Path | None = None) -> dict:
         totals["calls"] += 1
         totals["images_generated"] += int(e.get("generated_images", 0) or 0)
         totals["video_seconds"] += int(e.get("seconds", 0) or 0)
+        totals["speech_characters"] += int(e.get("characters", 0) or 0)
         tok = int(e.get("total_tokens", 0) or 0)
         totals["total_tokens"] += tok
         tool = e.get("tool") or e.get("operation") or "?"

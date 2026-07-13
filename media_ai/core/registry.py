@@ -128,6 +128,11 @@ def _register_builtins() -> None:
 
         return GeminiProvider(**kw)
 
+    def _elevenlabs(**kw):
+        from ..providers.elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider(**kw)
+
     register_provider("mock", _mock, model_hints=("mock",))
     register_provider("volc", _volc, model_hints=("doubao", "seedream", "seedance"))
     # `dall-e`/`sora` route here so a request for a (dropped) DALL·E or the
@@ -136,6 +141,7 @@ def _register_builtins() -> None:
     # routes to gemini for a clear "use Nano Banana" removal error.
     register_provider("openai", _openai, model_hints=("gpt-image", "dall-e", "sora"))
     register_provider("gemini", _gemini, model_hints=("gemini-", "imagen-", "veo-"))
+    register_provider("elevenlabs", _elevenlabs, model_hints=("eleven_", "eleven-"))
 
 
 def _load_entry_points() -> None:

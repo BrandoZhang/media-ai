@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 
 from ..core.capabilities import (
+    AudioCaps,
     GeometryMode,
     ImageCaps,
     ModelCapabilities,
@@ -29,9 +30,19 @@ from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import resolve_image_pixels, resolve_video_pixels
 from ..core.provider import Provider
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
+from ..core.types import (
+    DialogueRequest,
+    ImageRequest,
+    JobRef,
+    Modality,
+    MusicPlanRequest,
+    MusicRequest,
+    SoundEffectRequest,
+    SpeechRequest,
+    VideoRequest,
+)
 from ..core.usage import record_usage
-from ..media import ffmpeg, pillow
+from ..media import audio, ffmpeg, pillow
 
 _DEFAULT_IMG = (768, 432)
 _MOCK_RENDER_H = 360  # render small (fast); bill at requested resolution
@@ -61,7 +72,7 @@ class MockProvider(Provider):
         return ModelCapabilities(
             provider=self.name,
             model="mock",
-            modalities=frozenset({Modality.IMAGE, Modality.VIDEO}),
+            modalities=frozenset({Modality.IMAGE, Modality.VIDEO, Modality.AUDIO}),
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
                 geometry_mode=GeometryMode.BOTH,
@@ -92,6 +103,32 @@ class MockProvider(Provider):
                 supports_audio=True,
                 supports_watermark_control=True,
                 supports_return_last_frame=True,
+            ),
+            audio=AudioCaps(
+                operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE,
+                                      Operation.MUSIC_GENERATE, Operation.MUSIC_PLAN, Operation.SOUND_GENERATE}),
+                voices=("mock-voice-a", "mock-voice-b"),
+                default_voice="mock-voice-a",
+                output_formats=("mp3_44100_128", "wav_44100"),
+                supports_seed=True,
+                supports_language_code=True,
+                supports_timestamps=True,
+                supports_dialogue=True,
+                supports_instruction=True,
+                max_dialogue_voices=10,
+                options=("stability", "similarity_boost", "style", "speed", "use_speaker_boost"),
+                supports_music=True,
+                supports_composition_plan=True,
+                music_models=("mock-music",),
+                music_output_formats=("mp3_44100_128", "wav_44100"),
+                music_min_ms=3000,
+                music_max_ms=600000,
+                music_options=("force_instrumental", "respect_sections_durations"),
+                supports_sound=True,
+                sound_output_formats=("mp3_44100_128", "wav_44100"),
+                sound_min_seconds=0.5,
+                sound_max_seconds=30.0,
+                sound_options=("loop", "prompt_influence"),
             ),
             notes=("offline placeholder generator; deterministic given (prompt, seed)",),
         )
@@ -168,6 +205,96 @@ class MockProvider(Provider):
             meta={"prompt": req.prompt, "seconds": seconds, "seed": req.seed, "render_size": [rw, rh]},
         )
 
+    # ---- audio (speech / dialogue) ---------------------------------------
+    def generate_speech(self, req: SpeechRequest) -> GenerationResult:
+        out = Path(req.output)
+        secs = audio.tone_seconds(len(req.text))
+        audio.write_tone_wav(out, secs)
+        artifacts = [Artifact.from_path(out, "audio", mime="audio/wav")]
+        if req.timestamps:
+            artifacts.append(self._write_alignment(out, {"alignment": audio.fake_alignment(req.text, secs)}))
+        usage = {"characters": len(req.text)}
+        record_usage({"tool": "speech.generate", "operation": "speech.generate", "provider": self.name,
+                      "model": "mock", "kind": "audio", **usage})
+        return GenerationResult(
+            modality="audio", operation="speech.generate", provider=self.name, model="mock",
+            artifacts=artifacts, usage=usage,
+            meta={"voice": req.voice or "mock-voice-a", "seconds": round(secs, 3), "timestamps": req.timestamps},
+        )
+
+    def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
+        if not req.turns or not req.cast:
+            raise MediaError("dialogue requires turns and a cast", category=ErrorCategory.VALIDATION, provider=self.name)
+        out = Path(req.output)
+        total_chars = sum(len(t.text) for t in req.turns)
+        secs = audio.tone_seconds(total_chars)
+        audio.write_tone_wav(out, secs)
+        artifacts = [Artifact.from_path(out, "audio", mime="audio/wav")]
+        if req.timestamps:
+            payload = {"alignment": audio.fake_alignment("".join(t.text for t in req.turns), secs),
+                       "voice_segments": _mock_voice_segments(req.turns, req.cast, secs)}
+            artifacts.append(self._write_alignment(out, payload))
+        usage = {"characters": total_chars}
+        record_usage({"tool": "speech.dialogue", "operation": "speech.dialogue", "provider": self.name,
+                      "model": "mock", "kind": "audio", **usage})
+        return GenerationResult(
+            modality="audio", operation="speech.dialogue", provider=self.name, model="mock",
+            artifacts=artifacts, usage=usage,
+            meta={"voices": req.voices(), "instruction": req.instruction, "seconds": round(secs, 3),
+                  "timestamps": req.timestamps},
+        )
+
+    def _write_alignment(self, out: Path, payload: dict) -> Artifact:
+        sidecar = out.with_suffix(out.suffix + ".timestamps.json")
+        sidecar.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return Artifact.from_path(sidecar, "timestamps", mime="application/json", role="alignment")
+
+    # ---- music / sound ---------------------------------------------------
+    def generate_music(self, req: MusicRequest) -> GenerationResult:
+        if bool(req.prompt) == bool(req.composition_plan):
+            raise MediaError("music requires exactly one of a prompt or a composition plan",
+                             category=ErrorCategory.VALIDATION, provider=self.name)
+        out = Path(req.output)
+        if req.composition_plan is not None:
+            secs = sum(s.get("duration_ms", 0) for s in req.composition_plan.get("sections", [])) / 1000 or 10.0
+        else:
+            secs = (req.duration_ms or 10000) / 1000
+        secs = min(secs, 30.0)  # keep the offline tone short
+        audio.write_tone_wav(out, secs, freq=330.0)
+        artifacts = [Artifact.from_path(out, "audio", mime="audio/wav")]
+        if req.detailed:
+            sidecar = out.with_suffix(out.suffix + ".metadata.json")
+            sidecar.write_text(json.dumps(_mock_plan(req.prompt or "composition"), ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+            artifacts.append(Artifact.from_path(sidecar, "metadata", mime="application/json", role="metadata"))
+        record_usage({"tool": "music.generate", "operation": "music.generate", "provider": self.name,
+                      "model": "mock", "kind": "audio"})
+        return GenerationResult(modality="audio", operation="music.generate", provider=self.name, model="mock",
+                                artifacts=artifacts, usage={},
+                                meta={"prompt": req.prompt, "from_plan": req.composition_plan is not None,
+                                      "seconds": round(secs, 3), "detailed": req.detailed})
+
+    def generate_music_plan(self, req: MusicPlanRequest) -> GenerationResult:
+        out = Path(req.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(_mock_plan(req.prompt, req.duration_ms), ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        record_usage({"tool": "music.plan", "operation": "music.plan", "provider": self.name,
+                      "model": "mock", "kind": "plan"})
+        return GenerationResult(modality="audio", operation="music.plan", provider=self.name, model="mock",
+                                artifacts=[Artifact.from_path(out, "plan", mime="application/json")],
+                                usage={}, meta={"prompt": req.prompt, "free": True})
+
+    def generate_sound(self, req: SoundEffectRequest) -> GenerationResult:
+        out = Path(req.output)
+        secs = req.duration_seconds if req.duration_seconds is not None else min(2.0, max(0.5, len(req.text) / 20))
+        audio.write_tone_wav(out, secs, freq=180.0)
+        record_usage({"tool": "sound.generate", "operation": "sound.generate", "provider": self.name,
+                      "model": "mock", "kind": "audio", "characters": len(req.text)})
+        return GenerationResult(modality="audio", operation="sound.generate", provider=self.name, model="mock",
+                                artifacts=[Artifact.from_path(out, "audio", mime="audio/wav")],
+                                usage={"characters": len(req.text)}, meta={"text": req.text, "seconds": round(secs, 3)})
+
     # ---- jobs ------------------------------------------------------------
     def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
         req = _decode_job(ref.id)
@@ -179,6 +306,34 @@ class MockProvider(Provider):
     def cancel_job(self, ref: JobRef) -> JobStatus:
         return JobStatus(provider=self.name, model="mock", id=ref.id, status="cancelled", op="cancel",
                          raw={"note": "mock generates synchronously; nothing to cancel"})
+
+
+def _mock_plan(prompt: str, duration_ms: int | None = None) -> dict:
+    """A deterministic placeholder composition plan (mirrors the ElevenLabs shape)."""
+    return {
+        "positive_global_styles": ["pop", "upbeat", "clean production"],
+        "negative_global_styles": ["lo-fi"],
+        "sections": [{
+            "section_name": "Verse 1",
+            "positive_local_styles": ["melodic"],
+            "negative_local_styles": [],
+            "duration_ms": duration_ms or 10000,
+            "lines": [f"mock lyrics for: {prompt}"[:200]],
+        }],
+    }
+
+
+def _mock_voice_segments(turns, cast: dict, seconds: float) -> list[dict]:
+    """Fabricate per-turn voice segments (mock stand-in for the API's voice_segments)."""
+    n = len(turns) or 1
+    step = seconds / n
+    segs, ci = [], 0
+    for i, t in enumerate(turns):
+        segs.append({"voice_id": cast.get(t.speaker, t.speaker), "start_time_seconds": round(i * step, 4),
+                     "end_time_seconds": round((i + 1) * step, 4), "character_start_index": ci,
+                     "character_end_index": ci + len(t.text), "dialogue_input_index": i})
+        ci += len(t.text)
+    return segs
 
 
 def _ref_tag(req: VideoRequest) -> str:

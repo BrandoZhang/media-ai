@@ -16,7 +16,18 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 from .errors import ErrorCategory, MediaError
-from .types import GeometrySpec, ImageRequest, Modality, Operation, VideoRequest
+from .types import (
+    DialogueRequest,
+    GeometrySpec,
+    ImageRequest,
+    Modality,
+    MusicPlanRequest,
+    MusicRequest,
+    Operation,
+    SoundEffectRequest,
+    SpeechRequest,
+    VideoRequest,
+)
 
 
 class GeometryMode(str, Enum):
@@ -80,12 +91,44 @@ class VideoCaps:
 
 
 @dataclass
+class AudioCaps:
+    operations: frozenset[Operation] = frozenset({Operation.SPEECH_GENERATE})
+    # --- speech / dialogue (speech.generate, speech.dialogue) ---
+    voices: tuple[str, ...] = ()  # known/preset voice ids (informational)
+    default_voice: str | None = None
+    output_formats: tuple[str, ...] = ("mp3_44100_128",)  # speech codec_samplerate_bitrate
+    supports_seed: bool = False
+    supports_language_code: bool = False
+    supports_timestamps: bool = False  # per-character alignment sidecar
+    supports_dialogue: bool = False  # multi-voice (speech.dialogue)
+    supports_instruction: bool = False  # global director note for dialogue
+    max_dialogue_voices: int = 0  # 0 = dialogue unsupported
+    max_characters: int | None = None  # per-request text budget
+    options: tuple[str, ...] = ()  # speech options
+    # --- music (music.generate, music.plan) ---
+    supports_music: bool = False
+    supports_composition_plan: bool = False  # compose from / generate a plan
+    music_models: tuple[str, ...] = ()
+    music_output_formats: tuple[str, ...] = ()
+    music_min_ms: int | None = None
+    music_max_ms: int | None = None
+    music_options: tuple[str, ...] = ()
+    # --- sound effects (sound.generate) ---
+    supports_sound: bool = False
+    sound_output_formats: tuple[str, ...] = ()
+    sound_min_seconds: float | None = None
+    sound_max_seconds: float | None = None
+    sound_options: tuple[str, ...] = ()
+
+
+@dataclass
 class ModelCapabilities:
     provider: str
     model: str
     modalities: frozenset[Modality]
     image: ImageCaps | None = None
     video: VideoCaps | None = None
+    audio: AudioCaps | None = None
     notes: tuple[str, ...] = ()
     experimental: bool = False
     aliases: tuple[str, ...] = field(default_factory=tuple)
@@ -100,7 +143,7 @@ class ModelCapabilities:
 
         d = asdict(self)
         d["modalities"] = sorted(m.value for m in self.modalities)
-        for key in ("image", "video"):
+        for key in ("image", "video", "audio"):
             if d[key] is not None:
                 sub = d[key]
                 sub["operations"] = sorted(o.value for o in getattr(self, key).operations)
@@ -173,6 +216,16 @@ def validate_request(req, caps: ModelCapabilities, policy: UnsupportedPolicy = U
         _validate_image(req, caps, issues)
     elif isinstance(req, VideoRequest):
         _validate_video(req, caps, issues)
+    elif isinstance(req, SpeechRequest):
+        _validate_speech(req, caps, issues)
+    elif isinstance(req, DialogueRequest):
+        _validate_dialogue(req, caps, issues)
+    elif isinstance(req, MusicRequest):
+        _validate_music(req, caps, issues)
+    elif isinstance(req, MusicPlanRequest):
+        _validate_music_plan(req, caps, issues)
+    elif isinstance(req, SoundEffectRequest):
+        _validate_sound(req, caps, issues)
 
     if not issues:
         return []
@@ -250,6 +303,116 @@ def _validate_video(req: VideoRequest, caps: ModelCapabilities, issues: _Issues)
     if req.return_last_frame and not vc.supports_return_last_frame:
         issues.add("return-last-frame", "model cannot return the output's last frame")
     _check_options(req.options, vc.options, issues)
+
+
+def _validate_speech(req: SpeechRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None:
+        issues.add("modality", "model does not support speech generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if req.output_format and ac.output_formats and req.output_format not in ac.output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.output_formats)}")
+    if req.seed is not None and not ac.supports_seed:
+        issues.add("seed", "model does not accept a seed")
+    if req.language_code and not ac.supports_language_code:
+        issues.add("language-code", "model does not accept a language code")
+    if req.timestamps and not ac.supports_timestamps:
+        issues.add("timestamps", "model does not support character timestamps")
+    if ac.max_characters is not None and len(req.text) > ac.max_characters:
+        issues.add("text", f"exceeds max {ac.max_characters} characters")
+    _check_options(req.options, ac.options, issues)
+
+
+def _validate_dialogue(req: DialogueRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None or not ac.supports_dialogue:
+        issues.add("modality", "model does not support dialogue generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if not req.turns:
+        issues.add("turns", "dialogue requires at least one turn")
+    if not req.cast:
+        issues.add("cast", "dialogue requires a cast mapping speaker names to voices")
+    unknown = sorted({t.speaker for t in req.turns} - set(req.cast))
+    if unknown:
+        issues.add("turns", f"speaker(s) not in cast: {', '.join(unknown)}")
+    if ac.max_dialogue_voices and len(req.voices()) > ac.max_dialogue_voices:
+        issues.add("cast", f"max {ac.max_dialogue_voices} unique voices per dialogue")
+    if req.instruction and not ac.supports_instruction:
+        issues.add("instruction", "model does not support a global dialogue instruction")
+    if req.output_format and ac.output_formats and req.output_format not in ac.output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.output_formats)}")
+    if req.seed is not None and not ac.supports_seed:
+        issues.add("seed", "model does not accept a seed")
+    if req.language_code and not ac.supports_language_code:
+        issues.add("language-code", "model does not accept a language code")
+    if req.timestamps and not ac.supports_timestamps:
+        issues.add("timestamps", "model does not support character timestamps")
+    if ac.max_characters is not None and sum(len(t.text) for t in req.turns) > ac.max_characters:
+        issues.add("text", f"total dialogue text exceeds max {ac.max_characters} characters")
+    _check_options(req.options, ac.options, issues)
+
+
+def _validate_music(req: MusicRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None or not ac.supports_music:
+        issues.add("modality", "model does not support music generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if bool(req.prompt) == bool(req.composition_plan):
+        issues.add("prompt", "provide exactly one of a prompt or a composition plan")
+    if req.composition_plan and not ac.supports_composition_plan:
+        issues.add("composition-plan", "model does not support a composition plan")
+    if req.seed is not None and req.prompt:
+        issues.add("seed", "seed cannot be used with a prompt (composition-plan mode only)")
+    if req.duration_ms is not None:
+        if ac.music_min_ms is not None and req.duration_ms < ac.music_min_ms:
+            issues.add("duration-ms", f"must be at least {ac.music_min_ms}ms")
+        if ac.music_max_ms is not None and req.duration_ms > ac.music_max_ms:
+            issues.add("duration-ms", f"must be at most {ac.music_max_ms}ms")
+    if req.output_format and ac.music_output_formats and req.output_format not in ac.music_output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.music_output_formats)}")
+    _check_options(req.options, ac.music_options, issues)
+
+
+def _validate_music_plan(req: MusicPlanRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None or not ac.supports_composition_plan:
+        issues.add("modality", "model does not support composition plans")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if not req.prompt:
+        issues.add("prompt", "a composition plan requires a prompt")
+    if req.duration_ms is not None:
+        if ac.music_min_ms is not None and req.duration_ms < ac.music_min_ms:
+            issues.add("duration-ms", f"must be at least {ac.music_min_ms}ms")
+        if ac.music_max_ms is not None and req.duration_ms > ac.music_max_ms:
+            issues.add("duration-ms", f"must be at most {ac.music_max_ms}ms")
+    _check_options(req.options, ac.music_options, issues)
+
+
+def _validate_sound(req: SoundEffectRequest, caps: ModelCapabilities, issues: _Issues) -> None:
+    ac = caps.audio
+    if ac is None or not ac.supports_sound:
+        issues.add("modality", "model does not support sound-effect generation")
+        return
+    if req.operation not in ac.operations:
+        issues.add("operation", f"{req.operation.value} not supported; allowed: {', '.join(o.value for o in ac.operations)}")
+    if not req.text:
+        issues.add("text", "sound effect requires text")
+    if req.duration_seconds is not None:
+        if ac.sound_min_seconds is not None and req.duration_seconds < ac.sound_min_seconds:
+            issues.add("duration-seconds", f"must be at least {ac.sound_min_seconds}s")
+        if ac.sound_max_seconds is not None and req.duration_seconds > ac.sound_max_seconds:
+            issues.add("duration-seconds", f"must be at most {ac.sound_max_seconds}s")
+    if req.output_format and ac.sound_output_formats and req.output_format not in ac.sound_output_formats:
+        issues.add("output-format", f"unsupported output format {req.output_format!r}; allowed: {', '.join(ac.sound_output_formats)}")
+    _check_options(req.options, ac.sound_options, issues)
 
 
 def _check_options(options: dict, allowed: tuple[str, ...], issues: _Issues) -> None:

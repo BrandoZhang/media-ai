@@ -22,16 +22,18 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 from pathlib import Path
 
-from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
+from ..core.capabilities import AudioCaps, GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import ImageRequest, JobRef, MediaRef, Modality, VideoRequest
+from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, Modality, SpeechRequest, VideoRequest
 from ..core.usage import record_usage
 from ..media import ffmpeg, pillow
+from ..media.audio import write_pcm_wav
 from . import _gemini_files
 from ._base import HttpProvider
 
@@ -41,9 +43,21 @@ _STD_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", 
 _ULTRAWIDE_RATIOS = ("1:4", "4:1", "1:8", "8:1")
 _FLASH_RATIOS = _STD_RATIOS + _ULTRAWIDE_RATIOS
 
+# Gemini 2.5/3.1 text-to-speech models and the 30 prebuilt voices (style/tone/pace
+# are directed via the prompt text / --instruction, not a parameter).
+_TTS_MODELS = ("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview")
+_GEMINI_VOICES = (
+    "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
+    "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
+    "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird",
+    "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+)
+
 
 def _family(model: str) -> str:
     m = model.lower()
+    if "tts" in m:
+        return "tts"
     if m.startswith("veo"):
         return "veo"
     if m.startswith("imagen"):
@@ -80,6 +94,7 @@ class GeminiProvider(HttpProvider):
         # model; Veo 3.1 supersedes the deprecated Veo 2/3.0 line.
         self.image_model = os.getenv("GEMINI_IMAGE_MODEL") or "gemini-3.1-flash-image"
         self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
+        self.tts_model = os.getenv("GEMINI_TTS_MODEL") or "gemini-2.5-flash-preview-tts"
         self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
         self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
         # generateContent references up to this many raw bytes (summed) are inlined as
@@ -95,19 +110,41 @@ class GeminiProvider(HttpProvider):
         # Nano Banana + Veo 3.1 lineup.
         return ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
                 "gemini-2.5-flash-image", "veo-3.1-generate-preview",
-                "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview"]
+                "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview", *_TTS_MODELS]
 
     def default_model(self, modality: Modality | None) -> str:
-        return self.video_model if modality == Modality.VIDEO else self.image_model
+        if modality == Modality.VIDEO:
+            return self.video_model
+        if modality == Modality.AUDIO:
+            return self.tts_model
+        return self.image_model
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        model = model or self.image_model
+        if model is None:
+            model = self.tts_model if modality == Modality.AUDIO else self.image_model
         fam = _family(model)
+        if fam == "tts":
+            return self._audio_caps(model)
         if fam == "veo":
             return self._veo_caps(model)
         if fam == "imagen":
             raise _imagen_removed(model)
         return self._native_caps(model)
+
+    def _audio_caps(self, model: str) -> ModelCapabilities:
+        return ModelCapabilities(
+            provider=self.name, model=model, modalities=frozenset({Modality.AUDIO}),
+            experimental="preview" in model,
+            audio=AudioCaps(
+                operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE}),
+                voices=_GEMINI_VOICES, default_voice="Kore", output_formats=("wav",),
+                supports_seed=False, supports_language_code=False, supports_timestamps=False,
+                supports_dialogue=True, supports_instruction=True, max_dialogue_voices=2,
+                max_characters=None, options=(),
+            ),
+            notes=("style/tone/accent/pace and inline [tags] are directed via the prompt text and "
+                   "--instruction, not parameters; language is auto-detected; output is 24kHz WAV",),
+        )
 
     def _veo_caps(self, model: str) -> ModelCapabilities:
         m = model.lower()
@@ -214,7 +251,7 @@ class GeminiProvider(HttpProvider):
         data = client.request_json("POST", f"/models/{model}:generateContent", body=body, headers=headers)
         images = _extract_inline_images(data)
         if not images:
-            raise _no_image_error(data, self.name, model)
+            raise _no_media_error(data, self.name, model, "image")
         out = Path(req.output)
         artifacts = [_write_b64(images[0][0], out, "image", source_mime=images[0][1])]
         for i, (b64, mime) in enumerate(images[1:], start=2):
@@ -238,6 +275,47 @@ class GeminiProvider(HttpProvider):
             meta["grounding"] = grounding  # search suggestions (display per ToS) + citations
         return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=used_model,
                                 artifacts=artifacts, usage=usage, meta=meta)
+
+    # ---- speech / dialogue (TTS via generateContent) ---------------------
+    def generate_speech(self, req: SpeechRequest) -> GenerationResult:
+        model = req.model or self.tts_model
+        voice = req.voice or "Kore"
+        speech_cfg = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+        return self._tts(model, req.text, speech_cfg, Path(req.output), "speech.generate", {"voice": voice})
+
+    def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
+        if not req.turns or not req.cast:
+            raise MediaError("dialogue requires turns and a cast", category=ErrorCategory.VALIDATION, provider=self.name)
+        model = req.model or self.tts_model
+        configs = [{"speaker": spk, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+                   for spk, voice in req.cast.items()]
+        speech_cfg = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": configs}}
+        script = "\n".join(f"{t.speaker}: {t.text}" for t in req.turns)
+        prompt = f"{req.instruction}\n\n{script}" if req.instruction else script
+        return self._tts(model, prompt, speech_cfg, Path(req.output), "speech.dialogue",
+                         {"voices": req.voices(), "instruction": req.instruction})
+
+    def _tts(self, model: str, prompt: str, speech_cfg: dict, out: Path, operation: str, meta: dict) -> GenerationResult:
+        client, headers = self._prepare()
+        # TTS models produce audio only — responseModalities MUST be ["AUDIO"] (adding
+        # "TEXT", as the image path does, makes the model reject the request with a 400).
+        body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": speech_cfg}}
+        data = client.request_json("POST", f"/models/{model}:generateContent", body=body, headers=headers)
+        audio = _extract_inline_audio(data)
+        if not audio:
+            raise _no_media_error(data, self.name, model, "audio")
+        b64, mime = audio[0]
+        write_pcm_wav(out, base64.b64decode(b64), rate=_pcm_rate(mime))  # headerless PCM -> WAV
+        usage = data.get("usageMetadata") or {}
+        used_model = data.get("modelVersion") or model
+        record_usage({"tool": operation, "operation": operation, "provider": self.name,
+                      "model": used_model, "kind": "audio", "characters": len(prompt),
+                      "total_tokens": usage.get("totalTokenCount", 0)})
+        if data.get("responseId"):
+            meta["response_id"] = data["responseId"]
+        return GenerationResult(modality="audio", operation=operation, provider=self.name, model=used_model,
+                                artifacts=[Artifact.from_path(out, "audio", mime="audio/wav")], usage=usage, meta=meta)
 
     # ---- video (Veo long-running op) -------------------------------------
     def generate_video(self, req: VideoRequest):
@@ -344,7 +422,7 @@ class GeminiProvider(HttpProvider):
         classify precisely) and falls back to the HTTP status when it can't parse.
         """
         # The HTTP status/canonical status is authoritative here: a Gemini content
-        # block surfaces on the 200-OK path (see `_no_image_error`), so an HTTP error
+        # block surfaces on the 200-OK path (see `_no_media_error`), so an HTTP error
         # is a transport/validation failure and a message that merely mentions
         # "safety"/"blocked" (e.g. a malformed `safetySettings` field) stays as its
         # status category rather than being miscast as a safety block.
@@ -560,6 +638,18 @@ def _extract_inline_images(data: dict) -> list[tuple[str, str]]:
     return out
 
 
+def _extract_inline_audio(data: dict) -> list[tuple[str, str]]:
+    """Return ``(base64, mimeType)`` for each inline audio part (mimeType carries the
+    PCM sample rate, e.g. ``audio/L16;codec=pcm;rate=24000``)."""
+    return [(b64, mime) for b64, mime in _extract_inline_images(data) if "audio" in (mime or "").lower()]
+
+
+def _pcm_rate(mime: str) -> int:
+    """Parse the sample rate from a PCM mimeType (default 24000 if absent)."""
+    m = re.search(r"rate=(\d+)", mime or "")
+    return int(m.group(1)) if m else 24000
+
+
 def _extract_text(data: dict) -> str:
     """Join the model's non-thought text parts (a caption, or a grounded summary)."""
     chunks = []
@@ -581,19 +671,19 @@ def _grounding_metadata(data: dict) -> dict | None:
     return None
 
 
-def _no_image_error(data: dict, provider: str, model: str) -> MediaError:
-    """Turn a 200-OK-but-no-image response into a categorized error (Gemini's
+def _no_media_error(data: dict, provider: str, model: str, kind: str = "image") -> MediaError:
+    """Turn a 200-OK-but-no-output response into a categorized error (Gemini's
     silent safety drop) instead of writing an empty file."""
     feedback = data.get("promptFeedback") or {}
     if feedback.get("blockReason"):
         return MediaError(f"Gemini blocked the prompt: {feedback['blockReason']}",
                           category=ErrorCategory.SAFETY, provider=provider, model=model, details=feedback)
     cands = data.get("candidates") or []
-    finish = (cands[0].get("finishReason") if cands else None) or "NO_IMAGE"
-    if any(x in str(finish).upper() for x in ("SAFETY", "PROHIBITED", "RECITATION", "IMAGE")):
-        return MediaError(f"Gemini returned no image (finishReason={finish})",
+    finish = (cands[0].get("finishReason") if cands else None) or f"NO_{kind.upper()}"
+    if any(x in str(finish).upper() for x in ("SAFETY", "PROHIBITED", "RECITATION", "BLOCK", kind.upper())):
+        return MediaError(f"Gemini returned no {kind} (finishReason={finish})",
                           category=ErrorCategory.SAFETY, provider=provider, model=model, details={"finishReason": finish})
-    return MediaError(f"Gemini returned no image (finishReason={finish})",
+    return MediaError(f"Gemini returned no {kind} (finishReason={finish})",
                       category=ErrorCategory.PROVIDER, provider=provider, model=model, details={"finishReason": finish})
 
 

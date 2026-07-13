@@ -6,9 +6,11 @@ machine-readable descriptor. This page is the human summary + setup.
 ## mock (default, offline)
 
 No credentials. Deterministic given `(prompt, seed)`. Draws Pillow placeholder
-images and ffmpeg clips; synthesizes token counts with the same formulas the real
-APIs document so the cost path is exercised offline. Supports a stateless fake
-async job so the `job query` path is testable without a network.
+images and ffmpeg clips, and synthesizes placeholder speech/dialogue as stdlib
+`wave` WAV tones (no ffmpeg needed, incl. a fake `--timestamps` sidecar);
+synthesizes token/character counts with the same formulas the real APIs document
+so the cost path is exercised offline. Supports a stateless fake async job so the
+`job query` path is testable without a network.
 
 ## volc — Volcengine Ark (Doubao Seedream / Seedance)
 
@@ -111,12 +113,66 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   cancelled** on the Developer API (`job cancel` → exit 3). Deprecated `veo-2.0` /
   `veo-3.0` snapshots still resolve via `--model`.
 - **SynthID watermarking is unconditional** on this API (image + video).
+- **TTS** (`gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`,
+  `gemini-3.1-flash-tts-preview`) via `:generateContent` with
+  `responseModalities:["AUDIO"]` — **synchronous**, returns headerless 24 kHz PCM which
+  the adapter wraps into a WAV. Style/tone/accent/pace and inline `[whispers]`/`[laughs]`
+  tags are directed **in the prompt text**; language is auto-detected; there are 30 named
+  voices (see `capabilities`). `speech generate --voice Kore`; `speech dialogue`
+  (≤2 speakers) takes a cast + turns and an optional global `--instruction`. Output is
+  WAV only (no format/seed/timestamps knobs). A 200-OK with no audio (safety) → `safety`
+  error (exit 8). Env: `GEMINI_TTS_MODEL`.
 - A 200-OK response with **no image** (Gemini's silent safety drop) is surfaced as
   a `safety` error (exit 8), not an empty file.
 - Extra env: `GEMINI_BASE_URL`, `GEMINI_IMAGE_MODEL`, `GEMINI_VIDEO_MODEL`,
-  `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
-- Every image/video path (incl. local-file inputs) was exercised against the live API
-  — see [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
+  `GEMINI_TTS_MODEL`, `GEMINI_POLL_INTERVAL`, `GEMINI_POLL_TIMEOUT`, `GEMINI_INLINE_MAX_BYTES`.
+- Every image/video path (incl. local-file inputs) and the TTS paths (single +
+  multi-speaker) were exercised against the live API — see
+  [GEMINI_LIVE_TEST.md](GEMINI_LIVE_TEST.md) for the coverage matrix and findings.
+
+## elevenlabs — text-to-speech + dialogue + music + sound effects
+
+```bash
+export MEDIA_PROVIDER=elevenlabs ELEVENLABS_API_KEY=…   # or ELEVEN_API_KEY
+```
+
+- **Audio** is **synchronous** (`audio` modality; `media-ai speech` / `music` / `sound`).
+  Auth is the `xi-api-key` header.
+- **`speech generate`** — single voice via `POST /v1/text-to-speech/{voice_id}`
+  (raw audio bytes). `--voice`, `--output-format` (e.g. `mp3_44100_128`; full codec
+  enum in `capabilities`), `--language-code`, `--seed`. Voice knobs go through
+  `--option stability=… similarity_boost=… style=… speed=… use_speaker_boost=…`
+  (plus `previous_text`/`next_text`/`apply_text_normalization`/`enable_logging`/
+  `optimize_streaming_latency`).
+- **`speech dialogue`** — multi-voice via `POST /v1/text-to-dialogue`. Define a cast
+  with `--speaker NAME=VOICE` (repeatable), then the script with `--turn NAME TEXT`
+  (repeatable) and/or a `--script file.json`. ≤10 unique voices; keep total text ≲2000
+  chars. (No global `--instruction` — that's Gemini-only.)
+- **`--timestamps true`** switches either op to the `/with-timestamps` endpoint and
+  writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
+  also gets `voice_segments`) as a second artifact.
+- **`music generate`** — compose a song via `POST /v1/music` from a `--prompt` **or** a
+  `--plan` composition-plan JSON (exactly one). `--duration-ms` (prompt mode, 3s–600s),
+  `--output-format` (incl. `auto`), `--seed` (plan mode only). `--option
+  force_instrumental=… respect_sections_durations=… store_for_inpainting=… sign_with_c2pa=…`.
+  `--detailed true` uses `POST /v1/music/detailed` (multipart) and writes a
+  `<output>.metadata.json` sidecar with the model's composition plan + song metadata.
+- **`music plan`** — `POST /v1/music/plan`: a **credit-free** helper that returns a
+  composition plan (JSON) from a prompt; edit it and feed it back via `music generate --plan`.
+- **`sound generate`** — text→sound effect via `POST /v1/sound-generation`. `--text`,
+  `--duration-seconds` (0.5–30, optional), `--output-format`, `--option loop=… prompt_influence=…`.
+- **`--timestamps true`** switches either **speech** op to the `/with-timestamps` endpoint and
+  writes a `<output>.timestamps.json` sidecar (per-character alignment; dialogue
+  also gets `voice_segments`) as a second artifact.
+- Models: `eleven_multilingual_v2` (TTS default), `eleven_turbo_v2_5`,
+  `eleven_flash_v2_5`, `eleven_v3` (dialogue default); `music_v1`/`music_v2` (music);
+  `eleven_text_to_sound_v2` (sound). `mp3_44100_192` needs Creator tier+; PCM/WAV 44.1 kHz
+  needs Pro tier+.
+- Base URL is configurable (`ELEVENLABS_BASE_URL` or a profile `base_url`) to target a
+  regional residency endpoint (`api.us`/`api.eu.residency`/`api.in.residency`/
+  `api.sg.residency`.elevenlabs.io). Extra env: `ELEVENLABS_MODEL`,
+  `ELEVENLABS_DIALOGUE_MODEL`, `ELEVENLABS_MUSIC_MODEL`, `ELEVENLABS_SOUND_MODEL`,
+  `ELEVENLABS_VOICE_ID`.
 
 ## Capability matrix (summary)
 
