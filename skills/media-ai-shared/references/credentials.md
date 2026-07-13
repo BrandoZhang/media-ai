@@ -15,6 +15,7 @@ broker / keychain / secret-manager).
 | `volc` | `ARK_API_KEY`, `VOLC_API_KEY` |
 | `openai` | `OPENAI_API_KEY` (+ optional `OPENAI_ORG`, `OPENAI_PROJECT`) |
 | `gemini` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `elevenlabs` | `ELEVENLABS_API_KEY`, `ELEVEN_API_KEY` (audio; base URL via `ELEVENLABS_BASE_URL`) |
 | `mock` | none (offline default) |
 | any other provider | `<PROVIDER>_API_KEY` (e.g. a custom `acme` ⇒ `ACME_API_KEY`) |
 
@@ -22,6 +23,7 @@ broker / keychain / secret-manager).
 export OPENAI_API_KEY=sk-...        # then: media-ai image generate --provider openai ...
 export GEMINI_API_KEY=...           # or GOOGLE_API_KEY
 export ARK_API_KEY=...              # volc / Volcengine Ark
+export ELEVENLABS_API_KEY=...       # elevenlabs / audio (or ELEVEN_API_KEY)
 ```
 
 A missing/invalid key surfaces as **exit 4** (`auth`) — fix the environment, not the request.

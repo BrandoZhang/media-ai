@@ -113,8 +113,8 @@ media-ai speech dialogue --provider gemini --model gemini-2.5-flash-preview-tts 
   express delivery (accent, pace, whispering, `[laughs]`) **in the prompt text**.
 - **ElevenLabs has no `--instruction`** (dialogue-wide direction is Gemini-only).
 - Keep total dialogue text within the model's `max_characters` (ElevenLabs ≈ 2000).
-- A 200-OK with **no audio** (safety drop) surfaces as a `safety` error (**exit 8**),
-  not an empty file.
+- On **Gemini TTS**, a 200-OK with **no audio** (silent safety drop) surfaces as a
+  `safety` error (**exit 8**), not an empty file.
 - `--timestamps true` adds a **second artifact** (the sidecar); dialogue sidecars also
   carry `voice_segments`. Cost is metered in `speech_characters` — see `media-ai-usage`.
 

@@ -27,7 +27,7 @@ exit code (see the table in `SKILL.md`) without parsing the message.
 ```
 
 - `artifacts[]` is the source of truth: each has `path`, `kind`
-  (`image|video|frame|audio|timestamps|metadata`), `mime`, `bytes`, `role`. `--count N`
+  (`image|video|frame|audio|timestamps|metadata|plan`), `mime`, `bytes`, `role`. `--count N`
   (image), `--return-last-frame` (video), or a sidecar (`--timestamps` → a `timestamps`
   artifact, role `alignment`; music `--detailed` → a `metadata` artifact) can add more
   than one artifact; `path`/`bytes` mirror `artifacts[0]`, `extra_paths` the rest.
