@@ -1,11 +1,14 @@
-"""OpenAI provider — Images API (GPT Image + DALL·E) and experimental Sora video.
+"""OpenAI provider — Images API (GPT Image family).
 
 Image generation is **synchronous**: ``POST /v1/images/generations`` (JSON) and
-``POST /v1/images/edits`` (multipart, for references + inpaint mask). GPT Image
-returns base64 only (never a hosted URL); DALL·E can return either. Video (Sora)
-is an async job (``POST /v1/videos`` → poll ``GET /v1/videos/{id}``) and is marked
-**experimental** — its API surface and availability were not fully confirmable at
-build time (see docs/LIMITATIONS.md).
+``POST /v1/images/edits`` (multipart, for reference images + an inpaint mask). GPT
+Image returns base64-encoded bytes only (never a hosted URL).
+
+This adapter is **GPT-Image-only**. OpenAI's older DALL·E models are intentionally
+not supported: the current Images API rejects their ``response_format`` parameter,
+and GPT Image supersedes them. OpenAI also exposes no video API here (Sora is not
+public), so a ``video generate --provider openai`` request fails the pre-flight
+capability check with a deterministic ``unsupported`` error.
 
 Verified against developers.openai.com / platform.openai.com. Auth: ``OPENAI_API_KEY``.
 """
@@ -13,46 +16,65 @@ Verified against developers.openai.com / platform.openai.com. Auth: ``OPENAI_API
 from __future__ import annotations
 
 import base64
+import json
 import os
-import time
 from pathlib import Path
 
-from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
+from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
+from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
-from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
+from ..core.result import Artifact, GenerationResult
+from ..core.types import ImageRequest, Modality
 from ..core.usage import record_usage
 from ._base import HttpProvider
 
-_GPT_IMAGE = ("gpt-image-2", "gpt-image-2-2026-04-21", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest")
-_DALLE = ("dall-e-3", "dall-e-2")
-_SORA = ("sora-2", "sora-2-pro")
+# GPT Image accepts a fixed size enum on the pre-gpt-image-2 models; gpt-image-2
+# takes an arbitrary size subject to the constraints declared in `capabilities`.
 _FIXED_GPT_SIZES = ("1024x1024", "1536x1024", "1024x1536", "auto")
-_DALLE3_SIZES = ("1024x1024", "1792x1024", "1024x1792")
-_DALLE2_SIZES = ("256x256", "512x512", "1024x1024")
+
+# gpt-image-2 size constraints (developers.openai.com — "Size and quality options").
+_GI2_MAX_EDGE = 3840
+_GI2_PIXEL_MULTIPLE = 16
+_GI2_TOTAL_MIN = 655_360
+_GI2_TOTAL_MAX = 8_294_400
+_GI2_MAX_EDGE_RATIO = 3.0
+
+# Map an output-file suffix to the GPT Image `output_format` it implies, used only to
+# flag a mismatch between the caller's filename and the format the API actually returned.
+_SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp"}
 
 
-def _family(model: str) -> str:
+def _is_gpt_image_2(model: str) -> bool:
+    """gpt-image-2 (and dated snapshots) — the arbitrary-size, high-fidelity family."""
+    return model.lower().startswith("gpt-image-2")
+
+
+def _supports_input_fidelity(model: str) -> bool:
+    """`input_fidelity` is a knob only on gpt-image-1 / gpt-image-1.5. gpt-image-2
+    always processes inputs at high fidelity (the param is rejected), and the mini
+    tier doesn't expose it."""
     m = model.lower()
-    if "sora" in m:
-        return "sora"
-    if "dall-e" in m:
-        return "dalle"
-    return "gpt-image"
+    return m.startswith("gpt-image-1") and not m.endswith("mini")
+
+
+def _is_dalle(model: str) -> bool:
+    """DALL·E was dropped; the id is still routed here (via the ``dall-e`` model hint)
+    only so a request returns a clear removal error instead of falling back to mock."""
+    return model.lower().startswith("dall-e")
 
 
 class OpenAIProvider(HttpProvider):
     name = "openai"
     auth_scheme = "bearer"
+    # `dall-e`/`sora` route here only to return a clear unsupported/removal error (the
+    # provider is GPT-Image-only); see `_is_dalle` / no-video handling.
+    model_hints = ("gpt-image", "dall-e", "sora")
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
         self.base_url = (self.config.get("base_url") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         self.image_model = os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
-        self.video_model = os.getenv("OPENAI_VIDEO_MODEL") or "sora-2"
-        self.poll_interval = float(os.getenv("OPENAI_POLL_INTERVAL", "5") or 5)
-        self.poll_timeout = float(os.getenv("OPENAI_POLL_TIMEOUT", "900") or 900)
 
     def _auth(self, cred):
         base, headers = super()._auth(cred)
@@ -64,40 +86,20 @@ class OpenAIProvider(HttpProvider):
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return ["gpt-image-2", "gpt-image-1", "gpt-image-1-mini", "dall-e-3", "dall-e-2", "sora-2", "sora-2-pro"]
+        return ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"]
 
-    def default_model(self, modality: Modality | None) -> str:
-        return self.video_model if modality == Modality.VIDEO else self.image_model
+    def default_model(self, modality: Modality | None) -> str | None:
+        # Image-only provider: no default video model.
+        return None if modality == Modality.VIDEO else self.image_model
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        fam = _family(model)
-        if fam == "sora":
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}), experimental=True,
-                video=VideoCaps(
-                    is_async=True, aspect_ratios=("16:9", "9:16"), resolutions=("720p", "1080p"),
-                    durations=(4, 8, 12), supports_cancel=True, options=("size", "remix_video_id"),
-                ),
-                notes=("experimental: Sora Videos API surface/availability not fully verified",),
-            )
-        if fam == "dalle":
-            is3 = model == "dall-e-3"
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-                image=ImageCaps(
-                    operations=frozenset({Operation.IMAGE_GENERATE} if is3 else {Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                    # BOTH: a pixel --size is validated against the fixed enum below;
-                    # an --aspect-ratio is mapped to one of those sizes by `_size`.
-                    geometry_mode=GeometryMode.BOTH, pixel_sizes=(_DALLE3_SIZES if is3 else _DALLE2_SIZES),
-                    max_count=1 if is3 else 10, output_formats=("png",),
-                    supports_quality=is3, supports_mask=not is3, max_references=0 if is3 else 1,
-                    options=("style",) if is3 else (),
-                ),
-                notes=("DALL·E is flat-priced (no token usage); dall-e-3 forces n=1",),
-            )
-        # GPT Image family
-        arbitrary = model.startswith("gpt-image-2")
+        if _is_dalle(model):
+            raise _dalle_removed(model)
+        arbitrary = _is_gpt_image_2(model)
+        options = ("moderation", "output_compression")
+        if _supports_input_fidelity(model):
+            options += ("input_fidelity",)
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(
@@ -108,73 +110,92 @@ class OpenAIProvider(HttpProvider):
                 aspect_ratios=(),
                 named_sizes=(),
                 pixel_sizes=() if arbitrary else _FIXED_GPT_SIZES,
-                pixel_multiple=16 if arbitrary else None,
-                pixel_max=(3840, 2160) if arbitrary else None,
+                pixel_multiple=_GI2_PIXEL_MULTIPLE if arbitrary else None,
+                pixel_max=(_GI2_MAX_EDGE, _GI2_MAX_EDGE) if arbitrary else None,
+                pixel_total_min=_GI2_TOTAL_MIN if arbitrary else None,
+                pixel_total_max=_GI2_TOTAL_MAX if arbitrary else None,
+                max_edge_ratio=_GI2_MAX_EDGE_RATIO if arbitrary else None,
                 max_count=10, output_formats=("png", "jpeg", "webp"),
                 supports_quality=True,
-                supports_transparency=not model.startswith("gpt-image-2"),  # gpt-image-2 rejects transparent
-                supports_mask=True, max_references=16, supports_streaming=True,
-                options=("moderation", "output_compression") + (() if model.endswith("mini") else ("input_fidelity",)),
+                supports_transparency=not arbitrary,  # gpt-image-2 rejects transparent
+                supports_mask=True, max_references=16,
+                options=options,
             ),
-            notes=(("gpt-image-2 does not support transparent backgrounds; arbitrary sizes must be /16, ratio 1:3–3:1, ≤3840x2160",)
-                   if arbitrary else ("token-billed; base64 output only",)),
+            notes=(("gpt-image-2: arbitrary sizes — both edges ÷16, max edge 3840px, edge ratio ≤3:1, "
+                    "total pixels 655360–8294400; no transparent background",)
+                   if arbitrary else ("token-billed; base64 output only; fixed sizes 1024x1024/1536x1024/1024x1536",)),
         )
 
     # ---- size mapping ----------------------------------------------------
     def _size(self, model: str, req: ImageRequest) -> str:
         geo = req.geometry
-        fam = _family(model)
         if geo and geo.mode == "pixels":
             return f"{geo.width}x{geo.height}"
         if geo and geo.aspect_ratio:
             a, b = (geo.aspect_ratio.split(":", 1) + ["1"])[:2]
             landscape = float(a) > float(b)
             portrait = float(a) < float(b)
-            if fam == "dalle" and model == "dall-e-3":
-                return "1792x1024" if landscape else "1024x1792" if portrait else "1024x1024"
-            if fam == "gpt-image":
-                return "1536x1024" if landscape else "1024x1536" if portrait else "1024x1024"
-        return "auto" if fam == "gpt-image" else "1024x1024"
+            if _is_gpt_image_2(model):  # arbitrary sizes → pick a documented tier
+                tier = (geo.resolution or "").lower()
+                if landscape:
+                    return {"4k": "3840x2160", "2k": "2048x1152"}.get(tier, "1536x1024")
+                if portrait:
+                    return {"4k": "2160x3840", "2k": "1152x2048"}.get(tier, "1024x1536")
+                return "2048x2048" if tier in ("2k", "4k") else "1024x1024"
+            # pre-gpt-image-2 GPT Image: fixed 1.5-MP sizes only
+            return "1536x1024" if landscape else "1024x1536" if portrait else "1024x1024"
+        return "auto"
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        client, headers = self._prepare()
         model = req.model or self.image_model
+        if _is_dalle(model):
+            raise _dalle_removed(model)
+        client, headers = self._prepare()
         if req.operation == Operation.IMAGE_EDIT or req.references or req.mask:
             data = self._edit(client, headers, model, req)
         else:
             data = self._generate(client, headers, model, req)
-        items = [d for d in (data.get("data") or []) if d.get("b64_json") or d.get("url")]
+        items = [d for d in (data.get("data") or []) if d.get("b64_json")]
         if not items:
             raise MediaError("OpenAI image response had no images", category=ErrorCategory.PROVIDER, provider=self.name, model=model)
+        # The response echoes the format/size the model *actually* used; trust it over
+        # the request (e.g. size:"auto" resolves to a concrete size, and the bytes are
+        # whatever output_format the API returned regardless of the output filename).
+        fmt = data.get("output_format")
         out = Path(req.output)
-        artifacts = [self._save(items[0], out, client)]
+        self._warn_suffix_mismatch(out, fmt)
+        artifacts = [self._save(items[0], out, fmt)]
         for i, it in enumerate(items[1:], start=2):
-            artifacts.append(self._save(it, out.with_name(f"{out.stem}_{i}{out.suffix}"), client, role="group"))
+            artifacts.append(self._save(it, out.with_name(f"{out.stem}_{i}{out.suffix}"), fmt, role="group"))
         usage = data.get("usage") or {}
         record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
                       "model": model, "kind": "image", "generated_images": len(items),
+                      "input_tokens": usage.get("input_tokens", 0),
                       "output_tokens": usage.get("output_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        meta = {"prompt": req.prompt, "size": data.get("size") or self._size(model, req)}
+        # Surface the settings the API echoed back (what it actually did) for traceability.
+        for k in ("output_format", "quality", "background", "created"):
+            if data.get(k) is not None:
+                meta[k] = data[k]
         return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
-                                artifacts=artifacts, usage=usage, meta={"prompt": req.prompt, "size": self._size(model, req)})
+                                artifacts=artifacts, usage=usage, meta=meta)
 
     def _common_fields(self, model: str, req: ImageRequest) -> dict:
-        fam = _family(model)
         fields: dict = {"model": model, "prompt": req.prompt, "n": req.count, "size": self._size(model, req)}
         if req.quality:
             fields["quality"] = req.quality
-        if fam == "gpt-image":
-            if req.background:
-                fields["background"] = req.background
-            if req.output_format:
-                fields["output_format"] = req.output_format
-            for k in ("moderation", "output_compression", "input_fidelity"):
-                if k in req.options:
-                    fields[k] = req.options[k]
-        if fam == "dalle":
-            fields["response_format"] = "b64_json"  # unify on bytes
-            if model == "dall-e-3" and "style" in req.options:
-                fields["style"] = req.options["style"]
+        if req.background:
+            fields["background"] = req.background
+        if req.output_format:
+            fields["output_format"] = req.output_format
+        for k in ("moderation", "output_compression"):
+            if k in req.options:
+                fields[k] = req.options[k]
+        # input_fidelity is a knob only on gpt-image-1 / gpt-image-1.5; never
+        # forward it to a model that rejects it (gpt-image-2, mini).
+        if "input_fidelity" in req.options and _supports_input_fidelity(model):
+            fields["input_fidelity"] = req.options["input_fidelity"]
         return fields
 
     def _generate(self, client, headers, model: str, req: ImageRequest) -> dict:
@@ -184,7 +205,6 @@ class OpenAIProvider(HttpProvider):
         if not req.references:
             raise MediaError("image edit requires at least one reference image", category=ErrorCategory.VALIDATION, provider=self.name)
         fields = self._common_fields(model, req)
-        fields.pop("response_format", None) if _family(model) == "gpt-image" else None
         files = []
         for r in req.references:
             content, mime = read_bytes(r)
@@ -195,79 +215,69 @@ class OpenAIProvider(HttpProvider):
         return client.request_multipart("POST", "/images/edits", fields=fields, files=files, headers=headers)
 
     @staticmethod
-    def _save(item: dict, out: Path, client, *, role=None) -> Artifact:
+    def _warn_suffix_mismatch(out: Path, fmt: str | None) -> None:
+        """Warn (stderr) when the output filename's extension disagrees with the format
+        the API actually returned — the bytes on disk are `fmt`, not what the name implies."""
+        want = _SUFFIX_FORMAT.get(out.suffix.lower())
+        if fmt and want and want != fmt:
+            get_logger().warning("output %s has a %s extension but the API returned %s bytes; wrote them as-is",
+                                 out.name, out.suffix, fmt)
+
+    @staticmethod
+    def _save(item: dict, out: Path, fmt: str | None, *, role=None) -> Artifact:
         out.parent.mkdir(parents=True, exist_ok=True)
-        if item.get("b64_json"):
-            out.write_bytes(base64.b64decode(item["b64_json"]))
-        elif item.get("url"):
-            client.download(item["url"], out)
-        return Artifact.from_path(out, "image", mime=guess_mime(out), role=role)
-
-    # ---- video (Sora, experimental) --------------------------------------
-    def generate_video(self, req: VideoRequest):
-        client, headers = self._prepare()
-        model = req.model or self.video_model
-        body: dict = {"model": model, "prompt": req.prompt}
-        if req.duration:
-            body["seconds"] = str(req.duration)
-        if "size" in req.options:
-            body["size"] = req.options["size"]
-        if "remix_video_id" in req.options:
-            body["remix_video_id"] = req.options["remix_video_id"]
-        data = client.request_json("POST", "/videos", body=body, headers=headers)
-        job_id = data.get("id")
-        if not job_id:
-            raise MediaError("Sora create returned no video id", category=ErrorCategory.PROVIDER, provider=self.name)
-        if not req.wait:
-            return JobHandle(provider=self.name, model=model, id=job_id, output=str(req.output))
-        return self._poll_video(client, headers, job_id, Path(req.output), model)
-
-    def _poll_video(self, client, headers, job_id: str, out: Path, model: str) -> GenerationResult:
-        deadline = time.monotonic() + self.poll_timeout
-        while time.monotonic() < deadline:
-            res = client.request_json("GET", f"/videos/{job_id}", headers=headers)
-            status = str(res.get("status", "")).lower()
-            if status == "completed":
-                return self._finalize_video(client, headers, job_id, out, model, res)
-            if status in ("failed", "cancelled", "canceled"):
-                raise MediaError(f"Sora video {job_id} {status}", category=ErrorCategory.PROVIDER, provider=self.name)
-            time.sleep(self.poll_interval)
-        raise MediaError(f"Sora video {job_id} timed out after {self.poll_timeout}s", category=ErrorCategory.TIMEOUT, provider=self.name)
-
-    def _finalize_video(self, client, headers, job_id: str, out: Path, model: str, res: dict) -> GenerationResult:
-        content = client.request_bytes("GET", f"/videos/{job_id}/content", headers=headers)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(content)
-        record_usage({"tool": "video.generate", "operation": "video.generate", "provider": self.name,
-                      "model": model, "kind": "video", "seconds": res.get("seconds", 0)})
-        return GenerationResult(modality="video", operation="video.generate", provider=self.name, model=model,
-                                artifacts=[Artifact.from_path(out, "video", mime="video/mp4")],
-                                usage={}, meta={"video_id": job_id})
-
-    def get_job(self, ref: JobRef, *, output: Path | None = None) -> JobStatus:
-        client, headers = self._prepare()
-        res = client.request_json("GET", f"/videos/{ref.id}", headers=headers)
-        status = str(res.get("status", "")).lower()
-        if status in ("failed", "cancelled", "canceled"):
-            # terminal failure -> categorized error (consistent with volc/gemini)
-            raise MediaError(f"Sora video {ref.id} {status}", category=ErrorCategory.PROVIDER, provider=self.name)
-        result = None
-        if output is not None and status == "completed":
-            result = self._finalize_video(client, headers, ref.id, Path(output), res.get("model") or self.video_model, res)
-        return JobStatus(provider=self.name, model=res.get("model"), id=ref.id, status=status or "unknown", op="query", result=result)
-
-    def cancel_job(self, ref: JobRef) -> JobStatus:
-        client, headers = self._prepare()
-        client.request_json("DELETE", f"/videos/{ref.id}", headers=headers)
-        return JobStatus(provider=self.name, model=None, id=ref.id, status="cancelled", op="cancel")
+        out.write_bytes(base64.b64decode(item["b64_json"]))
+        # The response's output_format is authoritative for the bytes; fall back to the
+        # filename's mime only when the API didn't echo a format. output_format is one of
+        # png/jpeg/webp, each of which is a valid `image/<fmt>` IANA subtype.
+        mime = f"image/{fmt}" if fmt else guess_mime(out)
+        return Artifact.from_path(out, "image", mime=mime, role=role)
 
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:
+        code, extra = _parse_error(body)
         low = body.lower()
-        if "content_policy" in low or "moderation_blocked" in low or "safety" in low:
-            return MediaError(f"OpenAI content policy: {body}", category=ErrorCategory.SAFETY, provider=self.name)
+        if code == "moderation_blocked" or "content_policy" in low or "moderation_blocked" in low or "safety" in low:
+            # image_generation_user_error / moderation_blocked → not retryable; the
+            # caller must change the prompt/inputs. Surface the stable `code` and any
+            # coarse moderation_details for developer logs.
+            return MediaError(f"OpenAI content policy: {body}", category=ErrorCategory.SAFETY,
+                              code=code or "moderation_blocked", provider=self.name, details=extra or None)
         cat = {400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
                404: ErrorCategory.NOT_FOUND, 429: ErrorCategory.RATE_LIMIT}.get(status, ErrorCategory.PROVIDER)
         if "insufficient_quota" in low:
             cat = ErrorCategory.RATE_LIMIT
-        return MediaError(f"OpenAI HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
+        details = {"status": status, **extra}
+        return MediaError(f"OpenAI HTTP {status}: {body}", category=cat, code=code, provider=self.name, details=details)
+
+
+def _dalle_removed(model: str) -> MediaError:
+    """DALL·E was dropped (the current Images API rejects its ``response_format``);
+    point callers at GPT Image."""
+    return MediaError(
+        f"DALL·E model {model!r} is no longer supported; use a GPT Image model such as gpt-image-2",
+        category=ErrorCategory.UNSUPPORTED, provider="openai", model=model,
+    )
+
+
+def _parse_error(body: str) -> tuple[str | None, dict]:
+    """Best-effort extract of ``error.code`` + coarse ``moderation_details`` from an
+    OpenAI error body. The body may be truncated/redacted, so failures degrade to
+    ``(None, {})`` and the caller falls back to substring detection."""
+    try:
+        err = (json.loads(body) or {}).get("error")
+    except (ValueError, TypeError):
+        return None, {}
+    if not isinstance(err, dict):
+        return None, {}
+    code = err.get("code")
+    extra: dict = {}
+    if err.get("type"):
+        extra["error_type"] = err["type"]
+    md = err.get("moderation_details")
+    if isinstance(md, dict):
+        if md.get("moderation_stage"):
+            extra["moderation_stage"] = md["moderation_stage"]
+        if md.get("categories"):
+            extra["moderation_categories"] = md["categories"]
+    return code, extra
