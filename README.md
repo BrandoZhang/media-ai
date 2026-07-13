@@ -9,7 +9,7 @@ by running ordinary commands. One normalized interface drives multiple backends:
 |---|---|---|---|---|
 | **`mock`** (default, offline) | ✓ Pillow placeholders | ✓ ffmpeg clips | ✓ WAV placeholders | — |
 | **`volc`** — Volcengine Ark (Doubao Seedream/Seedance) | ✓ | ✓ (async) | — | `ARK_API_KEY` |
-| **`openai`** — GPT Image / DALL·E (+ Sora, experimental) | ✓ | ⚗️ (async) | — | `OPENAI_API_KEY` |
+| **`openai`** — GPT Image | ✓ | — (image-only) | — | `OPENAI_API_KEY` |
 | **`gemini`** — Gemini native image (Nano Banana) / Veo / TTS | ✓ | ✓ (async) | ✓ (+ multi-speaker) | `GEMINI_API_KEY` |
 | **`elevenlabs`** — TTS + dialogue + music + sound effects | — | — | ✓ (+ music/sfx) | `ELEVENLABS_API_KEY` |
 

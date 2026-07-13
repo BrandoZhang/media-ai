@@ -51,8 +51,11 @@ class ImageCaps:
     named_sizes: tuple[str, ...] = ()  # e.g. "1K", "2K"
     pixel_sizes: tuple[str, ...] = ()  # exact allowed WxH, if fixed-enum
     pixel_min: tuple[int, int] | None = None
-    pixel_max: tuple[int, int] | None = None
+    pixel_max: tuple[int, int] | None = None  # per-edge max (applies to width *and* height)
     pixel_multiple: int | None = None
+    pixel_total_min: int | None = None  # min width*height (e.g. gpt-image-2: 655360)
+    pixel_total_max: int | None = None  # max width*height (e.g. gpt-image-2: 8294400)
+    max_edge_ratio: float | None = None  # max long-edge:short-edge ratio (e.g. 3.0 for 3:1)
     max_count: int = 1
     output_formats: tuple[str, ...] = ("png",)
     supports_seed: bool = False
@@ -181,7 +184,17 @@ def _check_geometry(geo: GeometrySpec | None, caps: ImageCaps | VideoCaps, issue
         if geo.mode == "pixels" and caps.pixel_multiple and (geo.width % caps.pixel_multiple or geo.height % caps.pixel_multiple):  # type: ignore[operator]
             issues.add("size", f"width & height must be multiples of {caps.pixel_multiple}")
         if geo.mode == "pixels" and caps.pixel_max and (geo.width > caps.pixel_max[0] or geo.height > caps.pixel_max[1]):  # type: ignore[operator]
-            issues.add("size", f"exceeds max {caps.pixel_max[0]}x{caps.pixel_max[1]}")
+            issues.add("size", f"exceeds max edge {caps.pixel_max[0]}x{caps.pixel_max[1]}")
+        if geo.mode == "pixels" and (caps.pixel_total_min or caps.pixel_total_max):
+            total = geo.width * geo.height  # type: ignore[operator]
+            if caps.pixel_total_min and total < caps.pixel_total_min:
+                issues.add("size", f"total pixels {total} below minimum {caps.pixel_total_min}")
+            if caps.pixel_total_max and total > caps.pixel_total_max:
+                issues.add("size", f"total pixels {total} exceeds maximum {caps.pixel_total_max}")
+        if geo.mode == "pixels" and caps.max_edge_ratio:
+            long_e, short_e = max(geo.width, geo.height), min(geo.width, geo.height)  # type: ignore[type-var]
+            if short_e and long_e / short_e > caps.max_edge_ratio + 1e-9:
+                issues.add("size", f"edge ratio {long_e / short_e:.2f}:1 exceeds max {caps.max_edge_ratio:g}:1")
         if geo.mode == "pixels" and caps.pixel_sizes and f"{geo.width}x{geo.height}" not in caps.pixel_sizes:
             issues.add("size", f"unsupported size {geo.width}x{geo.height}; allowed: {', '.join(caps.pixel_sizes)}")
     else:  # VideoCaps

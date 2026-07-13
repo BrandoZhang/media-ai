@@ -1,14 +1,15 @@
-"""Network-free tests for the OpenAI adapter (Images API)."""
+"""Network-free tests for the OpenAI adapter (Images API, image-only)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
 from media_ai.core.capabilities import validate_request
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, Modality, Operation
+from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef, Modality, Operation, VideoRequest
 from media_ai.providers.openai import OpenAIProvider
 
 
@@ -27,13 +28,30 @@ def test_gpt_image_generations_body(fake_provider, tmp_path):
     assert res.usage["total_tokens"] == 40
 
 
-def test_dalle_sets_response_format_b64(fake_provider, tmp_path):
+def test_response_format_never_sent(fake_provider, tmp_path):
+    # DALL·E is dropped; the Images API rejects `response_format`, so we never send it.
     prov, fake = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}]}])
-    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="dall-e-3",
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2",
                                      geometry=GeometrySpec(aspect_ratio="16:9")))
-    body = fake.calls[0]["body"]
-    assert body["response_format"] == "b64_json"
-    assert body["size"] == "1792x1024"  # landscape ratio -> dall-e-3 landscape size
+    assert "response_format" not in fake.calls[0]["body"]
+
+
+def test_dalle_model_gives_clear_removal_error(fake_provider, tmp_path):
+    # `dall-e-*` routes here only to return a clear removal error (not a mock fallback).
+    prov, _ = fake_provider(OpenAIProvider, [])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="dall-e-3"))
+    assert ei.value.category == ErrorCategory.UNSUPPORTED and "gpt-image" in ei.value.message.lower()
+    with pytest.raises(MediaError):  # capabilities() is consistent with generate_image()
+        prov.capabilities("dall-e-3")
+
+
+def test_gpt_image_2_resolution_tier_maps_to_4k(fake_provider, tmp_path):
+    # gpt-image-2 supports arbitrary sizes, so a ratio + tier picks a documented 4K size.
+    prov, fake = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2",
+                                     geometry=GeometrySpec(aspect_ratio="16:9", resolution="4K")))
+    assert fake.calls[0]["body"]["size"] == "3840x2160"
 
 
 def test_edit_uses_multipart_with_images_and_mask(fake_provider, tmp_path):
@@ -58,6 +76,54 @@ def test_gpt_image_2_rejects_transparent_via_capabilities():
     assert caps1.image.supports_transparency is True
 
 
+def test_models_are_image_only():
+    models = OpenAIProvider().models()
+    assert "gpt-image-2" in models and "gpt-image-1.5" in models
+    assert not any("sora" in m for m in models)  # video (Sora) support dropped
+    assert not any("dall" in m for m in models)  # DALL·E support dropped
+
+
+def test_input_fidelity_scoped_to_gpt_image_1_family():
+    prov = OpenAIProvider()
+    # only gpt-image-1 / gpt-image-1.5 expose input_fidelity...
+    assert "input_fidelity" in prov.capabilities("gpt-image-1.5").image.options
+    assert "input_fidelity" in prov.capabilities("gpt-image-1").image.options
+    # ...gpt-image-2 processes inputs at high fidelity automatically (param rejected),
+    # and the mini tier doesn't expose it.
+    assert "input_fidelity" not in prov.capabilities("gpt-image-2").image.options
+    assert "input_fidelity" not in prov.capabilities("gpt-image-1-mini").image.options
+
+
+def test_input_fidelity_not_forwarded_to_gpt_image_2(fake_provider, tmp_path):
+    # Even if the option slips through (e.g. --on-unsupported ignore), never send it
+    # to a model that rejects it.
+    prov, fake = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2",
+                                     options={"input_fidelity": "high"}))
+    assert "input_fidelity" not in fake.calls[0]["body"]
+
+
+@pytest.mark.parametrize("w,h,ok", [
+    (2160, 3840, True),   # 4K portrait — the old (3840, 2160) cap wrongly rejected this
+    (2048, 2048, True),   # 2K square
+    (1024, 1024, True),
+    (3072, 1024, True),   # exactly 3:1 edge ratio is allowed
+    (512, 512, False),    # total 262144 < 655360 minimum
+    (3856, 2160, False),  # long edge 3856 > 3840 maximum
+    (3360, 1024, False),  # edge ratio 3.28:1 > 3:1
+    (1000, 1000, False),  # edges not multiples of 16
+])
+def test_gpt_image_2_arbitrary_size_constraints(w, h, ok):
+    caps = OpenAIProvider().capabilities("gpt-image-2", Modality.IMAGE)
+    req = ImageRequest(prompt="x", output=Path("o.png"), model="gpt-image-2", geometry=GeometrySpec(width=w, height=h))
+    if ok:
+        assert validate_request(req, caps) == []
+    else:
+        with pytest.raises(MediaError) as ei:
+            validate_request(req, caps)
+        assert ei.value.category == ErrorCategory.UNSUPPORTED
+
+
 def test_error_mapper_content_policy_is_safety():
     prov = OpenAIProvider()
     assert prov._error(400, '{"error":{"code":"content_policy_violation"}}').category == ErrorCategory.SAFETY
@@ -65,37 +131,80 @@ def test_error_mapper_content_policy_is_safety():
     assert prov._error(401, "bad key").category == ErrorCategory.AUTH
 
 
-def test_sora_video_submit_returns_job(fake_provider, tmp_path):
-    prov, fake = fake_provider(OpenAIProvider, [{"id": "vid_123", "status": "queued"}])
-    from media_ai.core.types import VideoRequest
+def test_error_maps_moderation_details():
+    body = json.dumps({"error": {"type": "image_generation_user_error", "code": "moderation_blocked",
+                                 "moderation_details": {"moderation_stage": "input", "categories": ["harassment"]}}})
+    err = OpenAIProvider()._error(400, body)
+    assert err.category == ErrorCategory.SAFETY and err.code == "moderation_blocked"
+    assert err.retryable is False  # user must change the prompt/inputs
+    assert err.details.get("moderation_stage") == "input"
+    assert err.details.get("moderation_categories") == ["harassment"]
 
-    handle = prov.generate_video(VideoRequest(prompt="a wave", output=tmp_path / "v.mp4", model="sora-2",
-                                              duration=4, wait=False, options={"size": "1280x720"}))
-    body = fake.calls[0]["body"]
-    assert fake.calls[0]["path"] == "/videos" and body["seconds"] == "4" and body["size"] == "1280x720"
-    assert handle.id == "vid_123"
+
+def test_openai_has_no_video_support():
+    prov = OpenAIProvider()
+    assert prov.default_model(Modality.VIDEO) is None
+    caps = prov.capabilities(None, Modality.VIDEO)
+    assert caps.video is None
+    # pre-flight validation rejects a video request against the image-only caps...
+    with pytest.raises(MediaError) as ei:
+        validate_request(VideoRequest(prompt="x", output=Path("v.mp4")), caps)
+    assert ei.value.category == ErrorCategory.UNSUPPORTED
+    # ...and the operation is unsupported at the provider layer too.
+    with pytest.raises(MediaError) as ei2:
+        prov.generate_video(VideoRequest(prompt="x", output=Path("v.mp4")))
+    assert ei2.value.category == ErrorCategory.UNSUPPORTED
 
 
 def test_aspect_ratio_not_rejected_preflight():
     # `_size` maps any ratio to a valid pixel size, so validation must not block it
     prov = OpenAIProvider()
-    for model in ("gpt-image-2", "dall-e-3"):
+    for model in ("gpt-image-2", "gpt-image-1"):
         caps = prov.capabilities(model, Modality.IMAGE)
         req = ImageRequest(prompt="x", output=Path("o.png"), model=model, geometry=GeometrySpec(aspect_ratio="16:9"))
         validate_request(req, caps)  # must not raise
 
 
-def test_dalle_rejects_out_of_enum_pixel_size():
+def test_fixed_size_model_rejects_out_of_enum_pixel_size():
+    # pre-gpt-image-2 models expose a fixed size enum; an off-enum pixel size is unsupported.
     prov = OpenAIProvider()
-    caps = prov.capabilities("dall-e-3", Modality.IMAGE)
+    caps = prov.capabilities("gpt-image-1", Modality.IMAGE)
     with pytest.raises(MediaError) as ei:
-        validate_request(ImageRequest(prompt="x", output=Path("o.png"), model="dall-e-3",
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), model="gpt-image-1",
                                       geometry=GeometrySpec(width=500, height=500)), caps)
     assert ei.value.category == ErrorCategory.UNSUPPORTED
 
 
-def test_sora_get_job_failed_raises(fake_provider):
-    prov, _ = fake_provider(OpenAIProvider, [{"id": "v", "status": "failed"}])
-    with pytest.raises(MediaError) as ei:
-        prov.get_job(JobRef(provider="openai", id="v"))
-    assert ei.value.category == ErrorCategory.PROVIDER
+def test_artifact_mime_follows_response_output_format(fake_provider, tmp_path):
+    # Response says the bytes are webp even though the file is named .png -> mime is authoritative.
+    prov, _ = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "output_format": "webp",
+                                              "size": "1024x1024", "usage": {}}])
+    res = prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2"))
+    assert res.primary().mime == "image/webp"
+
+
+def test_meta_size_and_settings_come_from_response(fake_provider, tmp_path):
+    # size:"auto" was requested; the response resolves it to a concrete size we surface.
+    prov, _ = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "size": "1536x1024",
+                                              "quality": "low", "output_format": "png", "usage": {}}])
+    res = prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2"))
+    assert res.meta["size"] == "1536x1024"          # actual, not the requested "auto"
+    assert res.meta["quality"] == "low" and res.meta["output_format"] == "png"
+
+
+def test_usage_ledger_records_input_tokens(fake_provider, tmp_path):
+    usage = {"input_tokens": 2048, "output_tokens": 196, "total_tokens": 2244}
+    prov, _ = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "usage": usage}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2"))
+    entries = [json.loads(x) for x in (tmp_path / "usage.jsonl").read_text().splitlines()]
+    assert entries[-1]["input_tokens"] == 2048
+    assert entries[-1]["output_tokens"] == 196 and entries[-1]["total_tokens"] == 2244
+
+
+def test_multi_output_groups_extra_artifacts(fake_provider, tmp_path):
+    # n>1 -> primary + group artifacts written to _2/_3 siblings.
+    prov, _ = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}, {"b64_json": PNG_1x1}], "usage": {}}])
+    res = prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2", count=2))
+    assert len(res.artifacts) == 2
+    assert res.artifacts[0].role is None and res.artifacts[1].role == "group"
+    assert (tmp_path / "o.png").is_file() and (tmp_path / "o_2.png").is_file()
