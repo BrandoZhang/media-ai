@@ -57,19 +57,6 @@ class AcmeProvider(Provider):
                                 usage={}, meta={"sticker": req.options.get("sticker")})
 
 
-@pytest.fixture
-def clean_registry():
-    """Snapshot and restore the module-global registry around a test."""
-    saved = dict(registry._REGISTRY)
-    saved_flags = (registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED)
-    try:
-        yield
-    finally:
-        registry._REGISTRY.clear()
-        registry._REGISTRY.update(saved)
-        registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED = saved_flags
-
-
 def test_in_process_registration_and_routing(clean_registry):
     register_provider("acme", lambda **kw: AcmeProvider(**kw), model_hints=("acme-",))
     assert "acme" in registry.provider_names()

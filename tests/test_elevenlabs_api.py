@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
+from media_ai import Artifact, GenerationResult, Modality, ModelCapabilities, Operation, Provider
+from media_ai.cli import speech as speech_cli
+from media_ai.core.capabilities import AudioCaps
 from media_ai.core.errors import ErrorCategory, MediaError
+from media_ai.core.registry import register_provider
 from media_ai.core.types import (
     DialogueRequest,
     DialogueTurn,
@@ -83,6 +87,49 @@ def test_dialogue_body_and_path(fake_provider, tmp_path):
     assert body["model_id"] == "eleven_v3" and body["settings"] == {"stability": 0.6}
     assert Path(res.primary().path).read_bytes() == b"dialogue-mp3"
     assert res.operation == "speech.dialogue"
+
+
+class _TwoDefaultAudio(Provider):
+    """Audio provider whose *dialogue* default differs from its *speech* default —
+    the exact shape of ElevenLabs (speech=eleven_multilingual_v2, dialogue=eleven_v3).
+    Used to prove the ``speech dialogue`` CLI does not stamp the provider-wide speech
+    default onto the request, so the adapter's own dialogue default wins."""
+
+    name = "twodef"
+    requires_credentials = False
+
+    def models(self):
+        return ["speech-default", "dialogue-default"]
+
+    def default_model(self, modality):
+        return "speech-default"  # what registry.build resolves for a bare --provider
+
+    def capabilities(self, model=None, modality=None):
+        return ModelCapabilities(
+            provider=self.name, model=model or "speech-default", modalities=frozenset({Modality.AUDIO}),
+            audio=AudioCaps(operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE}),
+                            supports_dialogue=True, max_dialogue_voices=10),
+        )
+
+    def generate_dialogue(self, req):
+        model = req.model or "dialogue-default"  # adapter's own dialogue default when unset
+        out = Path(req.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"x")
+        return GenerationResult(modality="audio", operation="speech.dialogue", provider=self.name, model=model,
+                                artifacts=[Artifact.from_path(out, "audio", mime="audio/mpeg")], usage={}, meta={})
+
+
+def test_dialogue_cli_keeps_adapter_dialogue_default(clean_registry, tmp_path):
+    # Regression: `speech dialogue` (no --model) must let the adapter pick its dialogue
+    # default, not force the provider-wide speech default (which ElevenLabs rejects with
+    # "Model 'eleven_multilingual_v2' does not support dialogue").
+    register_provider("twodef", lambda **kw: _TwoDefaultAudio(**kw))
+    args = speech_cli._build_parser().parse_args(
+        ["dialogue", "--provider", "twodef", "--speaker", "A=voiceA", "--turn", "A", "hello",
+         "--output", str(tmp_path / "d.mp3")])
+    res = speech_cli._do(args)
+    assert res.model == "dialogue-default"  # not "speech-default"
 
 
 def test_dialogue_unknown_speaker_rejected(fake_provider, tmp_path):

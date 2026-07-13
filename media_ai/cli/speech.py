@@ -87,12 +87,13 @@ def _do_dialogue(args) -> object:
     req = DialogueRequest(
         turns=turns, cast=cast, instruction=instruction, output=Path(args.output),
         output_format=args.output_format, language_code=args.language_code, seed=args.seed,
-        timestamps=args.timestamps, options=common.parse_options(args.option),
+        timestamps=args.timestamps, options=common.parse_options(args.option), model=args.model,
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
-                                     profile=args.provider_profile)
-    req.model = model
-    for w in validate_request(req, provider.capabilities(model, Modality.AUDIO), common.policy(args)):
+    # Resolve only the provider; keep the request's own model so the adapter picks its
+    # dialogue default (e.g. ElevenLabs eleven_v3), not the provider-wide speech default.
+    provider, _ = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
+                                 profile=args.provider_profile)
+    for w in validate_request(req, provider.capabilities(args.model, Modality.AUDIO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
     return provider.generate_dialogue(req)
 

@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 
 import pytest
+from media_ai.core import registry
 
 # a 1x1 PNG, so image-saving paths can write bytes without a network fetch
 PNG_1x1 = base64.b64encode(
@@ -87,6 +88,19 @@ def _ledger(tmp_path, monkeypatch, request):
                 "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path / "usage.jsonl"
+
+
+@pytest.fixture
+def clean_registry():
+    """Snapshot and restore the module-global provider registry around a test."""
+    saved = dict(registry._REGISTRY)
+    saved_flags = (registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED)
+    try:
+        yield
+    finally:
+        registry._REGISTRY.clear()
+        registry._REGISTRY.update(saved)
+        registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED = saved_flags
 
 
 def have_media_stack() -> bool:
