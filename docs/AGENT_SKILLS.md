@@ -3,6 +3,10 @@
 `media-ai` is built to be driven by an autonomous agent as a subprocess. The
 contract below is deterministic so a Skill can act on results without heuristics.
 
+> **Packaged skills:** ready-made Agent Skills that implement this contract — one per
+> CLI functionality — live in [`../skills/`](../skills/) (start with `media-ai-shared`).
+> This document is the underlying contract they build on.
+
 ## The output contract
 
 - **stdout is exactly one JSON object** — for both success and failure. Parse the
