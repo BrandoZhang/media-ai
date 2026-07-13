@@ -36,6 +36,16 @@ def test_response_format_never_sent(fake_provider, tmp_path):
     assert "response_format" not in fake.calls[0]["body"]
 
 
+def test_dalle_model_gives_clear_removal_error(fake_provider, tmp_path):
+    # `dall-e-*` routes here only to return a clear removal error (not a mock fallback).
+    prov, _ = fake_provider(OpenAIProvider, [])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", model="dall-e-3"))
+    assert ei.value.category == ErrorCategory.UNSUPPORTED and "gpt-image" in ei.value.message.lower()
+    with pytest.raises(MediaError):  # capabilities() is consistent with generate_image()
+        prov.capabilities("dall-e-3")
+
+
 def test_gpt_image_2_resolution_tier_maps_to_4k(fake_provider, tmp_path):
     # gpt-image-2 supports arbitrary sizes, so a ratio + tier picks a documented 4K size.
     prov, fake = fake_provider(OpenAIProvider, [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])

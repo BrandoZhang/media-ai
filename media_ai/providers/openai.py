@@ -58,10 +58,18 @@ def _supports_input_fidelity(model: str) -> bool:
     return m.startswith("gpt-image-1") and not m.endswith("mini")
 
 
+def _is_dalle(model: str) -> bool:
+    """DALL·E was dropped; the id is still routed here (via the ``dall-e`` model hint)
+    only so a request returns a clear removal error instead of falling back to mock."""
+    return model.lower().startswith("dall-e")
+
+
 class OpenAIProvider(HttpProvider):
     name = "openai"
     auth_scheme = "bearer"
-    model_hints = ("gpt-image",)
+    # `dall-e`/`sora` route here only to return a clear unsupported/removal error (the
+    # provider is GPT-Image-only); see `_is_dalle` / no-video handling.
+    model_hints = ("gpt-image", "dall-e", "sora")
 
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
@@ -86,6 +94,8 @@ class OpenAIProvider(HttpProvider):
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
+        if _is_dalle(model):
+            raise _dalle_removed(model)
         arbitrary = _is_gpt_image_2(model)
         options = ("moderation", "output_compression")
         if _supports_input_fidelity(model):
@@ -138,8 +148,10 @@ class OpenAIProvider(HttpProvider):
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        client, headers = self._prepare()
         model = req.model or self.image_model
+        if _is_dalle(model):
+            raise _dalle_removed(model)
+        client, headers = self._prepare()
         if req.operation == Operation.IMAGE_EDIT or req.references or req.mask:
             data = self._edit(client, headers, model, req)
         else:
@@ -237,6 +249,15 @@ class OpenAIProvider(HttpProvider):
             cat = ErrorCategory.RATE_LIMIT
         details = {"status": status, **extra}
         return MediaError(f"OpenAI HTTP {status}: {body}", category=cat, code=code, provider=self.name, details=details)
+
+
+def _dalle_removed(model: str) -> MediaError:
+    """DALL·E was dropped (the current Images API rejects its ``response_format``);
+    point callers at GPT Image."""
+    return MediaError(
+        f"DALL·E model {model!r} is no longer supported; use a GPT Image model such as gpt-image-2",
+        category=ErrorCategory.UNSUPPORTED, provider="openai", model=model,
+    )
 
 
 def _parse_error(body: str) -> tuple[str | None, dict]:

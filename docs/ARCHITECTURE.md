@@ -38,8 +38,8 @@ flowchart TB
         BASE["_base.py HttpProvider · _http.py HttpClient (retry/idempotency)"]
         MOCK["mock (offline default)"]
         VOLC["volc (Ark)"]
-        OAI["openai (GPT Image/DALL·E)"]
-        GEM["gemini (native/Imagen/Veo)"]
+        OAI["openai (GPT Image)"]
+        GEM["gemini (Nano Banana/Veo)"]
         EXT["custom plugins (entry point / register_provider)"]
     end
 
