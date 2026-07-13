@@ -25,7 +25,7 @@ synchronous** everywhere. Only Seedance (`volc`) can cancel a running video job.
   `gpt-image*` ⇒ `openai`; `gemini-*` (incl. `*-tts`)/`veo-*` ⇒ `gemini`;
   `eleven_*`/`eleven-*` ⇒ `elevenlabs`. (Retired `dall-e*`/`sora*` ids still route to
   `openai` only to return a clear unsupported/removal error.)
-- Else `$MEDIA_PROVIDER` / `$MEDIA_BACKEND`, else `mock`.
+- Else `$MEDIA_PROVIDER`, else `mock`.
 
 Default models (override with the env vars below or `--model`):
 

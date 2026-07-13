@@ -116,21 +116,3 @@ def test_secret_never_appears_in_output(env, tmp_path):
                           capture_output=True, text=True, env=env)
     assert "LEAKY-SECRET" not in proc.stdout
     assert "LEAKY-SECRET" not in proc.stderr
-
-
-def test_legacy_shims_still_work(env, tmp_path):
-    out = tmp_path / "legacy.png"
-    proc = subprocess.run(["text2image", "--prompt", "compat", "--output", str(out), "--width", "64", "--height", "64"],
-                          capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, proc.stderr
-    res = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert res["ok"] and out.is_file()
-
-
-def test_legacy_video_task_shim_runs(env):
-    # regression: the video_task shim's Namespace lacks provider_profile, which
-    # job._do reads — must not crash.
-    proc = subprocess.run(["video_task", "--op", "cancel", "--id", "abc"],
-                          capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout.strip().splitlines()[-1])["status"] == "cancelled"

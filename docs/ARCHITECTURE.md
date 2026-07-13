@@ -12,7 +12,6 @@ backend's idiosyncrasies live only inside its adapter.
 flowchart TB
     subgraph CLI["cli/ — thin front end (argparse + machine contract)"]
         C1["image · video · speech · music · sound · concat · job · capabilities · usage"]
-        C2["legacy shims: text2image, image2video, video_task, …"]
         C3["common.py: run() · emit_result/emit_error · one JSON line + exit code"]
     end
 

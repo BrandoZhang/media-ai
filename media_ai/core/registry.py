@@ -85,13 +85,6 @@ def provider_names() -> list[str]:
     return sorted(_REGISTRY)
 
 
-# Backwards-compatible alias (was a static tuple). Prefer ``provider_names()``.
-def __getattr__(name):  # module-level dynamic attribute
-    if name == "PROVIDER_NAMES":
-        return tuple(provider_names())
-    raise AttributeError(name)
-
-
 # --------------------------------------------------------------------------
 # discovery / loading
 # --------------------------------------------------------------------------
@@ -195,7 +188,7 @@ def provider_for_model(model: str | None) -> str | None:
 
 
 def default_provider_name() -> str:
-    return os.getenv("MEDIA_PROVIDER") or os.getenv("MEDIA_BACKEND") or "mock"
+    return os.getenv("MEDIA_PROVIDER") or "mock"
 
 
 def _resolve_profile(name: str | None) -> Profile | None:
