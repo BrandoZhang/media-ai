@@ -4,17 +4,21 @@
 the field values you'll see, to pick a valid request quickly. All image generation
 is **synchronous**.
 
-## OpenAI — GPT-Image / DALL·E
+## OpenAI — GPT-Image
+
+DALL·E and Sora were removed — OpenAI is **image-only** here (a `dall-e-*` id returns a
+clear `unsupported` error pointing at a GPT-Image model). Geometry is **both** modes:
+explicit `--size` or `--aspect-ratio` + `--resolution 2K|4K`.
 
 | model | ops | geometry | sizes | max_count | seed | transparency | mask | max_refs | options |
 |---|---|---|---|---|---|---|---|---|---|
-| `gpt-image-2` (+`.5`, `-2026-…`) | generate, edit | pixels (mult. 16, ≤3840×2160, ratio 1:3–3:1) | arbitrary | 10 | ✗ | ✗ (rejects transparent) | ✓ | 16 | `moderation`, `output_compression`, `input_fidelity` |
-| `gpt-image-1`, `gpt-image-1-mini` | generate, edit | pixels (fixed) | `1024x1024`, `1536x1024`, `1024x1536`, `auto` | 10 | ✗ | ✓ | ✓ | 16 | `moderation`, `output_compression` (`input_fidelity` except `-mini`) |
-| `dall-e-3` | generate | pixels (fixed) | `1024x1024`, `1792x1024`, `1024x1792` | 1 | ✗ | ✗ | ✗ | 0 | `style` |
-| `dall-e-2` | generate, edit | pixels (fixed) | `256x256`, `512x512`, `1024x1024` | 10 | ✗ | ✗ | ✓ | 1 | — |
+| `gpt-image-2` | generate, edit | both (mult. 16, max edge 3840px, ratio 1:3–3:1, 655360–8294400 px) | arbitrary | 10 | ✗ | ✗ (rejects transparent) | ✓ | 16 | `moderation`, `output_compression` |
+| `gpt-image-1.5`, `gpt-image-1` | generate, edit | both (fixed sizes) | `1024x1024`, `1536x1024`, `1024x1536`, `auto` | 10 | ✗ | ✓ | ✓ | 16 | `moderation`, `output_compression`, `input_fidelity` |
+| `gpt-image-1-mini` | generate, edit | both (fixed sizes) | `1024x1024`, `1536x1024`, `1024x1536`, `auto` | 10 | ✗ | ✓ | ✓ | 16 | `moderation`, `output_compression` |
 
-Supports `--quality` on GPT-Image and DALL·E 3. Output formats `png, jpeg, webp`
-(GPT-Image). Aspect ratios are mapped to the nearest allowed size for DALL·E.
+`input_fidelity` is scoped to `gpt-image-1` / `gpt-image-1.5` only (`gpt-image-2` and
+the mini tier reject it). `--quality` and `--background` are supported; output formats
+`png, jpeg, webp`.
 
 ## Gemini — Nano Banana (native image) — **aspect-ratio mode** (no `--size`)
 

@@ -15,10 +15,10 @@ generation is never async). Emits a `GenerationResult` (see
 | `--seed N` | none | only where `supports_seed` is true (openai GPT-Image does **not** expose seed) |
 | `--negative-prompt TEXT` | none | only where `supports_negative_prompt` is true |
 | `--background {transparent,opaque,auto}` | none | transparency; `gpt-image-2` rejects `transparent` |
-| `--quality {low,medium,high,auto}` | none | GPT-Image / DALL·E 3 |
+| `--quality {low,medium,high,auto}` | none | GPT-Image quality tier |
 | `--format {png,jpeg,webp}` | from `--output` ext | force encoding |
-| `--size WxH` | none | pixel geometry (openai, volc) |
-| `--aspect-ratio R` / `--ratio R` | none | ratio geometry (gemini) |
+| `--size WxH` | none | pixel geometry (openai, volc; gemini is ratio-only) |
+| `--aspect-ratio R` / `--ratio R` | none | ratio geometry (gemini; also openai GPT-Image `2K\|4K`) |
 | `--resolution TIER` | none | named tier `1K\|2K\|4K` |
 | `--option key=value ...` | `[]` | provider-specific; capability-gated (unknown → exit 3) |
 | global | | `--provider`, `--model`, `--provider-profile`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
@@ -33,10 +33,11 @@ media-ai image generate --provider openai --model gpt-image-2 \
     --size 1536x1024 --quality high --format webp --output kettle.webp \
     --option moderation=low
 
-# dall-e-3: fixed sizes only (1024x1024 / 1792x1024 / 1024x1792), one image
-media-ai image generate --provider openai --model dall-e-3 \
-    --prompt "watercolor fox" --size 1024x1792 --quality high \
-    --option style=vivid --output fox.png
+# gpt-image-1.5: fixed sizes, transparency + input_fidelity supported
+media-ai image generate --provider openai --model gpt-image-1.5 \
+    --prompt "watercolor fox on a transparent background" \
+    --size 1024x1536 --background transparent --quality high \
+    --option input_fidelity=high --output fox.png
 
 # --- Gemini (aspect-ratio mode; do NOT pass --size) ---
 media-ai image generate --provider gemini --model gemini-3.1-flash-image \

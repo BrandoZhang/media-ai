@@ -4,7 +4,7 @@ Every `media-ai` command prints **exactly one JSON object** on stdout (`schema_v
 Parse the last stdout line; treat stderr as redacted human logs only. Branch on the
 exit code (see the table in `SKILL.md`) without parsing the message.
 
-## Success — `GenerationResult` (image generate/edit, waited video, concat)
+## Success — `GenerationResult` (image generate/edit, waited video, audio speech/music/sound, concat)
 
 ```json
 {
@@ -26,9 +26,13 @@ exit code (see the table in `SKILL.md`) without parsing the message.
 }
 ```
 
-- `artifacts[]` is the source of truth: each has `path`, `kind` (`image|video|frame`),
-  `mime`, `bytes`, `role`. `--count N` (image) or `--return-last-frame` (video) can add
-  more than one artifact; `path`/`bytes` mirror `artifacts[0]`, `extra_paths` the rest.
+- `artifacts[]` is the source of truth: each has `path`, `kind`
+  (`image|video|frame|audio|timestamps|metadata`), `mime`, `bytes`, `role`. `--count N`
+  (image), `--return-last-frame` (video), or a sidecar (`--timestamps` → a `timestamps`
+  artifact, role `alignment`; music `--detailed` → a `metadata` artifact) can add more
+  than one artifact; `path`/`bytes` mirror `artifacts[0]`, `extra_paths` the rest.
+  Audio (speech/music/sound) is **synchronous** — it returns this `GenerationResult`, not
+  a `JobHandle`.
 - The `path`/`bytes`/`extra_paths`/`kind` aliases exist for one release — prefer `artifacts[]`.
 
 ## Async submit — `JobHandle` (`video generate --wait false`)

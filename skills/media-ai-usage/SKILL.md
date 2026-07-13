@@ -1,9 +1,9 @@
 ---
 name: media-ai-usage
 description: >-
-  Report accumulated token/artifact cost from the media-ai usage ledger. Use when
-  asked how much a generation run cost, to summarize token usage or spend across
-  media-ai image/video generations, or to account for a batch/pipeline of commands.
+  Report accumulated token/artifact/character cost from the media-ai usage ledger. Use
+  when asked how much a generation run cost, to summarize token usage or spend across
+  media-ai image/video/audio generations, or to account for a batch/pipeline of commands.
 version: 1.0.0
 metadata:
   requires:
@@ -44,8 +44,13 @@ media-ai usage --log /tmp/run/usage.jsonl --pretty   # or an explicit ledger pat
 ## Output
 
 ```json
-{"ok": true, "schema_version": 1, "ledger": "/tmp/run/usage.jsonl", "totals": {...}}
+{"ok": true, "schema_version": 1, "ledger": "/tmp/run/usage.jsonl",
+ "totals": {"calls": N, "images_generated": N, "video_seconds": N,
+            "speech_characters": N, "total_tokens": N,
+            "by_tool": {...}, "by_provider": {...}}}
 ```
 
-`totals` aggregates the per-generation token/artifact usage recorded across the run.
-The legacy `media_usage --log <path>` console-script maps to this same command.
+`totals` aggregates the per-generation usage recorded across the run: `images_generated`
+(image), `video_seconds` (video), `speech_characters` (audio — speech/music/sound),
+and `total_tokens`, plus `by_tool` / `by_provider` breakdowns. The legacy
+`media_usage --log <path>` console-script maps to this same command.

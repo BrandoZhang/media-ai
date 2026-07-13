@@ -2,10 +2,10 @@
 name: media-ai-image
 description: >-
   Generate or edit images from a text prompt (with optional reference images and
-  an inpaint mask) via the media-ai CLI, across OpenAI GPT-Image/DALL·E, Gemini
-  Nano Banana, and Volcengine Seedream. Use when asked to create, generate, make,
-  draw, or edit an image / picture / logo / icon / illustration / photo from the
-  command line, or to inpaint or restyle an existing image.
+  an inpaint mask) via the media-ai CLI, across OpenAI GPT-Image, Gemini Nano Banana,
+  and Volcengine Seedream. Use when asked to create, generate, make, draw, or edit an
+  image / picture / logo / icon / illustration / photo from the command line, or to
+  inpaint or restyle an existing image.
 version: 1.0.0
 metadata:
   requires:
@@ -67,7 +67,7 @@ Two mutually-exclusive ways; each adapter maps/validates it to the model:
 ## Quick starts
 
 ```bash
-# OpenAI GPT-Image (pixels, transparency, quality, up to 10)
+# OpenAI GPT-Image (pixels or ratio+tier, quality, up to 10; gpt-image-1* adds transparency)
 media-ai image generate --provider openai --model gpt-image-2 \
     --prompt "a red bicycle on a white seamless background" \
     --size 1024x1024 --quality high --output bike.png

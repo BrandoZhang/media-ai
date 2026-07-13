@@ -131,7 +131,7 @@ media-ai usage
 
 ## Docs
 
-- [skills/](skills/) — packaged Agent Skills, one per CLI functionality (image, video, concat, job, capabilities, usage)
+- [skills/](skills/) — packaged Agent Skills, one per CLI functionality (image, video, speech, music, sound, concat, job, capabilities, usage)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
 - [docs/PROVIDERS.md](docs/PROVIDERS.md) — per-provider setup + capability matrix

@@ -25,9 +25,7 @@ All other flags (`--prompt`, `--output`, `--count`, `--seed`, `--background`,
 
 | model | `image.edit`? | `supports_mask`? | `max_references` |
 |---|---|---|---|
-| openai `gpt-image-2` / `gpt-image-1` / `-mini` | ✓ | ✓ | 16 |
-| openai `dall-e-2` | ✓ | ✓ | 1 |
-| openai `dall-e-3` | ✗ (generate only) | ✗ | 0 |
+| openai `gpt-image-2` / `gpt-image-1.5` / `gpt-image-1` / `-mini` | ✓ | ✓ | 16 |
 | gemini `gemini-3.1-flash-image` / `-pro` / `-lite` | ✓ | model-dependent | 14 |
 | gemini `gemini-2.5-flash-image` (legacy) | ✓ | model-dependent | 3 |
 | volc Seedream | ✓ | — | 9 |

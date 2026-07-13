@@ -1,13 +1,14 @@
 ---
 name: media-ai-shared
 description: >-
-  Foundation for driving the media-ai generation CLI (images, video, concat,
-  async jobs) from an agent. Read this FIRST before using any media-ai-* skill.
-  Covers the machine contract (one JSON object on stdout, category exit codes),
-  provider/model selection (volc, openai, gemini), the discover-before-you-generate
-  rule via `media-ai capabilities`, and the secret-safe credential model. Use when
-  running any `media-ai` command, wiring up provider credentials, interpreting its
-  JSON output or exit codes, or deciding which provider/model to use.
+  Foundation for driving the media-ai generation CLI (images, video, audio —
+  speech/music/sound — concat, async jobs) from an agent. Read this FIRST before
+  using any media-ai-* skill. Covers the machine contract (one JSON object on stdout,
+  category exit codes), provider/model selection (volc, openai, gemini, elevenlabs),
+  the discover-before-you-generate rule via `media-ai capabilities`, and the
+  secret-safe credential model. Use when running any `media-ai` command, wiring up
+  provider credentials, interpreting its JSON output or exit codes, or deciding which
+  provider/model to use.
 version: 1.0.0
 metadata:
   requires:
@@ -17,10 +18,12 @@ metadata:
 
 # media-ai-shared — foundation for the media-ai CLI
 
-`media-ai` is a provider- and model-agnostic multimodal generation CLI. One
-normalized interface drives multiple backends (`volc`, `openai`, `gemini`) plus an
-offline `mock` default. **Read this skill first** — every `media-ai-*` skill
-(`media-ai-image`, `media-ai-video`, `media-ai-concat`, `media-ai-job`,
+`media-ai` is a provider- and model-agnostic multimodal generation CLI spanning
+three modalities — **image**, **video**, and **audio** (speech / music / sound). One
+normalized interface drives multiple backends (`volc`, `openai`, `gemini`,
+`elevenlabs`) plus an offline `mock` default. **Read this skill first** — every
+`media-ai-*` skill (`media-ai-image`, `media-ai-video`, `media-ai-speech`,
+`media-ai-music`, `media-ai-sound`, `media-ai-concat`, `media-ai-job`,
 `media-ai-capabilities`, `media-ai-usage`) relies on the contract and rules below.
 
 ## The one rule that prevents most failures
@@ -60,7 +63,7 @@ Every generation command accepts these global flags (from `add_global_args`):
 
 | Flag | Meaning |
 |---|---|
-| `--provider {mock,volc,openai,gemini}` | backend; default `$MEDIA_PROVIDER` else `mock` |
+| `--provider {mock,volc,openai,gemini,elevenlabs}` | backend; default `$MEDIA_PROVIDER` else `mock` |
 | `--model <id>` | model id; **a model id can imply the provider** (e.g. `--model gpt-image-2` ⇒ openai) |
 | `--provider-profile <name>` | a named profile (provider + model + endpoint + credential ref) from `~/.config/media-ai/config.toml` |
 | `--on-unsupported {error,warn,ignore}` | how to handle unsupported options (default `error` → exit 3) |
@@ -69,7 +72,9 @@ Every generation command accepts these global flags (from `add_global_args`):
 | `--log-level {debug,info,warning,error}` | stderr verbosity |
 
 Model-id → provider routing (bare `--model`): `doubao*`/`seedream*`/`seedance*` ⇒
-`volc`; `gpt-image*`/`dall-e*` ⇒ `openai`; `gemini-*`/`veo-*` ⇒ `gemini`.
+`volc`; `gpt-image*` ⇒ `openai`; `gemini-*` (incl. `*-tts`)/`veo-*` ⇒ `gemini`;
+`eleven_*`/`eleven-*` ⇒ `elevenlabs`. (Retired `dall-e*`/`sora*` ids still route to
+`openai` only to return a clear unsupported/removal error — DALL·E and Sora are gone.)
 Provider/model selection detail and per-provider matrices → `references/providers.md`.
 
 ## Credentials — keys never touch argv
@@ -83,6 +88,7 @@ redacts them from every sink.
 | `volc` | `ARK_API_KEY` (or `VOLC_API_KEY`) |
 | `openai` | `OPENAI_API_KEY` |
 | `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) |
+| `elevenlabs` | `ELEVENLABS_API_KEY` (or `ELEVEN_API_KEY`) |
 | `mock` | none (offline) |
 
 Full resolution chain, profiles, and secret rules → `references/credentials.md`.

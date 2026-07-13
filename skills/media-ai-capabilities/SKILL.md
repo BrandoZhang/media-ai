@@ -28,6 +28,7 @@ geometry, or option otherwise fails with **exit 3** *before any network call*.
 media-ai capabilities                                   # every registered provider/model
 media-ai capabilities --provider openai --pretty        # one provider
 media-ai capabilities --provider gemini --model veo-3.1-generate-preview --pretty   # one model
+media-ai capabilities --provider elevenlabs --pretty    # audio (speech/music/sound)
 ```
 
 | flag | notes |
@@ -48,11 +49,15 @@ media-ai capabilities --provider gemini --model veo-3.1-generate-preview --prett
        "image": {"operations": ["image.generate","image.edit"], "geometry_mode": "pixels",
                  "pixel_sizes": [...], "max_count": 10, "output_formats": ["png","jpeg","webp"],
                  "supports_seed": false, "supports_mask": true, "max_references": 16,
-                 "options": ["moderation","output_compression","input_fidelity"]},
-       "video": null, "notes": [...], "experimental": false, "aliases": [...]}
+                 "options": ["moderation","output_compression"]},
+       "video": null, "audio": null, "notes": [...], "experimental": false, "aliases": [...]}
     ]}
  ]}
 ```
+
+Each model carries an `image` / `video` / `audio` block (the others are `null`);
+`modalities[]` lists which apply. Audio models (`elevenlabs`, Gemini TTS) fill the
+`audio` block instead.
 
 ## Fields that decide a valid request
 
@@ -65,6 +70,15 @@ media-ai capabilities --provider gemini --model veo-3.1-generate-preview --prett
   `supports_first_frame` / `supports_last_frame`, `supports_reference_images/videos/audios`,
   `supports_seed` / `supports_negative_prompt` / `supports_audio` / `audio_default`,
   `supports_watermark_control`, `supports_return_last_frame`, `supports_cancel`, `options`.
+- **audio** (speech / music / sound — see `media-ai-speech` / `-music` / `-sound`):
+  `operations` (e.g. `speech.generate`, `speech.dialogue`, `music.generate`,
+  `music.plan`, `sound.generate`), `output_formats`, `default_voice`, `supports_seed` /
+  `supports_language_code` / `supports_timestamps`; dialogue: `supports_dialogue` /
+  `max_dialogue_voices` / `supports_instruction`; `max_characters`, `options`; music:
+  `supports_music` / `supports_composition_plan` / `music_models` /
+  `music_output_formats` / `music_min_ms` / `music_max_ms` / `music_options`; sound:
+  `supports_sound` / `sound_output_formats` / `sound_min_seconds` / `sound_max_seconds` /
+  `sound_options`.
 
 ## How this pairs with `--on-unsupported`
 
