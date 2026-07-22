@@ -56,7 +56,10 @@ class Secret(Credential):
         return isinstance(other, Secret) and other._value == self._value
 
     def __hash__(self) -> int:
-        return hash((self.provider, self.source))
+        # Must hash on the same dimension ``__eq__`` compares (the value), or equal
+        # Secrets could land in different buckets and break set/dict membership. The
+        # value is already registered with the redactor, so hashing it leaks nothing new.
+        return hash(self._value)
 
 
 class BrokeredHandle(Credential):

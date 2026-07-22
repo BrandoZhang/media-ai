@@ -165,6 +165,18 @@ def test_aspect_ratio_not_rejected_preflight():
         validate_request(req, caps)  # must not raise
 
 
+def test_malformed_aspect_ratio_raises_validation_not_valueerror():
+    # A non-numeric ratio must surface as a predictable VALIDATION MediaError, not a
+    # raw ValueError from float() that escapes as an UNKNOWN error.
+    prov = OpenAIProvider()
+    for bad in ("foo", "16:9:4", ":", "16:x"):
+        req = ImageRequest(prompt="x", output=Path("o.png"), model="gpt-image-2",
+                           geometry=GeometrySpec(aspect_ratio=bad))
+        with pytest.raises(MediaError) as ei:
+            prov._size("gpt-image-2", req)
+        assert ei.value.category == ErrorCategory.VALIDATION, bad
+
+
 def test_fixed_size_model_rejects_out_of_enum_pixel_size():
     # pre-gpt-image-2 models expose a fixed size enum; an off-enum pixel size is unsupported.
     prov = OpenAIProvider()

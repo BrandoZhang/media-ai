@@ -95,7 +95,7 @@ def _provider(args):
 
 
 def main() -> int:
-    args = _build_parser().parse_args()
+    args = common.parse_args(_build_parser())
     return common.run(_do, args)
 
 

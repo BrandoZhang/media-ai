@@ -106,6 +106,21 @@ def test_raw_key_in_profile_is_rejected(tmp_path, monkeypatch):
     assert ei.value.category == ErrorCategory.AUTH and "reference" in ei.value.message
 
 
+def test_bare_colon_secret_manager_reference_is_accepted(tmp_path, monkeypatch):
+    # A secret-manager reference in bare `scheme:` form (e.g. an AWS ARN) is a valid
+    # reference that resolve_reference() understands — it must not be rejected as a raw key.
+    from media_ai.credentials.profile import load_profile
+
+    p = tmp_path / "config.toml"
+    p.write_text(
+        '[profiles.arn]\nprovider = "openai"\n'
+        'credential = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openai-key"\n'
+    )
+    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(p))
+    prof = load_profile("arn")  # does not raise
+    assert prof.credential.startswith("arn:aws:secretsmanager:")
+
+
 def test_no_profile_is_backward_compatible(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "sk-plain")
     prov, model = registry.build(provider="volc", model="doubao-seedance-2-0-260128", modality=Modality.VIDEO)

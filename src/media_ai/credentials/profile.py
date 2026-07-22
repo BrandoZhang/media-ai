@@ -28,7 +28,7 @@ from pathlib import Path
 from ..core.errors import ErrorCategory, MediaError
 from .resolver import CredentialProvider
 from .secret import Credential, Secret
-from .stores import resolve_reference
+from .stores import _SECRET_MANAGER_PREFIXES, resolve_reference
 
 
 @dataclass
@@ -42,6 +42,17 @@ class Profile:
 
 def config_path() -> Path:
     return Path(os.getenv("MEDIA_CONFIG_FILE", "~/.config/media-ai/config.toml")).expanduser()
+
+
+def _looks_like_reference(cred: str) -> bool:
+    """Whether ``cred`` is a credential *reference* rather than a raw key.
+
+    Mirrors :func:`resolve_reference`, which accepts both the ``scheme://…`` form
+    (``env://``, ``op://``, ``vault://``, …) and the bare ``scheme:…`` form used by
+    recognized secret managers (e.g. ``arn:aws:secretsmanager:…``). Anything else is
+    treated as a raw key and refused, so a key never reaches the resolver.
+    """
+    return "://" in cred or cred.startswith(_SECRET_MANAGER_PREFIXES)
 
 
 def load_profile(name: str) -> Profile:
@@ -59,10 +70,10 @@ def load_profile(name: str) -> Profile:
     if section is None:
         raise MediaError(f"profile {name!r} not found in {path}", category=ErrorCategory.CLI)
     cred = section.get("credential")
-    if cred is not None and "://" not in cred:
+    if cred is not None and not _looks_like_reference(cred):
         raise MediaError(
-            f"profile {name!r}: `credential` must be a reference (e.g. env://VAR or op://…), "
-            "not a raw key — put raw keys in credentials.toml",
+            f"profile {name!r}: `credential` must be a reference (e.g. env://VAR, op://…, "
+            "or arn:aws:secretsmanager:…), not a raw key — put raw keys in credentials.toml",
             category=ErrorCategory.AUTH,
         )
     return Profile(

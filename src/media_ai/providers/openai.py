@@ -133,8 +133,15 @@ class OpenAIProvider(HttpProvider):
             return f"{geo.width}x{geo.height}"
         if geo and geo.aspect_ratio:
             a, b = (geo.aspect_ratio.split(":", 1) + ["1"])[:2]
-            landscape = float(a) > float(b)
-            portrait = float(a) < float(b)
+            try:
+                fa, fb = float(a), float(b)
+            except ValueError:
+                raise MediaError(
+                    f"invalid --aspect-ratio {geo.aspect_ratio!r}; expected W:H like 16:9",
+                    category=ErrorCategory.VALIDATION, provider=self.name,
+                ) from None
+            landscape = fa > fb
+            portrait = fa < fb
             if _is_gpt_image_2(model):  # arbitrary sizes → pick a documented tier
                 tier = (geo.resolution or "").lower()
                 if landscape:

@@ -1,8 +1,9 @@
 # media-ai machine contract — full JSON shapes
 
 Every `media-ai` command prints **exactly one JSON object** on stdout (`schema_version: 1`).
-Parse the last stdout line; treat stderr as redacted human logs only. Branch on the
-exit code (see the table in `SKILL.md`) without parsing the message.
+Parse the whole of stdout as a single JSON object (it spans multiple lines under
+`--pretty`); treat stderr as redacted human logs only. Branch on the exit code (see the
+table in `SKILL.md`) without parsing the message.
 
 ## Success — `GenerationResult` (image generate/edit, waited video, audio speech/music/sound, concat)
 

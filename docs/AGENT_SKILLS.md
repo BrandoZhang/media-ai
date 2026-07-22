@@ -10,7 +10,7 @@ contract below is deterministic so a Skill can act on results without heuristics
 ## The output contract
 
 - **stdout is exactly one JSON object** — for both success and failure. Parse the
-  last line of stdout.
+  whole of stdout as a single JSON object (it spans multiple lines under `--pretty`).
 - **stderr is redacted human logs only.** Never parse it.
 - **Exit code encodes the failure category** — branch on `$?` without parsing:
 

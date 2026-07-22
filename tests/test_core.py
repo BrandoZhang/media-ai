@@ -33,6 +33,19 @@ def test_parse_size_ok_and_bad():
         geometry.parse_size("not-a-size")
 
 
+def test_mediaref_is_remote_only_matches_url_schemes():
+    from media_ai.core.types import MediaRef
+
+    # Only genuine URL-ish schemes are remote.
+    for raw in ("http://x/a.png", "https://x/a.png", "data:image/png;base64,AA", "asset://abc", "gs://b/o"):
+        assert MediaRef(raw).is_remote is True
+    # A local filename is never remote — including names that start with "file-", which
+    # is NOT special-cased (no provider consumes a file-id ref), so read_bytes() can read them.
+    for raw in ("file-0.png", "file-1.jpg", "file-photo.png", "file-abc123DEF456ghi789", "./file-x", "my-file.png"):
+        assert MediaRef(raw).is_remote is False, raw
+        assert MediaRef(raw).is_local is True
+
+
 def test_video_dims_normalizes_case_and_adaptive():
     assert geometry.video_dims("480p", "16:9") == (864, 480)
     assert geometry.video_dims(" 480P ", "16:9") == (864, 480)
@@ -200,3 +213,32 @@ def test_parse_options_coerces_bool_int_float():
     from media_ai.cli.common import parse_options
     o = parse_options(["a=true", "b=3", "c=7.5", "d=hello", "e=off", "f=-2"])
     assert o == {"a": True, "b": 3, "c": 7.5, "d": "hello", "e": False, "f": -2}
+
+
+def test_parse_args_emits_json_error_on_bad_flag(capsys):
+    # A parse error must still honor the machine contract: one JSON object on stdout
+    # (category cli) plus exit code 2 — not an empty stdout.
+    import argparse
+
+    from media_ai.cli import common
+
+    ap = argparse.ArgumentParser(prog="media-ai usage")
+    ap.add_argument("--log")
+    with pytest.raises(SystemExit) as ei:
+        common.parse_args(ap, ["--bogus"])
+    assert ei.value.code == 2
+    obj = json.loads(capsys.readouterr().out)
+    assert obj["ok"] is False and obj["error"]["category"] == "cli"
+
+
+def test_parse_args_help_preserves_standard_stdout(capsys):
+    # --help stays standard CLI behavior: help text on stdout, exit 0 (not turned into JSON).
+    import argparse
+
+    from media_ai.cli import common
+
+    ap = argparse.ArgumentParser(prog="media-ai usage")
+    with pytest.raises(SystemExit) as ei:
+        common.parse_args(ap, ["--help"])
+    assert ei.value.code == 0
+    assert "usage:" in capsys.readouterr().out

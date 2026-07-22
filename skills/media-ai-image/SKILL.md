@@ -43,7 +43,7 @@ with `--on-unsupported warn|ignore`.
 | flag | meaning |
 |---|---|
 | `--prompt` (required) | text prompt |
-| `--output` (required) | output image path (extension sets the format) |
+| `--output` (required) | output image path; the extension is a filename hint — the image format is set by `--format` (where supported) or the provider/model default |
 | `--reference PATH...` | reference image(s); space-separated or a JSON array string. **Required for `edit`.** |
 | `--mask PATH` | *(edit only)* PNG alpha mask marking the inpaint region |
 | `--count N` | request N images (default 1); adds extra `artifacts[]` |

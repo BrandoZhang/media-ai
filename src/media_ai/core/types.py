@@ -31,14 +31,14 @@ class Operation(str, Enum):
     SOUND_GENERATE = "sound.generate"
 
 
-_REMOTE_PREFIXES = ("http://", "https://", "data:", "asset://", "gs://", "file-")
+_REMOTE_PREFIXES = ("http://", "https://", "data:", "asset://", "gs://")
 
 
 @dataclass(frozen=True)
 class MediaRef:
-    """One input media reference: a local path, URL, data-URI, ``asset://`` id,
-    ``gs://`` object, or a provider file id. Adapters materialize it into whatever
-    form the provider needs (multipart bytes, inline base64, a Files-API URI)."""
+    """One input media reference: a local path, URL, data-URI, ``asset://`` id, or
+    ``gs://`` object. Adapters materialize it into whatever form the provider needs
+    (multipart bytes, inline base64, a Files-API URI)."""
 
     raw: str
     role: str | None = None  # reference_image | first_frame | last_frame | mask | ...
