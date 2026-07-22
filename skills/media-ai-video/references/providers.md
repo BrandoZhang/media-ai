@@ -34,7 +34,7 @@ Ark API, modality is taken from the command.
 `supports_seed` ✓, `supports_negative_prompt` ✓, `supports_cancel` **✗** (`job cancel`
 → exit 3). Options: `person_generation`. SynthID watermark is unconditional. A
 200-OK with no video = a silent safety drop → **exit 8** (`safety`), not an empty file.
-Downloaded file URIs may expire — finalize promptly with `job query --output`.
+Downloaded file URIs may expire — finalize promptly with `media-ai job query --output`.
 
 ## OpenAI — no video model
 

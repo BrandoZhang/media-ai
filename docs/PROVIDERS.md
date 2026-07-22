@@ -10,7 +10,7 @@ images and ffmpeg clips, and synthesizes placeholder speech/dialogue as stdlib
 `wave` WAV tones (no ffmpeg needed, incl. a fake `--timestamps` sidecar);
 synthesizes token/character counts with the same formulas the real APIs document
 so the cost path is exercised offline. Supports a stateless fake async job so the
-`job query` path is testable without a network.
+`media-ai job query` path is testable without a network.
 
 ## volc — Volcengine Ark (Doubao Seedream / Seedance)
 
@@ -110,7 +110,7 @@ export MEDIA_PROVIDER=gemini GEMINI_API_KEY=…      # or GOOGLE_API_KEY
   (3.1 non-Lite; a local file is refused since the API rejects inline video). `--seed`
   and `--resolution 720p|1080p|4k` supported. Audio is native on Veo 3.x (`--audio` is
   unreliable on the Developer API — see LIMITATIONS.md). Jobs **cannot be
-  cancelled** on the Developer API (`job cancel` → exit 3). Deprecated `veo-2.0` /
+  cancelled** on the Developer API (`media-ai job cancel` → exit 3). Deprecated `veo-2.0` /
   `veo-3.0` snapshots still resolve via `--model`.
 - **SynthID watermarking is unconditional** on this API (image + video).
 - **TTS** (`gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`,
