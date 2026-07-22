@@ -34,7 +34,7 @@ class AcmeProvider(HttpProvider):
     def default_model(self, modality):
         return "acme-pro"
 
-    def capabilities(self, model=None):
+    def capabilities(self, model=None, modality=None):
         return ModelCapabilities(
             provider=self.name, model=model or "acme-pro",
             modalities=frozenset({Modality.IMAGE}),
@@ -131,7 +131,7 @@ class AcmeRpcProvider(Provider):
 
     def models(self): return ["acme-pro"]
     def default_model(self, modality): return "acme-pro"
-    def capabilities(self, model=None):
+    def capabilities(self, model=None, modality=None):
         return ModelCapabilities(provider=self.name, model=model or "acme-pro",
             modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(operations=frozenset({Operation.IMAGE_GENERATE}), supports_seed=True))

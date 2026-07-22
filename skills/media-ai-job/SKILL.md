@@ -36,7 +36,7 @@ media-ai job query --provider gemini --id <op-id> --output /tmp/run/clip.mp4
 media-ai job cancel --provider volc --id <task-id>
 ```
 
-The `JobHandle.poll` field **is** the exact `job query` command to run — execute it
+The `JobHandle.poll` field **is** the exact `media-ai job query` command to run — execute it
 verbatim.
 
 ## Commands & flags

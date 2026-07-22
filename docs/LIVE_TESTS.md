@@ -54,7 +54,7 @@ Output-format verification (same prompt, three extensions): `.png`→PNG, `.jpg`
 ### Video generation (Veo)
 
 All paths ran on `predictLongRunning`, submitted async (`--wait false`) and finalized
-via `job query --output`. Every finished job downloaded a real MP4.
+via `media-ai job query --output`. Every finished job downloaded a real MP4.
 
 | Path | Model | Input | Result |
 |---|---|---|---|

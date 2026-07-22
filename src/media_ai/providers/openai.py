@@ -272,9 +272,12 @@ def _parse_error(body: str) -> tuple[str | None, dict]:
     OpenAI error body. The body may be truncated/redacted, so failures degrade to
     ``(None, {})`` and the caller falls back to substring detection."""
     try:
-        err = (json.loads(body) or {}).get("error")
+        data = json.loads(body)
     except (ValueError, TypeError):
         return None, {}
+    # A valid-JSON body whose top level isn't an object (e.g. "unauthorized", [1], true)
+    # has no .get(); guard so error mapping never crashes into an UNKNOWN fallback.
+    err = data.get("error") if isinstance(data, dict) else None
     if not isinstance(err, dict):
         return None, {}
     code = err.get("code")

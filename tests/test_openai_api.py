@@ -165,6 +165,18 @@ def test_aspect_ratio_not_rejected_preflight():
         validate_request(req, caps)  # must not raise
 
 
+def test_error_body_non_object_json_maps_to_status_not_unknown():
+    # A valid-JSON error body whose top level isn't an object (gateway/proxy quirks)
+    # must not crash error mapping into an UNKNOWN fallback — it maps to the status.
+    from media_ai.providers.openai import _parse_error
+
+    prov = OpenAIProvider()
+    for body in ('"unauthorized"', "[1, 2]", "true", "123"):
+        assert _parse_error(body) == (None, {}), body  # no AttributeError, degrades cleanly
+        err = prov._error(401, body)
+        assert isinstance(err, MediaError) and err.category == ErrorCategory.AUTH, body
+
+
 def test_malformed_aspect_ratio_raises_validation_not_valueerror():
     # A non-numeric ratio must surface as a predictable VALIDATION MediaError, not a
     # raw ValueError from float() that escapes as an UNKNOWN error.

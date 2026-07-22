@@ -28,12 +28,12 @@ before relying on them in production; the adapters are written to fail safely
 - **`generateAudio` on the Developer API** is unreliable for Veo 3.x (audio is
   native/always-on; Veo 2 is silent). We forward `--audio` when set but do not
   depend on it being honored. `[verify]`
-- **Veo cancellation** is unsupported on the Developer API — `job cancel` returns a
+- **Veo cancellation** is unsupported on the Developer API — `media-ai job cancel` returns a
   deterministic `unsupported` error (exit 3).
 - **SynthID watermarking is unconditional** (image + video); there is no flag to
   disable it, so `--option`/capabilities do not expose one.
 - **Generated Veo files expire (~48h)** on Google's servers — download promptly
-  (the CLI does so in `job query --output` / `--wait true`).
+  (the CLI does so in `media-ai job query --output` / `--wait true`).
 - **`imageSize` varies by model.** `gemini-3.1-flash-image` accepts 512px/1K/2K/4K;
   `gemini-3-pro-image` 1K/2K/4K; `gemini-3.1-flash-lite-image` and legacy
   `gemini-2.5-flash-image` are 1K only. Capabilities reflect this per model, and the
