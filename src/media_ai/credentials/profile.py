@@ -28,7 +28,7 @@ from pathlib import Path
 from ..core.errors import ErrorCategory, MediaError
 from .resolver import CredentialProvider
 from .secret import Credential, Secret
-from .stores import _SECRET_MANAGER_PREFIXES, resolve_reference
+from .stores import _REFERENCE_PREFIXES, resolve_reference
 
 
 @dataclass
@@ -52,7 +52,7 @@ def _looks_like_reference(cred: str) -> bool:
     recognized secret managers (e.g. ``arn:aws:secretsmanager:…``). Anything else is
     treated as a raw key and refused, so a key never reaches the resolver.
     """
-    return "://" in cred or cred.startswith(_SECRET_MANAGER_PREFIXES)
+    return "://" in cred or cred.startswith(_REFERENCE_PREFIXES)
 
 
 def load_profile(name: str) -> Profile:

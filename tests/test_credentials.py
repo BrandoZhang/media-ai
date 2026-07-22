@@ -105,3 +105,25 @@ def test_secret_manager_reference_env_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MY_SECRET_SOURCE", "resolved-from-ref-1234")
     cred = default_chain().resolve("openai")
     assert cred.reveal() == "resolved-from-ref-1234" and cred.source == "secret-manager"
+
+
+def test_env_reference_in_config_file_is_resolved_not_stored_raw(tmp_path, monkeypatch):
+    # An `env://VAR` written in credentials.toml must resolve the env var, not be stored
+    # verbatim as the key (env:// is a recognized reference prefix).
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[openai]\napi_key = "env://OPENAI_REF_SOURCE"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    monkeypatch.setenv("OPENAI_REF_SOURCE", "sk-resolved-from-config-ref-123456")
+    cred = default_chain().resolve("openai")
+    assert cred.reveal() == "sk-resolved-from-config-ref-123456"
+    assert cred.reveal() != "env://OPENAI_REF_SOURCE"  # not the raw reference string
+
+
+def test_resolve_reference_accepts_bare_colon_env_form(monkeypatch):
+    from media_ai.credentials.stores import resolve_reference
+
+    monkeypatch.setenv("BARE_COLON_VAR", "bare-colon-value-123")
+    # Both env://VAR and env:VAR must resolve; the bare-colon form must not IndexError.
+    assert resolve_reference("env://BARE_COLON_VAR") == "bare-colon-value-123"
+    assert resolve_reference("env:BARE_COLON_VAR") == "bare-colon-value-123"

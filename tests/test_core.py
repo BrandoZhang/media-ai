@@ -46,6 +46,17 @@ def test_mediaref_is_remote_only_matches_url_schemes():
         assert MediaRef(raw).is_local is True
 
 
+def test_to_data_uri_propagates_media_type_for_unknown_extension(tmp_path):
+    from media_ai.core.mediaref import to_data_uri
+    from media_ai.core.types import MediaRef
+
+    p = tmp_path / "clip_no_ext"  # no extension -> guess_mime falls back to the media kind
+    p.write_bytes(b"\x00\x01\x02")
+    assert to_data_uri(MediaRef(str(p)), "video").startswith("data:video/octet-stream;base64,")
+    assert to_data_uri(MediaRef(str(p)), "audio").startswith("data:audio/octet-stream;base64,")
+    assert to_data_uri(MediaRef(str(p)), "image").startswith("data:image/png;base64,")
+
+
 def test_video_dims_normalizes_case_and_adaptive():
     assert geometry.video_dims("480p", "16:9") == (864, 480)
     assert geometry.video_dims(" 480P ", "16:9") == (864, 480)

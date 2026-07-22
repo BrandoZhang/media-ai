@@ -44,7 +44,7 @@ Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
 - `--wait true` (**default**) — the CLI blocks, polls the task to completion, and
   downloads the video. Returns a `GenerationResult`.
 - `--wait false` — submit and return a **`JobHandle`** immediately with a ready-to-run
-  `poll` command. Finalize with the `media-ai-job` skill (`job query --output`).
+  `poll` command. Finalize with the `media-ai-job` skill (`media-ai job query --output`).
 
 ```json
 {"status":"queued","job":{"provider":"gemini","id":"<op>"},

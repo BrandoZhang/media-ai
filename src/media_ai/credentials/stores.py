@@ -23,7 +23,10 @@ ENV_VARS: dict[str, tuple[str, ...]] = {
     "elevenlabs": ("ELEVENLABS_API_KEY", "ELEVEN_API_KEY"),
 }
 
-_SECRET_MANAGER_PREFIXES = ("op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
+# Value prefixes that mark a credential as a *reference* to resolve (vs. a raw key).
+# Includes ``env://`` so an ``env://VAR`` written in credentials.toml resolves the env
+# var instead of being stored verbatim as the key. Kept in sync with resolve_reference().
+_REFERENCE_PREFIXES = ("env://", "op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
 
 
 def broker_resolver(provider: str) -> Credential | None:
@@ -69,7 +72,7 @@ def secret_manager_resolver(provider: str) -> Credential | None:
     ref = os.getenv(f"MEDIA_SECRET_REF_{provider.upper()}")
     if ref is None:
         cfg = _config_value(provider)
-        ref = cfg if (cfg and cfg.startswith(_SECRET_MANAGER_PREFIXES)) else None
+        ref = cfg if (cfg and cfg.startswith(_REFERENCE_PREFIXES)) else None
     if not ref:
         return None
     value = resolve_reference(ref)
@@ -95,7 +98,10 @@ def resolve_reference(ref: str) -> str:
 
 
 def _env_backend(ref: str) -> str:
-    var = ref.split("://", 1)[1]
+    # Accept both env://VAR and env:VAR — resolve_reference() detects the scheme from
+    # whichever separator is present, so this backend must too (avoid an IndexError on
+    # the bare-colon form).
+    var = ref.split("://", 1)[1] if "://" in ref else ref.split(":", 1)[1]
     val = os.getenv(var)
     if not val:
         raise MediaError(f"secret reference {ref} -> env {var} is unset", category=ErrorCategory.AUTH)
@@ -127,7 +133,7 @@ def keychain_resolver(provider: str) -> Credential | None:
 
 def file_resolver(provider: str) -> Credential | None:
     value = _config_value(provider)
-    if value and not value.startswith(_SECRET_MANAGER_PREFIXES):
+    if value and not value.startswith(_REFERENCE_PREFIXES):
         return Secret(value, provider=provider, source="config-file")
     return None
 

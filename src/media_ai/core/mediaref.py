@@ -29,26 +29,31 @@ def guess_mime(path: Path | str, *, media: str = "image") -> str:
     return guessed or f"{media}/{'png' if media == 'image' else 'octet-stream'}"
 
 
-def read_bytes(ref: MediaRef) -> tuple[bytes, str]:
-    """Read a *local* ref's bytes + mime. Raises if the ref is remote or missing."""
+def read_bytes(ref: MediaRef, *, media: str = "image") -> tuple[bytes, str]:
+    """Read a *local* ref's bytes + mime. Raises if the ref is remote or missing.
+
+    ``media`` seeds the mime fallback (``image``/``video``/``audio``) for files whose
+    extension is unknown or absent, so a reference passed as video/audio does not get
+    mislabeled ``image/...``.
+    """
     if ref.is_remote:
         raise MediaError(f"expected a local file, got remote ref {ref.raw!r}", category=ErrorCategory.VALIDATION)
     p = ref.path()
     if not p.is_file():
         role = f" ({ref.role})" if ref.role else ""
         raise MediaError(f"input media not found{role}: {p}", category=ErrorCategory.IO)
-    return p.read_bytes(), guess_mime(p)
+    return p.read_bytes(), guess_mime(p, media=media)
 
 
 def to_data_uri(ref: MediaRef, media: str = "image") -> str:
     """Pass through remote/data refs; base64-encode a local file as a data-URI."""
     if ref.is_remote:
         return ref.raw
-    data, mime = read_bytes(ref)
+    data, mime = read_bytes(ref, media=media)
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
-def to_base64(ref: MediaRef) -> tuple[str, str]:
+def to_base64(ref: MediaRef, media: str = "image") -> tuple[str, str]:
     """Return ``(base64_str, mime)`` for a local file (Gemini/Veo inline inputs)."""
-    data, mime = read_bytes(ref)
+    data, mime = read_bytes(ref, media=media)
     return base64.b64encode(data).decode("ascii"), mime
