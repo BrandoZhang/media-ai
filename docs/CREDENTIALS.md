@@ -16,7 +16,7 @@ generated metadata, or any model-visible surface.
 
 The CLI selects a provider by **name**; the registry binds a credential resolver
 to the adapter; the adapter reveals the value only inside its HTTP request builder
-(`media_ai/providers/_base.py`). Credentials never pass through `media_ai/cli/`.
+(`src/media_ai/providers/_base.py`). Credentials never pass through `src/media_ai/cli/`.
 
 ## Which config file do I use?
 
@@ -45,7 +45,7 @@ a reference) and is deliberately separate so it can be shared without holding se
 
 ## Resolution chain (most-secure first, first hit wins)
 
-Configured in `media_ai/credentials/resolver.py`; re-resolved **per invocation**
+Configured in `src/media_ai/credentials/resolver.py`; re-resolved **per invocation**
 so rotation and short-lived tokens are picked up automatically.
 
 1. **Broker** — if `MEDIA_CRED_BROKER` is set, returns a `BrokeredHandle` that
@@ -74,7 +74,7 @@ If nothing resolves, the CLI exits **4** (auth) with an actionable message.
 
 ## The `Secret` handle
 
-`media_ai/credentials/secret.py`. The plaintext is accessible only via
+`src/media_ai/credentials/secret.py`. The plaintext is accessible only via
 `.reveal()`. `repr`/`str`/pickle render `***` or a source descriptor, and the
 value is **not JSON-serializable** — so it cannot accidentally land in the result
 JSON. On creation the value is registered with the redactor.
@@ -121,7 +121,7 @@ so a call can't silently pick the wrong account's key.
 
 ## Redaction (defense in depth)
 
-`media_ai/credentials/redaction.py` masks, across **every** sink (logs, the JSON
+`src/media_ai/credentials/redaction.py` masks, across **every** sink (logs, the JSON
 result serializer, and error messages):
 
 - every live secret value (known-value masking — the authoritative layer), and

@@ -26,15 +26,8 @@ keychain = ["keyring>=24"]
 [dependency-groups]
 dev = ["pytest>=7", "ruff>=0.6"]
 
-[tool.setuptools]
-packages = [
-    "media_ai",
-    "media_ai.core",
-    "media_ai.credentials",
-    "media_ai.providers",
-    "media_ai.media",
-    "media_ai.cli",
-]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

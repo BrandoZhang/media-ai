@@ -6,7 +6,7 @@ name: live
 # To also run automatically on merge to main later, add back:
 #   push:
 #     branches: [main]
-#     paths: ["media_ai/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/live.yml"]
+#     paths: ["src/**", "tests/**", "pyproject.toml", "uv.lock", ".github/workflows/live.yml"]
 on:
   workflow_dispatch:
 

@@ -41,7 +41,7 @@ export ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
 - **Different endpoints on different accounts?** Bind each to its own key (and
   optional base URL / default model) with a **profile** and select it via
   `--provider-profile` — see [CREDENTIALS.md](CREDENTIALS.md#profiles-per-endpoint--per-tenant-credentials).
-- **Errors are classified by Ark error `code`** (`media_ai/providers/_volc_errors.py`):
+- **Errors are classified by Ark error `code`** (`src/media_ai/providers/_volc_errors.py`):
   content-safety codes (input *or* output `SensitiveContentDetected`/`RiskDetection`)
   → `safety` (exit 8); `ModelNotOpen`/`InvalidEndpointOrModel` → `not_found` (exit 9,
   with an "enable it in the console" hint); `AccountOverdueError`/overdue → `auth`;
