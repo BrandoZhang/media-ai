@@ -93,7 +93,8 @@ def draw_caption_image(
         return
 
     if base_image is not None and Path(base_image).is_file():
-        img = Image.open(base_image).convert("RGB")
+        with Image.open(base_image) as base:  # close the file handle promptly (batch runs)
+            img = base.convert("RGB")
         sw, sh = img.size
         scale = max(w / sw, h / sh)
         img = img.resize((max(1, int(sw * scale)), max(1, int(sh * scale))))

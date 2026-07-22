@@ -47,6 +47,15 @@ def test_dispatcher_lists_groups():
         assert name in listing
 
 
+def test_bad_flag_emits_json_error_on_stdout(env):
+    # An argparse parse error must still produce the one-JSON-object failure contract on
+    # stdout (category cli, exit 2), with the human-readable specifics on stderr.
+    proc = run(env, "usage", "--bogus", expect=2)
+    err = json_out(proc)
+    assert err["ok"] is False and err["error"]["category"] == "cli"
+    assert "bogus" in proc.stderr  # argparse detail goes to stderr, not stdout
+
+
 def test_image_generate_contract(env, tmp_path):
     out = tmp_path / "ref.png"
     res = json_out(run(env, "image", "generate", "--prompt", "a red dune", "--output", str(out), "--size", "128x128"))

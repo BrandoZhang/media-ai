@@ -9,14 +9,14 @@ generation is never async). Emits a `GenerationResult` (see
 | flag | default | notes |
 |---|---|---|
 | `--prompt` | — (required) | text prompt |
-| `--output` | — (required) | path; extension implies format unless `--format` given |
+| `--output` | — (required) | path; the extension is only a filename hint (set `--format` to choose the image format — keep the extension consistent with it) |
 | `--reference PATH...` | `[]` | style/subject reference image(s); accepts a JSON array string |
 | `--count N` | `1` | N images in one call (a related group); capped by the model's `max_count` |
 | `--seed N` | none | only where `supports_seed` is true (openai GPT-Image does **not** expose seed) |
 | `--negative-prompt TEXT` | none | only where `supports_negative_prompt` is true |
 | `--background {transparent,opaque,auto}` | none | transparency; `gpt-image-2` rejects `transparent` |
 | `--quality {low,medium,high,auto}` | none | GPT-Image quality tier |
-| `--format {png,jpeg,webp}` | from `--output` ext | force encoding |
+| `--format {png,jpeg,webp}` | provider/model default | output image format where the model supports it (see `output_formats`) |
 | `--size WxH` | none | pixel geometry (openai, volc; gemini is ratio-only) |
 | `--aspect-ratio R` / `--ratio R` | none | ratio geometry (gemini; also openai GPT-Image `2K\|4K`) |
 | `--resolution TIER` | none | named tier `1K\|2K\|4K` |

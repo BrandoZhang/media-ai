@@ -37,7 +37,8 @@ normalized interface drives multiple backends (`volc`, `openai`, `gemini`,
 ## Machine contract (never break these assumptions)
 
 - **stdout is exactly one JSON object** — for success *and* failure. Parse the
-  last line of stdout; do **not** parse stderr.
+  whole of stdout as a single JSON object (it spans multiple lines under
+  `--pretty`); do **not** parse stderr.
 - **stderr is redacted human logs only.**
 - **Exit code encodes the failure category** — branch on `$?` without parsing:
 

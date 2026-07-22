@@ -24,6 +24,17 @@ def test_secret_never_reveals_in_repr_str_or_pickle():
     assert s.reveal() == "sk-TOPSECRET-abcdef123456"  # explicit reveal still works
 
 
+def test_secret_hash_matches_equality_contract():
+    # __eq__ compares the value, so equal Secrets must hash equal (hash/eq contract),
+    # or set/dict membership silently breaks.
+    a = Secret("same-value-123456", provider="openai", source="env:A")
+    b = Secret("same-value-123456", provider="gemini", source="env:B")  # same value, different provider/source
+    c = Secret("other-value-99999", provider="openai", source="env:A")
+    assert a == b and hash(a) == hash(b)
+    assert b in {a} and a in {b}  # lookup succeeds despite different provider/source
+    assert len({a, b}) == 1 and len({a, c}) == 2
+
+
 def test_registered_secret_is_redacted_everywhere():
     Secret("MY-LIVE-KEY-9999", provider="volc", source="env")
     assert redaction.redact("authorization: Bearer MY-LIVE-KEY-9999") == "authorization: Bearer ***"

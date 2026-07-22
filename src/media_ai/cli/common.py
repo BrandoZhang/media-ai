@@ -132,6 +132,26 @@ def emit_error(err: MediaError, args) -> int:
     return err.exit_code
 
 
+def parse_args(parser: argparse.ArgumentParser, argv=None):
+    """Parse argv while keeping the machine contract intact on *parse* failure.
+
+    ``--help``/``--version`` write to stdout and exit 0 — standard CLI behavior, left
+    untouched. A genuine parse error (bad/unknown flag, missing subcommand) makes
+    argparse print the specifics to stderr and exit 2 with **nothing** on stdout; we
+    additionally emit the one-JSON-object failure contract on stdout so a machine
+    consumer still gets a structured ``{"ok": false, ...}`` (category ``cli``, exit 2)
+    rather than an empty stream. Human-readable detail stays on stderr.
+    """
+    try:
+        return parser.parse_args(argv)
+    except SystemExit as e:
+        if e.code in (0, None):  # --help / --version: leave stdout behavior as-is
+            raise
+        err = MediaError("invalid command-line arguments (see stderr for details)", category=ErrorCategory.CLI)
+        print(_dump({"ok": False, "error": err.to_dict()}, False))
+        raise SystemExit(err.exit_code) from None
+
+
 def run(build_and_call, args) -> int:
     """Configure logging, run the command, and turn any failure into the JSON
     error contract + a category-specific exit code."""
