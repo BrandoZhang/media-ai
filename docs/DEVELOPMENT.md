@@ -36,6 +36,37 @@ any time after pulling changes (or just use `uv run`, which auto-syncs first).
 You never need to activate the venv — prefix commands with `uv run`. If you prefer
 an activated shell anyway: `source .venv/bin/activate`.
 
+## Project layout
+
+The package lives under **`src/`** — the [PEP&nbsp;517/518 "src layout"](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)
+recommended by the Python Packaging Authority (and the direct analog of the
+`src/` convention JavaScript/TypeScript CLIs use). Its point: tests and tools run
+against the **installed** package, never against a directory that just happens to
+be importable from the repo root — so a broken `pyproject.toml`, a missing
+package entry, or a stray top-level module gets caught here instead of after
+release.
+
+```
+media-ai/
+├── pyproject.toml          # build config; setuptools discovers packages under src/
+├── src/
+│   └── media_ai/           # the importable package (import name unchanged)
+│       ├── __main__.py     # `media-ai` console entry point
+│       ├── cli/            # per-group CLI front ends
+│       ├── core/           # provider-agnostic core (never imports providers/)
+│       ├── credentials/    # secret resolution + redaction
+│       ├── media/          # local ffmpeg / Pillow helpers
+│       └── providers/      # per-provider adapters
+├── tests/                  # offline test suite
+├── docs/                   # this guide + architecture/credentials/…
+└── skills/                 # agent skills
+```
+
+Because it's a src layout, the package must be **installed** to import it (there is
+no `media_ai/` at the repo root to pick up implicitly). `uv sync` / `uv run` handle
+that editable install automatically, so nothing changes in day-to-day use. Point
+lint and other path-taking tools at `src` (e.g. `ruff check src tests`).
+
 ## Everyday commands
 
 | Task | Command |
@@ -44,8 +75,8 @@ an activated shell anyway: `source .venv/bin/activate`.
 | Run the full test suite (offline) | `uv run pytest -q` |
 | Run a single test | `uv run pytest -q tests/test_gemini_api.py::test_veo_lro_poll_and_download` |
 | Run one file | `uv run pytest -q tests/test_volc_errors.py` |
-| Lint | `uv run ruff check media_ai tests` |
-| Autofix lint | `uv run ruff check media_ai tests --fix` |
+| Lint | `uv run ruff check src tests` |
+| Autofix lint | `uv run ruff check src tests --fix` |
 | Run the CLI (mock by default) | `uv run media-ai image generate --prompt "a red bike" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
 
@@ -121,7 +152,7 @@ automatically on merge to `main` later, uncomment the `push:` trigger in the fil
 ## Before you push
 
 ```bash
-uv run ruff check media_ai tests
+uv run ruff check src tests
 uv run pytest -q
 ```
 
@@ -141,7 +172,7 @@ The project is a standard PEP 621 package, so plain pip still works:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]" ruff
-pytest -q && ruff check media_ai tests
+pytest -q && ruff check src tests
 ```
 
 ## Adding a provider or debugging

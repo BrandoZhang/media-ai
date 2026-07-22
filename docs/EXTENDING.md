@@ -73,7 +73,7 @@ first-class fields — read them off the request.
 **Credentials** come from the same chain as built-ins. `self._prepare()` resolves
 `acme`'s key (env `ACME_API_KEY`, keychain, secret-manager, broker, …) and returns
 an HTTP client + auth headers; you never see or log the raw key. Add your env var
-mapping in `media_ai/credentials/stores.py::ENV_VARS` (or just rely on the default
+mapping in `src/media_ai/credentials/stores.py::ENV_VARS` (or just rely on the default
 `ACME_API_KEY`).
 
 ## 2. Register it

@@ -10,8 +10,8 @@ This repo uses **uv** for env/deps (see `docs/DEVELOPMENT.md`). Prefer `uv run`:
 uv sync                                 # .venv + editable install + dev group (pytest, ruff); writes uv.lock
 uv run pytest -q                        # full suite (offline: no creds, no network)
 uv run pytest -q tests/test_gemini_api.py::test_veo_lro_poll_and_download   # a single test
-uv run ruff check media_ai tests        # lint (config in pyproject: line-length 130, py311, ignore E402/E741)
-uv run ruff check media_ai tests --fix  # autofix
+uv run ruff check src tests             # lint (config in pyproject: line-length 130, py311, ignore E402/E741)
+uv run ruff check src tests --fix       # autofix
 uv run media-ai image generate --prompt "x" --output /tmp/x.png   # run the CLI (mock by default)
 # pip fallback: pip install -e ".[test]" ruff  →  run ruff/pytest/`python -m media_ai` directly
 ```
