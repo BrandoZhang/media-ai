@@ -100,47 +100,36 @@ def test_config_file_600_is_read(tmp_path, monkeypatch):
     assert cred.reveal() == "ark-file-key-123456" and cred.source == "config-file"
 
 
-def test_named_credential_section_is_provider_default(tmp_path, monkeypatch):
-    # A [credentials.<provider>] block is the canonical spelling of the provider
-    # default and must resolve through the normal chain, exactly like bare [<provider>].
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.volc]\napi_key = "ark-named-default-123456"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    cred = default_chain().resolve("volc")
-    assert cred.reveal() == "ark-named-default-123456" and cred.source == "config-file"
-
-
-def test_cred_reference_resolves_named_credential(tmp_path, monkeypatch):
+def test_cred_reference_resolves_account(tmp_path, monkeypatch):
     from media_ai.credentials.stores import resolve_reference
 
     cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.volc_account_a]\napi_key = "ark-account-a-999999"\n')
+    cfg.write_text('[volc_account_a]\napi_key = "ark-account-a-999999"\n')  # flat account block
     cfg.chmod(0o600)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
     assert resolve_reference("cred://volc_account_a") == "ark-account-a-999999"
 
 
 def test_cred_reference_can_nest_another_reference(tmp_path, monkeypatch):
-    # A named credential may itself be a reference (e.g. env://…), resolved recursively.
+    # An account's key may itself be a reference (e.g. env://…), resolved recursively.
     from media_ai.credentials.stores import resolve_reference
 
     cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.volc_shared]\napi_key = "env://SHARED_ARK_SOURCE"\n')
+    cfg.write_text('[volc_shared]\napi_key = "env://SHARED_ARK_SOURCE"\n')
     cfg.chmod(0o600)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
     monkeypatch.setenv("SHARED_ARK_SOURCE", "resolved-nested-ark-123456")
     assert resolve_reference("cred://volc_shared") == "resolved-nested-ark-123456"
 
 
-def test_missing_named_credential_hard_errors_but_soft_misses(tmp_path, monkeypatch):
+def test_missing_account_hard_errors_but_soft_misses(tmp_path, monkeypatch):
     from media_ai.credentials.stores import resolve_reference, try_resolve_reference
 
     cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.present]\napi_key = "here-123456"\n')
+    cfg.write_text('[present]\napi_key = "here-123456"\n')
     cfg.chmod(0o600)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    # soft (fallback list) -> a missing named credential is a skip, not an error
+    # soft (fallback list) -> a missing account is a skip, not an error
     assert try_resolve_reference("cred://absent") is None
     # strict -> a clear auth error
     with pytest.raises(MediaError) as ei:
@@ -154,7 +143,7 @@ def test_cred_reference_cycle_is_refused(tmp_path, monkeypatch):
     from media_ai.credentials.stores import try_resolve_reference
 
     cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.loop]\napi_key = "cred://loop"\n')
+    cfg.write_text('[loop]\napi_key = "cred://loop"\n')
     cfg.chmod(0o600)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
     with pytest.raises(MediaError) as ei:
@@ -168,7 +157,7 @@ def test_world_readable_file_refused_even_via_cred_reference(tmp_path, monkeypat
     from media_ai.credentials.stores import try_resolve_reference
 
     cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[credentials.x]\napi_key = "sk-in-file-123456"\n')
+    cfg.write_text('[x]\napi_key = "sk-in-file-123456"\n')
     cfg.chmod(0o644)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
     with pytest.raises(MediaError) as ei:

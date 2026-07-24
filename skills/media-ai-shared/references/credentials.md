@@ -40,23 +40,23 @@ A missing/invalid key surfaces as **exit 4** (`auth`) — fix the environment, n
 3. **OS keychain** — with the `keychain` extra installed (`pip install -e ".[keychain]"`),
    service `media-ai`, username = provider name. Disable with `$MEDIA_DISABLE_KEYCHAIN`.
 4. **Config file** — `~/.config/media-ai/credentials.toml` (override `$MEDIA_CREDENTIALS_FILE`);
-   must be `chmod 600` or it is refused. A namespace of **named credentials**:
-   `[credentials.<name>].api_key` (or `.key`); a name matching a provider (or the bare
-   `[<provider>]` shorthand) is that provider's default.
+   must be `chmod 600` or it is refused. A flat namespace of **accounts**:
+   `[<name>].api_key` (or `.key`); an account named after a provider is that provider's
+   default.
 5. **Environment** — the table above.
 
-## Named credentials (multiple keys per provider / per model)
+## Accounts (multiple keys per provider / per model)
 
 For several keys under one provider — different accounts/tenants or per model/endpoint
-— give each a name in `credentials.toml` and reference it from a profile as
+— add more accounts in `credentials.toml` and reference one from a profile as
 `cred://<name>`:
 
 ```toml
-# ~/.config/media-ai/credentials.toml  (chmod 600 — the secrets)
-[credentials.volc_account_a]
+# ~/.config/media-ai/credentials.toml  (chmod 600 — the secrets, one block per account)
+[volc_account_a]
 api_key = "..."
-[credentials.volc_account_b]
-api_key = "op://vault/volc/account-b"   # a named credential may itself be a reference
+[volc_account_b]
+api_key = "op://vault/volc/account-b"   # an account's key may itself be a reference
 ```
 
 ## Profiles (multiple accounts / endpoints / tenants)

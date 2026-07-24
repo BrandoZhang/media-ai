@@ -26,14 +26,14 @@ ENV_VARS: dict[str, tuple[str, ...]] = {
 # Value prefixes that mark a credential as a *reference* to resolve (vs. a raw key).
 # Includes ``env://`` so an ``env://VAR`` written in credentials.toml resolves the env
 # var instead of being stored verbatim as the key, and ``cred://`` so a profile can
-# reference a *named* credential ([credentials.<name>]) held in credentials.toml.
+# reference an *account* ([<name>]) held in credentials.toml.
 # Kept in sync with resolve_reference() / _SECRET_BACKENDS.
 _REFERENCE_PREFIXES = ("env://", "cred://", "op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
 
 
 class _CredentialMiss(Exception):
     """A reference's *source is simply absent* (an unset env var, a missing
-    ``[credentials.<name>]`` block). Distinct from a genuine misconfiguration
+    ``[<name>]`` account block). Distinct from a genuine misconfiguration
     (unknown scheme, refused file permissions, reference cycle): a miss is
     silently skipped inside a fallback list, while a misconfiguration is always
     surfaced. See :func:`try_resolve_reference`."""
@@ -79,23 +79,20 @@ def _section_key(section: object) -> str | None:
 
 
 def _config_value(provider: str) -> str | None:
-    """A provider's **default** credential from credentials.toml.
-
-    Two equivalent spellings, checked canonical-first: the named form
-    ``[credentials.<provider>]`` and the legacy shorthand ``[<provider>]``. So the
-    file is one consistent namespace of named credentials, and a name that matches a
-    provider doubles as that provider's default.
+    """A provider's **default** credential from credentials.toml — the account whose
+    name matches the provider (``[<provider>]``). credentials.toml is one flat
+    namespace of accounts, so a provider default is just an account named after the
+    provider; extra accounts are referenced from a profile as ``cred://<name>``.
     """
     data = _read_credentials_toml()
     if data is None:
         return None
-    named = (data.get("credentials") or {}).get(provider)
-    return _section_key(named) or _section_key(data.get(provider))
+    return _section_key(data.get(provider))
 
 
 def _named_credential(name: str, *, _seen: frozenset[str] = frozenset()) -> str | None:
-    """Resolve a **named** credential ``[credentials.<name>]`` (or legacy ``[<name>]``)
-    to a plaintext value, or ``None`` when no such block exists.
+    """Resolve an **account** ``[<name>]`` from credentials.toml to a plaintext value,
+    or ``None`` when no such block exists.
 
     The stored ``api_key`` may itself be a reference (``op://…``, ``env://…``, even
     another ``cred://…``), resolved recursively with a cycle guard. A *nested* absent
@@ -106,7 +103,7 @@ def _named_credential(name: str, *, _seen: frozenset[str] = frozenset()) -> str 
     data = _read_credentials_toml()
     if data is None:
         return None
-    raw = _section_key((data.get("credentials") or {}).get(name)) or _section_key(data.get(name))
+    raw = _section_key(data.get(name))
     if not raw:
         return None
     if raw.startswith(_REFERENCE_PREFIXES):
@@ -153,9 +150,9 @@ def _resolve_ref(ref: str) -> str:
 def resolve_reference(ref: str) -> str:
     """Resolve a ``cred://``/``env://``/``op://``/… reference to a plaintext value.
 
-    Strict: an absent source (unset env var, missing ``[credentials.<name>]``) is an
-    actionable error. ``cred://<name>`` resolves a *named* credential from
-    credentials.toml; ``env://VARNAME`` reads the environment; other schemes are
+    Strict: an absent source (unset env var, missing ``[<name>]`` account) is an
+    actionable error. ``cred://<name>`` resolves an *account* from credentials.toml;
+    ``env://VARNAME`` reads the environment; other schemes are
     pluggable and raise until a backend is registered via
     :func:`register_secret_backend`. Use :func:`try_resolve_reference` for
     fall-through-on-miss behavior inside a credential fallback list.
@@ -190,11 +187,11 @@ def _env_backend(ref: str) -> str:
 
 
 def _cred_backend(ref: str) -> str:
-    # cred://<name> -> the named credential [credentials.<name>] in credentials.toml.
+    # cred://<name> -> the account [<name>] in credentials.toml.
     name = ref.split("://", 1)[1] if "://" in ref else ref.split(":", 1)[1]
     val = _named_credential(name)
     if not val:
-        raise _CredentialMiss(f"credential reference {ref} -> no [credentials.{name}] in credentials.toml")
+        raise _CredentialMiss(f"credential reference {ref} -> no [{name}] account in credentials.toml")
     return val
 
 

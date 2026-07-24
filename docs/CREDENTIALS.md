@@ -27,16 +27,17 @@ you do **not** need more than one for keys.
 | File | Holds | Role | Committed? |
 |---|---|---|---|
 | `.env` (project-local) | provider env vars | quick dev / CI; **lowest** priority | no (`.env.example` is) |
-| `~/.config/media-ai/credentials.toml` | **named credentials** — raw keys (or references), `chmod 600` | durable per-user secrets; **outranks `.env`** | no (`credentials.toml.example` is) |
+| `~/.config/media-ai/credentials.toml` | **accounts** — raw keys (or references), `chmod 600` | durable per-user secrets; **outranks `.env`** | no (`credentials.toml.example` is) |
 | `~/.config/media-ai/config.toml` | **non-secret** profiles (references + provider/model/base_url) | route to different endpoints/tenants/models | yes — safe to share (no secrets) |
 
-**The two files are keyed the same way.** `credentials.toml` is a namespace of
-**named credentials** (`[credentials.<name>]`); `config.toml` is a namespace of
-**named profiles** (`[profiles.<name>]`) that reference those credentials by name
-(`credential = "cred://<name>"`). Secrets live only in the `chmod 600`
-`credentials.toml`; the shareable `config.toml` holds references and routing, never a
-raw key. This is what lets one provider hold several keys (per account / per model)
-and a profile pick — or fall back across — them.
+**The model: key by *account*, not just by provider.** `credentials.toml` is a flat
+list of **accounts** — each `[<name>]` block is a name you choose plus its key.
+`config.toml` is a list of **profiles** (`[profiles.<name>]`) that pick a provider +
+model and refer to an account by name (`credential = "cred://<name>"`). An account
+named after a provider (`[openai]`) is simply that provider's default. Secrets live
+only in the `chmod 600` `credentials.toml`; the shareable `config.toml` holds
+references and routing, never a raw key. This is what lets one provider hold several
+keys (per account / per model) and a profile pick — or fall back across — them.
 
 **Precedence when the same provider is set in more than one place:** broker →
 secret-manager reference → OS keychain → **`credentials.toml`** → **`.env`/env** (see
@@ -68,16 +69,15 @@ so rotation and short-lived tokens are picked up automatically.
 4. **Config file** — `~/.config/media-ai/credentials.toml` (override with
    `MEDIA_CREDENTIALS_FILE`; template: [`credentials.toml.example`](../credentials.toml.example)).
    **Must be `chmod 600`** — a group/world-readable file is refused. Outranks the
-   environment, so a key here beats the same key in `.env`. A named credential whose
-   name matches a provider is that provider's default (the bare `[openai]` form is
-   shorthand for `[credentials.openai]`):
+   environment, so a key here beats the same key in `.env`. Each `[<name>]` block is an
+   **account**; an account named after a provider is that provider's default:
    ```toml
-   [openai]                       # provider default == [credentials.openai]
+   [openai]                       # provider default (account named after the provider)
    api_key = "sk-…"
    [volc]
    api_key = "…"                  # or a reference: api_key = "op://vault/volc/key"
 
-   [credentials.volc_account_a]   # a named credential, referenced from a profile
+   [volc_account_a]               # an extra account, referenced from a profile
    api_key = "…"                  #   as cred://volc_account_a
    ```
 5. **Environment** — `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`,
@@ -85,23 +85,26 @@ so rotation and short-lived tokens are picked up automatically.
 
 If nothing resolves, the CLI exits **4** (auth) with an actionable message.
 
-## Named credentials (multiple keys per provider)
+## Accounts (multiple keys per provider)
 
-The plain chain resolves **one** default credential per provider. When a provider
-needs **several** keys — different accounts, tenants, or per model/endpoint — give
-each a name in `credentials.toml` and reference it from a profile:
+The plain chain resolves **one** default credential per provider (the account named
+after it). When a provider needs **several** keys — different accounts, tenants, or
+per model/endpoint — add more accounts and reference one from a profile:
 
 ```toml
-# credentials.toml (chmod 600) — the secrets
-[credentials.volc_account_a]
+# credentials.toml (chmod 600) — the secrets, one [<name>] block per account
+[volc_account_a]
 api_key = "…"
-[credentials.volc_account_b]
-api_key = "op://vault/volc/account-b"   # a named credential may itself be a reference
+[volc_account_b]
+api_key = "op://vault/volc/account-b"   # an account's key may itself be a reference
 ```
 
 A profile then selects one with `credential = "cred://volc_account_a"` (see below).
-`cred://<name>` is resolved through the same lazy machinery as any other reference,
-so the value is revealed only inside the adapter and redacted everywhere else.
+`cred://<name>` looks up the `[<name>]` account and is resolved through the same lazy
+machinery as any other reference, so the value is revealed only inside the adapter and
+redacted everywhere else. `cred://` is a scheme (like `env://`/`op://`) rather than a
+bare name so the shareable `config.toml` can be checked to contain **no raw keys** and
+a fallback list can mix account/env/secret-manager references uniformly.
 
 ## The `Secret` handle
 
@@ -119,15 +122,15 @@ image endpoint on account A and a video endpoint on account B — bind them with
 + a `credential` **reference**.
 
 Profiles live in `~/.config/media-ai/config.toml` (override `MEDIA_CONFIG_FILE`)
-and are **non-secret** — `credential` is a reference (`cred://<name>` for a named
-credential in `credentials.toml`, `env://VAR`, `op://…`, a Vault path), never a raw
-key, so the file is safe to share/commit:
+and are **non-secret** — `credential` is a reference (`cred://<name>` for the
+`[<name>]` account in `credentials.toml`, `env://VAR`, `op://…`, a Vault path), never
+a raw key, so the file is safe to share/commit:
 
 ```toml
 [profiles.prod_image]
 provider   = "volc"
 model      = "ep-image-A"
-credential = "cred://volc_account_a"     # → [credentials.volc_account_a]
+credential = "cred://volc_account_a"     # → the [volc_account_a] account
 
 [profiles.prod_video]
 provider   = "volc"
@@ -159,7 +162,7 @@ credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"
 
 A **single** reference is strict — an absent source is an error, never a silent jump
 to a different account's key. A **list** is the explicit opt-in to fall through: an
-*absent* source (unset env var, missing `[credentials.<name>]`) is skipped, but a
+*absent* source (unset env var, missing `[<name>]` account) is skipped, but a
 genuine *misconfiguration* (unknown scheme, a `chmod`-refused credentials file, a
 reference cycle) is always surfaced rather than silently swallowed. If the whole list
 is exhausted, the error names every reference it tried.

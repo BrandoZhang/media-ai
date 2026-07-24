@@ -152,15 +152,15 @@ def named_setup(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_CONFIG_FILE", str(cfg))
     creds = tmp_path / "credentials.toml"
     creds.write_text(
-        '[credentials.volc_account_a]\napi_key = "key-account-a-111111"\n'
-        '[credentials.volc_account_b]\napi_key = "key-account-b-222222"\n'
+        '[volc_account_a]\napi_key = "key-account-a-111111"\n'  # flat account blocks
+        '[volc_account_b]\napi_key = "key-account-b-222222"\n'
     )
     creds.chmod(0o600)
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(creds))
     return tmp_path, creds
 
 
-def test_profile_resolves_named_credential(named_setup):
+def test_profile_resolves_named_account(named_setup):
     prov, model = registry.build(profile="image_a", modality=Modality.IMAGE)
     assert isinstance(prov, VolcProvider) and model == "ep-image-A"
     cred = prov.credential()
@@ -179,8 +179,8 @@ def test_fallback_list_skips_absent_and_uses_next(named_setup, monkeypatch):
     # option that resolves (here the shared one, added below).
     tmp_path, creds = named_setup
     creds.write_text(
-        '[credentials.volc_account_a]\napi_key = "key-account-a-111111"\n'
-        '[credentials.volc_shared]\napi_key = "key-shared-333333"\n'  # account_b absent now
+        '[volc_account_a]\napi_key = "key-account-a-111111"\n'
+        '[volc_shared]\napi_key = "key-shared-333333"\n'  # account_b absent now
     )
     creds.chmod(0o600)
     prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
@@ -189,7 +189,7 @@ def test_fallback_list_skips_absent_and_uses_next(named_setup, monkeypatch):
 
 def test_fallback_list_falls_through_to_env(named_setup, monkeypatch):
     tmp_path, creds = named_setup
-    creds.write_text('[credentials.volc_account_a]\napi_key = "unused-111111"\n')  # b + shared absent
+    creds.write_text('[volc_account_a]\napi_key = "unused-111111"\n')  # b + shared absent
     creds.chmod(0o600)
     monkeypatch.setenv("ARK_API_KEY", "env-last-resort-444444")
     prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
@@ -198,7 +198,7 @@ def test_fallback_list_falls_through_to_env(named_setup, monkeypatch):
 
 def test_fallback_list_all_missing_raises_auth(named_setup, monkeypatch):
     tmp_path, creds = named_setup
-    creds.write_text('[credentials.volc_account_a]\napi_key = "unused-111111"\n')  # nothing the list wants
+    creds.write_text('[volc_account_a]\napi_key = "unused-111111"\n')  # nothing the list wants
     creds.chmod(0o600)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
@@ -210,7 +210,7 @@ def test_fallback_list_all_missing_raises_auth(named_setup, monkeypatch):
 
 def test_single_named_credential_is_strict_when_absent(named_setup):
     tmp_path, creds = named_setup
-    creds.write_text('[credentials.other]\napi_key = "x-111111"\n')  # image_a wants volc_account_a
+    creds.write_text('[other]\napi_key = "x-111111"\n')  # image_a wants volc_account_a
     creds.chmod(0o600)
     prov, _ = registry.build(profile="image_a", modality=Modality.IMAGE)
     with pytest.raises(MediaError) as ei:

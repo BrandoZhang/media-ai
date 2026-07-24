@@ -75,7 +75,7 @@ def _validate_references(name: str, cred: str | list[str]) -> list[str]:
             raise MediaError(
                 f"profile {name!r}: `credential` must be a reference (e.g. cred://<name>, "
                 "env://VAR, op://…, or arn:aws:secretsmanager:…), not a raw key — put raw "
-                "keys in credentials.toml as [credentials.<name>]",
+                "keys in credentials.toml as an account [<name>]",
                 category=ErrorCategory.AUTH,
             )
     return refs
