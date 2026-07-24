@@ -43,6 +43,7 @@ from .core.types import (
     SpeechRequest,
     VideoRequest,
 )
+from .agent_skills import agent_skills_dir
 from .providers._base import HttpProvider
 
 __version__ = "0.2.0"
@@ -80,5 +81,6 @@ __all__ = [
     "JobStatus",
     "MediaError",
     "ErrorCategory",
+    "agent_skills_dir",
     "__version__",
 ]

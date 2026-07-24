@@ -59,3 +59,18 @@ ln -s "$(pwd)/skills/media-ai-usage"        .claude/skills/media-ai-usage
 ```
 
 Skills are also portable to any agent runtime that reads the `SKILL.md` format.
+
+## Programmatic discovery (embedding frameworks)
+
+An agent framework that embeds media-ai can locate this directory without
+hardcoding a path or vendoring a copy:
+
+```python
+import media_ai
+skills_root = media_ai.agent_skills_dir()   # -> Path to this skills/ folder
+```
+
+Resolution order: `$MEDIA_AI_SKILLS_DIR` override → skills bundled in the wheel
+(future) → a `skills/` sibling in a package ancestor (the repo-root `skills/`
+for editable / source installs, `src/` layout included). This is how uni-agent
+points its creation agent at the media-ai skills.
