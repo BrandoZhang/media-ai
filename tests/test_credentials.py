@@ -100,6 +100,82 @@ def test_config_file_600_is_read(tmp_path, monkeypatch):
     assert cred.reveal() == "ark-file-key-123456" and cred.source == "config-file"
 
 
+def test_named_credential_section_is_provider_default(tmp_path, monkeypatch):
+    # A [credentials.<provider>] block is the canonical spelling of the provider
+    # default and must resolve through the normal chain, exactly like bare [<provider>].
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.volc]\napi_key = "ark-named-default-123456"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    cred = default_chain().resolve("volc")
+    assert cred.reveal() == "ark-named-default-123456" and cred.source == "config-file"
+
+
+def test_cred_reference_resolves_named_credential(tmp_path, monkeypatch):
+    from media_ai.credentials.stores import resolve_reference
+
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.volc_account_a]\napi_key = "ark-account-a-999999"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    assert resolve_reference("cred://volc_account_a") == "ark-account-a-999999"
+
+
+def test_cred_reference_can_nest_another_reference(tmp_path, monkeypatch):
+    # A named credential may itself be a reference (e.g. env://…), resolved recursively.
+    from media_ai.credentials.stores import resolve_reference
+
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.volc_shared]\napi_key = "env://SHARED_ARK_SOURCE"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    monkeypatch.setenv("SHARED_ARK_SOURCE", "resolved-nested-ark-123456")
+    assert resolve_reference("cred://volc_shared") == "resolved-nested-ark-123456"
+
+
+def test_missing_named_credential_hard_errors_but_soft_misses(tmp_path, monkeypatch):
+    from media_ai.credentials.stores import resolve_reference, try_resolve_reference
+
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.present]\napi_key = "here-123456"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    # soft (fallback list) -> a missing named credential is a skip, not an error
+    assert try_resolve_reference("cred://absent") is None
+    # strict -> a clear auth error
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://absent")
+    assert ei.value.category == ErrorCategory.AUTH
+
+
+def test_cred_reference_cycle_is_refused(tmp_path, monkeypatch):
+    # A cred:// that points at itself must not recurse forever — it's a misconfig, so
+    # it is surfaced (raises) even on the soft path rather than silently skipped.
+    from media_ai.credentials.stores import try_resolve_reference
+
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.loop]\napi_key = "cred://loop"\n')
+    cfg.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    with pytest.raises(MediaError) as ei:
+        try_resolve_reference("cred://loop")
+    assert ei.value.category == ErrorCategory.AUTH and "circular" in ei.value.message
+
+
+def test_world_readable_file_refused_even_via_cred_reference(tmp_path, monkeypatch):
+    # The chmod-600 refusal is a security stop, not an "absent source", so it must
+    # surface on the soft path too (never swallowed as a fallback miss).
+    from media_ai.credentials.stores import try_resolve_reference
+
+    cfg = tmp_path / "credentials.toml"
+    cfg.write_text('[credentials.x]\napi_key = "sk-in-file-123456"\n')
+    cfg.chmod(0o644)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+    with pytest.raises(MediaError) as ei:
+        try_resolve_reference("cred://x")
+    assert "chmod 600" in ei.value.message
+
+
 def test_secret_manager_reference_env_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_SECRET_REF_OPENAI", "env://MY_SECRET_SOURCE")
     monkeypatch.setenv("MY_SECRET_SOURCE", "resolved-from-ref-1234")

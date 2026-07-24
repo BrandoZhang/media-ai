@@ -40,8 +40,24 @@ A missing/invalid key surfaces as **exit 4** (`auth`) — fix the environment, n
 3. **OS keychain** — with the `keychain` extra installed (`pip install -e ".[keychain]"`),
    service `media-ai`, username = provider name. Disable with `$MEDIA_DISABLE_KEYCHAIN`.
 4. **Config file** — `~/.config/media-ai/credentials.toml` (override `$MEDIA_CREDENTIALS_FILE`);
-   must be `chmod 600` or it is refused. Reads `[<provider>].api_key` or `.key`.
+   must be `chmod 600` or it is refused. A namespace of **named credentials**:
+   `[credentials.<name>].api_key` (or `.key`); a name matching a provider (or the bare
+   `[<provider>]` shorthand) is that provider's default.
 5. **Environment** — the table above.
+
+## Named credentials (multiple keys per provider / per model)
+
+For several keys under one provider — different accounts/tenants or per model/endpoint
+— give each a name in `credentials.toml` and reference it from a profile as
+`cred://<name>`:
+
+```toml
+# ~/.config/media-ai/credentials.toml  (chmod 600 — the secrets)
+[credentials.volc_account_a]
+api_key = "..."
+[credentials.volc_account_b]
+api_key = "op://vault/volc/account-b"   # a named credential may itself be a reference
+```
 
 ## Profiles (multiple accounts / endpoints / tenants)
 
@@ -50,16 +66,24 @@ reference** (never a raw key), in `~/.config/media-ai/config.toml` (override
 `$MEDIA_CONFIG_FILE`). Select with `--provider-profile <name>` or `$MEDIA_PROFILE`.
 
 ```toml
-# ~/.config/media-ai/config.toml
+# ~/.config/media-ai/config.toml  (shareable — references + routing, no secrets)
 [profiles.prod-openai]
 provider = "openai"
 model = "gpt-image-2"
 base_url = "https://api.openai.com/v1"
-credential = "env://OPENAI_API_KEY_PROD"    # a reference; a raw key here is refused (exit 4)
+credential = "cred://openai_prod"           # or env://VAR / op://…; a raw key is refused (exit 4)
+
+[profiles.prod-video-ha]
+provider = "volc"
+model = "ep-video-B"
+# Ordered fallback: the first reference that resolves at call time wins.
+credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
 ```
 
 ```bash
 media-ai image generate --provider-profile prod-openai --prompt "..." --output o.png
 ```
 
-Deeper detail (trust boundary, redaction, broker headers): `../../../docs/CREDENTIALS.md`.
+A single reference is strict (an absent source is exit 4, never a silent switch); a
+list is the explicit opt-in to fall through absent sources. Deeper detail (trust
+boundary, redaction, broker headers): `../../../docs/CREDENTIALS.md`.

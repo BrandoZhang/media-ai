@@ -2,14 +2,17 @@
 #
 # A profile binds a provider + default model + optional base_url + a credential
 # *reference* (never a raw key). Use it to route calls to different endpoints /
-# projects / tenants — e.g. an image endpoint on account A and a video endpoint on
-# account B, each with its own key. See docs/CREDENTIALS.md ("Profiles").
+# projects / tenants / models — e.g. an image endpoint on account A and a video
+# endpoint on account B, each with its own key. See docs/CREDENTIALS.md ("Profiles").
 #
-# This file does NOT hold secrets: `credential` is a reference (env://VAR, op://…,
-# a Vault path) resolved lazily through the same chain — put RAW keys in
-# credentials.toml instead (a raw key here is refused). That separation is why this
-# is a distinct file from credentials.toml: config.toml is shareable, credentials.toml
-# is chmod-600 secret storage.
+# This file does NOT hold secrets. `credential` is a REFERENCE resolved lazily
+# through the same chain:
+#   cred://<name>   → a named credential in credentials.toml ([credentials.<name>])
+#   env://VAR       → an environment variable
+#   op://… , vault://… , arn:aws:secretsmanager:…  → a secret manager
+# Put RAW keys in credentials.toml (a raw key here is refused). That separation —
+# secrets in the chmod-600 credentials.toml, references + routing in this shareable
+# file — is why they are two files, and both are keyed the same way (named entries).
 #
 # Setup:
 #   mkdir -p ~/.config/media-ai
@@ -17,19 +20,31 @@
 # Override the location with $MEDIA_CONFIG_FILE. Select a profile at call time with
 #   --provider-profile <name>   (or $MEDIA_PROFILE)
 
+# Different models on different accounts — each profile names its own credential.
 [profiles.prod_image]
 provider   = "volc"
 model      = "ep-image-A"                 # e.g. an Ark custom endpoint id
-credential = "env://ARK_ACCOUNT_A_KEY"    # reference, resolved at call time
+credential = "cred://volc_account_a"      # → [credentials.volc_account_a]
 
 [profiles.prod_video]
 provider   = "volc"
 model      = "ep-video-B"
 base_url   = "https://ark.cn-beijing.volces.com/api/v3"   # optional
-credential = "env://ARK_ACCOUNT_B_KEY"
+credential = "cred://volc_account_b"      # → [credentials.volc_account_b]
+
+# Ordered fallback: the FIRST reference that resolves at call time wins. Configure
+# more keys than you routinely use and the call degrades gracefully if the preferred
+# one is absent (rotated out, not provisioned on this machine, …). A single
+# reference is strict (an absent source errors, never a silent switch to another
+# account); a list is the explicit opt-in to fall through.
+[profiles.prod_video_ha]
+provider   = "volc"
+model      = "ep-video-B"
+credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
 
 # A credential-less profile is fine too — it falls back to the normal chain
-# (credentials.toml / env / keychain), so it still ends at e.g. ARK_API_KEY:
+# (credentials.toml provider default / env / keychain), so it still ends at e.g.
+# ARK_API_KEY:
 # [profiles.dev]
 # provider = "gemini"
 # model    = "gemini-3.1-flash-image"

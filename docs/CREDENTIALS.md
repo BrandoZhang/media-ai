@@ -27,8 +27,16 @@ you do **not** need more than one for keys.
 | File | Holds | Role | Committed? |
 |---|---|---|---|
 | `.env` (project-local) | provider env vars | quick dev / CI; **lowest** priority | no (`.env.example` is) |
-| `~/.config/media-ai/credentials.toml` | raw keys (or references), `chmod 600` | durable per-user secrets; **outranks `.env`** | no (`credentials.toml.example` is) |
-| `~/.config/media-ai/config.toml` | **non-secret** profiles (references + provider/model/base_url) | route to different endpoints/tenants | yes — safe to share (no secrets) |
+| `~/.config/media-ai/credentials.toml` | **named credentials** — raw keys (or references), `chmod 600` | durable per-user secrets; **outranks `.env`** | no (`credentials.toml.example` is) |
+| `~/.config/media-ai/config.toml` | **non-secret** profiles (references + provider/model/base_url) | route to different endpoints/tenants/models | yes — safe to share (no secrets) |
+
+**The two files are keyed the same way.** `credentials.toml` is a namespace of
+**named credentials** (`[credentials.<name>]`); `config.toml` is a namespace of
+**named profiles** (`[profiles.<name>]`) that reference those credentials by name
+(`credential = "cred://<name>"`). Secrets live only in the `chmod 600`
+`credentials.toml`; the shareable `config.toml` holds references and routing, never a
+raw key. This is what lets one provider hold several keys (per account / per model)
+and a profile pick — or fall back across — them.
 
 **Precedence when the same provider is set in more than one place:** broker →
 secret-manager reference → OS keychain → **`credentials.toml`** → **`.env`/env** (see
@@ -60,17 +68,40 @@ so rotation and short-lived tokens are picked up automatically.
 4. **Config file** — `~/.config/media-ai/credentials.toml` (override with
    `MEDIA_CREDENTIALS_FILE`; template: [`credentials.toml.example`](../credentials.toml.example)).
    **Must be `chmod 600`** — a group/world-readable file is refused. Outranks the
-   environment, so a key here beats the same key in `.env`.
+   environment, so a key here beats the same key in `.env`. A named credential whose
+   name matches a provider is that provider's default (the bare `[openai]` form is
+   shorthand for `[credentials.openai]`):
    ```toml
-   [openai]
+   [openai]                       # provider default == [credentials.openai]
    api_key = "sk-…"
    [volc]
-   api_key = "…"           # or a reference: api_key = "op://vault/volc/key"
+   api_key = "…"                  # or a reference: api_key = "op://vault/volc/key"
+
+   [credentials.volc_account_a]   # a named credential, referenced from a profile
+   api_key = "…"                  #   as cred://volc_account_a
    ```
 5. **Environment** — `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`,
    `ARK_API_KEY`/`VOLC_API_KEY`, `ELEVENLABS_API_KEY`/`ELEVEN_API_KEY` (e.g. via `.env`).
 
 If nothing resolves, the CLI exits **4** (auth) with an actionable message.
+
+## Named credentials (multiple keys per provider)
+
+The plain chain resolves **one** default credential per provider. When a provider
+needs **several** keys — different accounts, tenants, or per model/endpoint — give
+each a name in `credentials.toml` and reference it from a profile:
+
+```toml
+# credentials.toml (chmod 600) — the secrets
+[credentials.volc_account_a]
+api_key = "…"
+[credentials.volc_account_b]
+api_key = "op://vault/volc/account-b"   # a named credential may itself be a reference
+```
+
+A profile then selects one with `credential = "cred://volc_account_a"` (see below).
+`cred://<name>` is resolved through the same lazy machinery as any other reference,
+so the value is revealed only inside the adapter and redacted everywhere else.
 
 ## The `Secret` handle
 
@@ -88,20 +119,21 @@ image endpoint on account A and a video endpoint on account B — bind them with
 + a `credential` **reference**.
 
 Profiles live in `~/.config/media-ai/config.toml` (override `MEDIA_CONFIG_FILE`)
-and are **non-secret** — `credential` is a reference (`env://VAR`, `op://…`, a
-Vault path), never a raw key, so the file is safe to share/commit:
+and are **non-secret** — `credential` is a reference (`cred://<name>` for a named
+credential in `credentials.toml`, `env://VAR`, `op://…`, a Vault path), never a raw
+key, so the file is safe to share/commit:
 
 ```toml
 [profiles.prod_image]
 provider   = "volc"
 model      = "ep-image-A"
-credential = "env://ARK_ACCOUNT_A_KEY"
+credential = "cred://volc_account_a"     # → [credentials.volc_account_a]
 
 [profiles.prod_video]
 provider   = "volc"
 model      = "ep-video-B"
 base_url   = "https://ark.cn-beijing.volces.com/api/v3"
-credential = "env://ARK_ACCOUNT_B_KEY"
+credential = "cred://volc_account_b"
 ```
 
 Select one with `--provider-profile prod_video` (or `$MEDIA_PROFILE`); it applies
@@ -111,13 +143,34 @@ to `image`/`video`/`job`:
 media-ai video generate --provider-profile prod_video --prompt "…" --output v.mp4
 ```
 
+### Fallback: define more keys than you use
+
+`credential` may be an **ordered list** of references. At call time each is tried in
+order and the **first that resolves wins**, so you can provision extra keys and
+degrade gracefully when the preferred one is absent (rotated out, not present on this
+machine, …):
+
+```toml
+[profiles.prod_video_ha]
+provider   = "volc"
+model      = "ep-video-B"
+credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
+```
+
+A **single** reference is strict — an absent source is an error, never a silent jump
+to a different account's key. A **list** is the explicit opt-in to fall through: an
+*absent* source (unset env var, missing `[credentials.<name>]`) is skipped, but a
+genuine *misconfiguration* (unknown scheme, a `chmod`-refused credentials file, a
+reference cycle) is always surfaced rather than silently swallowed. If the whole list
+is exhausted, the error names every reference it tried.
+
 Precedence: explicit `--provider`/`--model` override the profile; a profile's
-`credential` reference is resolved first, and a **credential-less** profile falls
-back to the normal chain (so it still ends at `ARK_API_KEY`). The reference is
-resolved lazily and the value is redacted like any other secret — putting a raw key
-in a profile is refused (use `credentials.toml` for raw keys). Automatic
-endpoint→profile routing is intentionally omitted: credential selection is explicit
-so a call can't silently pick the wrong account's key.
+`credential` reference(s) are resolved first, and a **credential-less** profile falls
+back to the normal chain (so it still ends at `ARK_API_KEY`). References are resolved
+lazily and the value is redacted like any other secret — putting a raw key in a
+profile is refused (use `credentials.toml` for raw keys). Automatic endpoint→profile
+routing is intentionally omitted: credential selection is explicit so a call can't
+silently pick the wrong account's key.
 
 ## Redaction (defense in depth)
 
