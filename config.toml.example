@@ -7,7 +7,9 @@
 #
 # This file does NOT hold secrets. `credential` is a REFERENCE resolved lazily
 # through the same chain:
-#   cred://<name>   → a named credential in credentials.toml ([credentials.<name>])
+#   cred://<name>   → a named credential in credentials.toml, i.e. its [credentials.<name>]
+#                     block. <name> is matched EXACTLY (case-sensitive); it is just a
+#                     label — the key's provider comes from `provider =`, not the name.
 #   env://VAR       → an environment variable
 #   op://… , vault://… , arn:aws:secretsmanager:…  → a secret manager
 # Put RAW keys in credentials.toml (a raw key here is refused). That separation —
