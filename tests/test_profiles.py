@@ -125,3 +125,103 @@ def test_no_profile_is_backward_compatible(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "sk-plain")
     prov, model = registry.build(provider="volc", model="doubao-seedance-2-0-260128", modality=Modality.VIDEO)
     assert prov.credential().reveal() == "sk-plain" and model == "doubao-seedance-2-0-260128"
+
+
+# --------------------------------------------------------------------------
+# named credentials (cred://) + fallback lists
+# --------------------------------------------------------------------------
+
+NAMED_CONFIG = """
+[profiles.image_a]
+provider   = "volc"
+model      = "ep-image-A"
+credential = "cred://volc_account_a"
+
+[profiles.video_ha]
+provider   = "volc"
+model      = "ep-video-B"
+credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
+"""
+
+
+@pytest.fixture
+def named_setup(tmp_path, monkeypatch):
+    """A config.toml with cred:// profiles + a chmod-600 credentials.toml behind them."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(NAMED_CONFIG)
+    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(cfg))
+    creds = tmp_path / "credentials.toml"
+    creds.write_text(
+        '[volc_account_a]\napi_key = "key-account-a-111111"\n'  # flat account blocks
+        '[volc_account_b]\napi_key = "key-account-b-222222"\n'
+    )
+    creds.chmod(0o600)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(creds))
+    return tmp_path, creds
+
+
+def test_profile_resolves_named_account(named_setup):
+    prov, model = registry.build(profile="image_a", modality=Modality.IMAGE)
+    assert isinstance(prov, VolcProvider) and model == "ep-image-A"
+    cred = prov.credential()
+    assert cred.reveal() == "key-account-a-111111"
+    assert cred.source == "profile:image_a"
+
+
+def test_fallback_list_uses_first_that_resolves(named_setup):
+    # volc_account_b is present -> it wins even though later fallbacks also exist.
+    prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
+    assert prov.credential().reveal() == "key-account-b-222222"
+
+
+def test_fallback_list_skips_absent_and_uses_next(named_setup, monkeypatch):
+    # Drop the preferred named credential; the list should fall through to the next
+    # option that resolves (here the shared one, added below).
+    tmp_path, creds = named_setup
+    creds.write_text(
+        '[volc_account_a]\napi_key = "key-account-a-111111"\n'
+        '[volc_shared]\napi_key = "key-shared-333333"\n'  # account_b absent now
+    )
+    creds.chmod(0o600)
+    prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
+    assert prov.credential().reveal() == "key-shared-333333"  # skipped account_b -> shared
+
+
+def test_fallback_list_falls_through_to_env(named_setup, monkeypatch):
+    tmp_path, creds = named_setup
+    creds.write_text('[volc_account_a]\napi_key = "unused-111111"\n')  # b + shared absent
+    creds.chmod(0o600)
+    monkeypatch.setenv("ARK_API_KEY", "env-last-resort-444444")
+    prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
+    assert prov.credential().reveal() == "env-last-resort-444444"  # last list entry env://ARK_API_KEY
+
+
+def test_fallback_list_all_missing_raises_auth(named_setup, monkeypatch):
+    tmp_path, creds = named_setup
+    creds.write_text('[volc_account_a]\napi_key = "unused-111111"\n')  # nothing the list wants
+    creds.chmod(0o600)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    prov, _ = registry.build(profile="video_ha", modality=Modality.VIDEO)
+    with pytest.raises(MediaError) as ei:
+        prov.credential()
+    assert ei.value.category == ErrorCategory.AUTH
+    assert "none of the fallback credentials" in ei.value.message
+
+
+def test_single_named_credential_is_strict_when_absent(named_setup):
+    tmp_path, creds = named_setup
+    creds.write_text('[other]\napi_key = "x-111111"\n')  # image_a wants volc_account_a
+    creds.chmod(0o600)
+    prov, _ = registry.build(profile="image_a", modality=Modality.IMAGE)
+    with pytest.raises(MediaError) as ei:
+        prov.credential()  # a single reference is strict: no silent switch to another key
+    assert ei.value.category == ErrorCategory.AUTH
+
+
+def test_raw_key_anywhere_in_fallback_list_is_rejected(tmp_path, monkeypatch):
+    p = tmp_path / "config.toml"
+    p.write_text('[profiles.bad]\nprovider = "volc"\ncredential = ["cred://ok", "sk-raw-key-here"]\n')
+    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(p))
+    with pytest.raises(MediaError) as ei:
+        registry.build(profile="bad", modality=Modality.VIDEO)
+    assert ei.value.category == ErrorCategory.AUTH and "reference" in ei.value.message

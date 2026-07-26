@@ -25,8 +25,18 @@ ENV_VARS: dict[str, tuple[str, ...]] = {
 
 # Value prefixes that mark a credential as a *reference* to resolve (vs. a raw key).
 # Includes ``env://`` so an ``env://VAR`` written in credentials.toml resolves the env
-# var instead of being stored verbatim as the key. Kept in sync with resolve_reference().
-_REFERENCE_PREFIXES = ("env://", "op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
+# var instead of being stored verbatim as the key, and ``cred://`` so a profile can
+# reference an *account* ([<name>]) held in credentials.toml.
+# Kept in sync with resolve_reference() / _SECRET_BACKENDS.
+_REFERENCE_PREFIXES = ("env://", "cred://", "op://", "vault://", "gcp-sm://", "aws-sm://", "arn:aws:secretsmanager:")
+
+
+class _CredentialMiss(Exception):
+    """A reference's *source is simply absent* (an unset env var, a missing
+    ``[<name>]`` account block). Distinct from a genuine misconfiguration
+    (unknown scheme, refused file permissions, reference cycle): a miss is
+    silently skipped inside a fallback list, while a misconfiguration is always
+    surfaced. See :func:`try_resolve_reference`."""
 
 
 def broker_resolver(provider: str) -> Credential | None:
@@ -38,8 +48,9 @@ def broker_resolver(provider: str) -> Credential | None:
     return BrokeredHandle(provider=provider, endpoint=endpoint, token=token)
 
 
-def _config_value(provider: str) -> str | None:
-    """Read a provider's entry from ``~/.config/media-ai/credentials.toml``.
+def _read_credentials_toml() -> dict | None:
+    """Parse ``~/.config/media-ai/credentials.toml`` (override with
+    ``MEDIA_CREDENTIALS_FILE``), or return ``None`` when the file is absent.
 
     The file must not be world/group readable (``chmod 600``); a looser mode is
     refused rather than silently trusted.
@@ -57,9 +68,51 @@ def _config_value(provider: str) -> str | None:
         import tomllib  # py311+
     except ModuleNotFoundError:  # pragma: no cover
         return None
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    section = data.get(provider) or {}
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _section_key(section: object) -> str | None:
+    """Pull the ``api_key`` (or legacy ``key``) out of a credential table."""
+    if not isinstance(section, dict):
+        return None
     return section.get("api_key") or section.get("key")
+
+
+def _config_value(provider: str) -> str | None:
+    """A provider's **default** credential from credentials.toml — the account whose
+    name matches the provider (``[<provider>]``). credentials.toml is one flat
+    namespace of accounts, so a provider default is just an account named after the
+    provider; extra accounts are referenced from a profile as ``cred://<name>``.
+    """
+    data = _read_credentials_toml()
+    if data is None:
+        return None
+    return _section_key(data.get(provider))
+
+
+def _named_credential(name: str, *, _seen: frozenset[str] = frozenset()) -> str | None:
+    """Resolve an **account** ``[<name>]`` from credentials.toml to a plaintext value,
+    or ``None`` when no such block exists.
+
+    The stored ``api_key`` may itself be a reference (``op://…``, ``env://…``, even
+    another ``cred://…``), resolved recursively with a cycle guard. A *nested* absent
+    source raises :class:`_CredentialMiss` so a fallback list still skips it.
+    """
+    if name in _seen:
+        raise MediaError(f"circular credential reference at cred://{name}", category=ErrorCategory.AUTH)
+    data = _read_credentials_toml()
+    if data is None:
+        return None
+    raw = _section_key(data.get(name))
+    if not raw:
+        return None
+    if raw.startswith(_REFERENCE_PREFIXES):
+        scheme = raw.split("://", 1)[0] if "://" in raw else raw.split(":", 1)[0]
+        if scheme == "cred":
+            inner = raw.split("://", 1)[1] if "://" in raw else raw.split(":", 1)[1]
+            return _named_credential(inner, _seen=_seen | {name})
+        return _resolve_ref(raw)
+    return raw
 
 
 def secret_manager_resolver(provider: str) -> Credential | None:
@@ -79,13 +132,10 @@ def secret_manager_resolver(provider: str) -> Credential | None:
     return Secret(value, provider=provider, source="secret-manager")
 
 
-def resolve_reference(ref: str) -> str:
-    """Resolve a ``op://``/``vault://``/… reference to a plaintext value.
-
-    Backends are intentionally pluggable. Only ``env://VARNAME`` is built in (useful
-    for tests and CI); other schemes raise a deterministic, actionable error until a
-    backend is registered via :func:`register_secret_backend`.
-    """
+def _resolve_ref(ref: str) -> str:
+    """Dispatch a reference to its backend. Raises :class:`_CredentialMiss` when the
+    source is merely absent and :class:`MediaError` for a genuine misconfiguration
+    (unknown scheme). The public wrappers below decide how to treat a miss."""
     scheme = ref.split("://", 1)[0] if "://" in ref else ref.split(":", 1)[0]
     backend = _SECRET_BACKENDS.get(scheme)
     if backend is None:
@@ -97,18 +147,55 @@ def resolve_reference(ref: str) -> str:
     return backend(ref)
 
 
+def resolve_reference(ref: str) -> str:
+    """Resolve a ``cred://``/``env://``/``op://``/… reference to a plaintext value.
+
+    Strict: an absent source (unset env var, missing ``[<name>]`` account) is an
+    actionable error. ``cred://<name>`` resolves an *account* from credentials.toml;
+    ``env://VARNAME`` reads the environment; other schemes are
+    pluggable and raise until a backend is registered via
+    :func:`register_secret_backend`. Use :func:`try_resolve_reference` for
+    fall-through-on-miss behavior inside a credential fallback list.
+    """
+    try:
+        return _resolve_ref(ref)
+    except _CredentialMiss as miss:
+        raise MediaError(str(miss), category=ErrorCategory.AUTH) from None
+
+
+def try_resolve_reference(ref: str) -> str | None:
+    """Soft resolution for fallback lists: return the value, or ``None`` when the
+    source is simply **absent** (so the caller can try the next option). A genuine
+    misconfiguration — unknown scheme, a ``chmod``-refused credentials file, a
+    reference cycle — still raises, so a typo or security problem is never silently
+    swallowed."""
+    try:
+        return _resolve_ref(ref)
+    except _CredentialMiss:
+        return None
+
+
 def _env_backend(ref: str) -> str:
-    # Accept both env://VAR and env:VAR — resolve_reference() detects the scheme from
+    # Accept both env://VAR and env:VAR — _resolve_ref() detects the scheme from
     # whichever separator is present, so this backend must too (avoid an IndexError on
     # the bare-colon form).
     var = ref.split("://", 1)[1] if "://" in ref else ref.split(":", 1)[1]
     val = os.getenv(var)
     if not val:
-        raise MediaError(f"secret reference {ref} -> env {var} is unset", category=ErrorCategory.AUTH)
+        raise _CredentialMiss(f"secret reference {ref} -> env {var} is unset")
     return val
 
 
-_SECRET_BACKENDS: dict[str, "callable"] = {"env": _env_backend}
+def _cred_backend(ref: str) -> str:
+    # cred://<name> -> the account [<name>] in credentials.toml.
+    name = ref.split("://", 1)[1] if "://" in ref else ref.split(":", 1)[1]
+    val = _named_credential(name)
+    if not val:
+        raise _CredentialMiss(f"credential reference {ref} -> no [{name}] account in credentials.toml")
+    return val
+
+
+_SECRET_BACKENDS: dict[str, "callable"] = {"env": _env_backend, "cred": _cred_backend}
 
 
 def register_secret_backend(scheme: str, fn) -> None:
