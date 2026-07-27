@@ -125,3 +125,61 @@ def test_secret_never_appears_in_output(env, tmp_path):
                           capture_output=True, text=True, env=env)
     assert "LEAKY-SECRET" not in proc.stdout
     assert "LEAKY-SECRET" not in proc.stderr
+
+
+# --------------------------------------------- dispatch-level machine contract
+
+
+class TestDispatchHonoursTheContract:
+    """The Agent Skills tell callers every command prints exactly one JSON object.
+    Dispatch-level mistakes used to exit non-zero with an empty stdout, so an agent
+    that mistyped a group got nothing parseable and no way to find out why."""
+
+    @staticmethod
+    def run(*argv):
+        import json
+        import subprocess
+        import sys
+
+        res = subprocess.run([sys.executable, "-m", "media_ai", *argv],
+                             capture_output=True, text=True, timeout=60)
+        try:
+            return res, json.loads(res.stdout)
+        except json.JSONDecodeError:
+            return res, None  # --help is deliberately human text
+
+    def test_unknown_group_emits_the_error_contract(self):
+        res, out = self.run("definitely-not-a-group")
+        assert res.returncode == 2
+        assert out is not None and out["ok"] is False
+        assert out["error"]["category"] == "cli"
+
+    def test_unknown_group_stdout_is_exactly_one_line(self):
+        res, _ = self.run("definitely-not-a-group")
+        assert len(res.stdout.strip().splitlines()) == 1
+
+    def test_unknown_group_names_the_valid_groups_on_stderr(self):
+        res, _ = self.run("definitely-not-a-group")
+        assert "image" in res.stderr and "capabilities" in res.stderr
+
+    def test_no_arguments_emits_the_error_contract(self):
+        res, out = self.run()
+        assert res.returncode == 2
+        assert out is not None and out["ok"] is False
+
+    def test_help_stays_human_and_zero(self):
+        """--help is a request, not a mistake — the one deliberate exemption."""
+        res, _ = self.run("--help")
+        assert res.returncode == 0
+        assert res.stdout.startswith("usage:")
+
+    def test_help_short_form_matches(self):
+        res, _ = self.run("-h")
+        assert res.returncode == 0 and res.stdout.startswith("usage:")
+
+    def test_every_group_is_reachable(self):
+        from media_ai.__main__ import _GROUPS
+
+        for group in _GROUPS:
+            res, _ = self.run(group, "--help")
+            assert res.returncode == 0, f"{group} --help failed: {res.stderr[:200]}"

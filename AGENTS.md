@@ -32,7 +32,7 @@ A provider-agnostic **core**, a thin per-provider **adapter** layer, and a thin 
 ## Machine contract (do not break casually)
 
 - **stdout = exactly one JSON object**, for success *and* failure. Success carries `artifacts[]` + `usage` + `meta` (+ compat aliases `path`/`extra_paths`/`bytes`). Failure is `{"ok": false, "error": {...}}`. Human logs go to **stderr only**.
-- **Exit code = error category.** `MediaError` has a `category` → `exit_code` map (`core/errors.py`): `2` CLI · `3` validation/unsupported · `4` auth · `5` rate-limit · `6` provider · `7` timeout · `8` safety · `9` not-found. `cli/common.py::run()` wraps every command to enforce this; make new commands go through `run()`.
+- **Exit code = error category.** `MediaError` has a `category` → `exit_code` map (`core/errors.py`): `2` CLI · `3` validation/unsupported · `4` auth · `5` rate-limit · `6` provider · `7` timeout · `8` safety · `9` not-found · `1` io/unknown. `cli/common.py::run()` wraps every command to enforce this; make new commands go through `run()`.
 - **Result JSON carries `schema_version`.** Bump it in `core/result.py` if you change the shape incompatibly.
 
 ## Credentials & secrets (trust boundary)
