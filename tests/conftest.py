@@ -66,8 +66,10 @@ def fake_provider(monkeypatch):
     """Return a factory: ``make(ProviderClass, responses) -> (provider, fake_client)``
     with the provider's HTTP layer replaced by a recording FakeClient."""
 
-    def make(provider_cls, responses):
-        prov = provider_cls()
+    def make(provider_cls, responses, **kwargs):
+        # kwargs reach the adapter's constructor (e.g. config={"endpoints": {…}}) so a
+        # test can vary configuration without hand-rolling the HTTP stub.
+        prov = provider_cls(**kwargs)
         fake = FakeClient(responses)
         monkeypatch.setattr(prov, "_prepare", lambda **kw: (fake, {"Authorization": "Bearer test"}))
         return prov, fake

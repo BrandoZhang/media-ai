@@ -56,6 +56,25 @@ Model resolution, most specific first: `--model` → the active profile's `model
 adapter's built-in default. Unknown keys are ignored, so a newer config stays
 readable by an older CLI.
 
+**Deployment ids: map them to the model behind them.** Some backends address a model
+by an id naming a *deployment* rather than the model — an Ark custom endpoint
+(`ep-2026…-zrbtw`) is the common case. Such an id carries no capability information,
+so without a mapping the CLI must fail open and let the API be the authority: it
+cannot tell you whether that endpoint supports image editing. Map it and it can:
+
+```toml
+[providers.volc]
+image_model = "ep-2026…-img"
+
+[providers.volc.endpoints]
+"ep-2026…-img" = "doubao-seedream-4-5-251128"
+```
+
+Everything known about the backing model — operations, geometry limits, options —
+then applies to the endpoint, and `media-ai capabilities` reports it. **The wire
+request keeps using the `ep-` id**, which is the only name the API accepts. This
+works for any provider addressed by deployment id, not just Ark.
+
 **Precedence when the same provider is set in more than one place:** broker →
 secret-manager reference → OS keychain → **`credentials.toml`** → **`.env`/env** (see
 the chain below). So if a key is in *both* `credentials.toml` and `.env`,

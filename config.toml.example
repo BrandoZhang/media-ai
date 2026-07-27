@@ -66,6 +66,23 @@ credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"
 # image_model = "ep-2026...-img"
 # video_model = "ep-2026...-vid"
 
+# An endpoint id names a DEPLOYMENT, not a model — `ep-2026…-zrbtw` says nothing
+# about what it can do. Map it to the model it actually serves and everything the
+# CLI knows about that model (which operations, geometry limits, options) applies
+# to the endpoint. Without a mapping the CLI has to fail open and let the API be
+# the authority, so e.g. "does this endpoint support image editing?" can only be
+# answered by trying it.
+#
+# The wire request still uses the ep- id, which is the only name Ark accepts.
+# [providers.volc.endpoints]
+# "ep-2026...-img" = "doubao-seedream-4-5-251128"
+# "ep-2026...-vid" = "doubao-seedance-2-0-260128"
+#
+# Any provider addressed by deployment id works the same way (Azure-style
+# deployments, a gateway that renames models):
+# [providers.openai.endpoints]
+# "my-image-deployment" = "gpt-image-2"
+
 # [providers.openai]
 # image_model = "gpt-image-1.5"                 # also gpt-image-2 / -1 / -1-mini
 

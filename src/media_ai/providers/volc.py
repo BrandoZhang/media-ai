@@ -16,6 +16,7 @@ import base64
 import os
 import signal
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
@@ -61,6 +62,11 @@ class VolcProvider(HttpProvider):
         return model.lower().startswith("ep-")
 
     def _is_video_model(self, model: str, modality: Modality | None = None) -> bool:
+        # A mapped endpoint is classified by the model it actually serves, so the
+        # answer no longer depends on what the caller happened to ask for.
+        backing = self.backing_model(model)
+        if backing != model:
+            return "seedance" in backing.lower() or backing == self.video_model
         # Trust the modality the command declared; only guess from the name during
         # discovery (modality is None), which is best-effort.
         if modality is not None:
@@ -69,15 +75,31 @@ class VolcProvider(HttpProvider):
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        # For an opaque endpoint ID we can't know the underlying model version, so
-        # leave geometry unconstrained and let the Ark API be the authority rather
-        # than pre-rejecting a valid request (fail open, not closed).
-        endpoint = self._is_endpoint(model)
+        # An endpoint id names a *deployment*, not a model, so it carries no capability
+        # information of its own. If the user mapped it (see Provider.backing_model)
+        # the real model's constraints apply; otherwise we can't know the underlying
+        # version, so leave geometry unconstrained and let the Ark API be the authority
+        # rather than pre-rejecting a valid request (fail open, not closed).
+        backing = self.backing_model(model)
+        endpoint = self._is_endpoint(model) and backing == model
         note = (
             "custom endpoint ID: modality is taken from the requested command and "
             "geometry is validated by the Ark API, not pre-checked"
             if endpoint else None
         )
+        if backing != model:
+            # Report the id the caller used and the API expects, but describe the
+            # model behind it.
+            # Classify by the real model *name*, not the requested modality: the whole
+            # point of the mapping is that we no longer have to take the caller's word
+            # for what an opaque id can do.
+            resolved = self._capabilities_for(backing, None)
+            return replace(resolved, model=model, notes=resolved.notes + (f"custom endpoint for {backing}",))
+        return self._capabilities_for(model, modality, endpoint=endpoint, note=note)
+
+    def _capabilities_for(
+        self, model: str, modality: Modality | None = None, *, endpoint: bool = False, note: str | None = None
+    ) -> ModelCapabilities:
         if self._is_video_model(model, modality):
             return ModelCapabilities(
                 provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),

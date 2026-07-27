@@ -48,6 +48,37 @@ class Provider:
         """Resolve this provider's credential (re-resolved per call for rotation)."""
         return self._credentials.resolve(self.name)
 
+    # ---- model aliases ---------------------------------------------------
+    def backing_model(self, model: str | None) -> str | None:
+        """The real model behind an opaque deployment id, per ``[providers.<name>.endpoints]``.
+
+        Some backends address a model by an id that names a *deployment* rather than
+        the model itself — Ark custom inference endpoints (``ep-2026…-zrbtw``) are the
+        motivating case, and Azure-style deployments behave the same way. Such an id
+        carries no capability information, so without a mapping the CLI has to fail
+        open and let the API be the authority.
+
+        Users map the id to the model it actually serves::
+
+            [providers.volc.endpoints]
+            "ep-2026…-img" = "doubao-seedream-4-5-251128"
+
+        and everything the CLI knows about that model — operations, geometry limits,
+        options — applies to the endpoint. Capability lookups resolve through this;
+        **the wire request must keep using the original id**, which is the only name
+        the API accepts.
+
+        Returns ``model`` unchanged when no mapping exists, preserving today's
+        fail-open behaviour.
+        """
+        if not model:
+            return model
+        endpoints = self.config.get("endpoints")
+        if not isinstance(endpoints, dict):
+            return model
+        target = endpoints.get(model)
+        return target if isinstance(target, str) and target else model
+
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError

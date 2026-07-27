@@ -77,12 +77,30 @@ def _fmt_value(value: object, *, where: str) -> str:
     raise TomlWriteError(f"{where}: unsupported value type {type(value).__name__}")
 
 
-def dumps(data: dict, *, header: str | None = None) -> str:
-    """Serialize ``{table: {key: value}}`` to TOML.
+def _emit_table(path: list[str], body: dict, lines: list[str]) -> None:
+    """Emit ``[a.b.c]`` and its contents, recursing into sub-tables.
 
-    Values may be ``str``, ``bool``, ``int``, or ``list[str]``. Top-level scalars and
-    nesting deeper than one table level are rejected — neither appears in the files
-    this writes, and silently mangling them would be worse than refusing.
+    Scalars are emitted before any sub-table header. TOML assigns every key after a
+    ``[a.b]`` line to ``a.b``, so a scalar written later would silently land in the
+    sub-table instead of its own — a corruption that still parses.
+    """
+    dotted = ".".join(_fmt_key(p) for p in path)
+    lines.append(f"[{dotted}]")
+    where = ".".join(path)
+    scalars = {k: v for k, v in body.items() if not isinstance(v, dict)}
+    subtables = {k: v for k, v in body.items() if isinstance(v, dict)}
+    for key, value in scalars.items():
+        lines.append(f"{_fmt_key(key)} = {_fmt_value(value, where=f'{where}.{key}')}")
+    for key, sub in subtables.items():
+        _emit_table([*path, key], sub, lines)
+
+
+def dumps(data: dict, *, header: str | None = None) -> str:
+    """Serialize nested tables to TOML.
+
+    Values may be ``str``, ``bool``, ``int``, or ``list[str]``; tables nest to any
+    depth. Bare top-level scalars are rejected — they do not appear in the files this
+    writes, and silently mangling one would be worse than refusing it.
 
     ``header`` is emitted as leading ``#`` comment lines.
     """
@@ -99,21 +117,7 @@ def dumps(data: dict, *, header: str | None = None) -> str:
             raise TomlWriteError(
                 f"top-level key {table!r} must map to a table; bare top-level values are not supported"
             )
-        lines.append(f"[{_fmt_key(table)}]")
-        # Scalars must all precede sub-table headers: everything after a `[a.b]` line
-        # belongs to `a.b`, so a scalar emitted later would silently land in the
-        # sub-table instead of its own.
-        scalars = {k: v for k, v in body.items() if not isinstance(v, dict)}
-        subtables = {k: v for k, v in body.items() if isinstance(v, dict)}
-        for key, value in scalars.items():
-            lines.append(f"{_fmt_key(key)} = {_fmt_value(value, where=f'{table}.{key}')}")
-        for key, sub in subtables.items():
-            # One level of nesting: [profiles.prod] under a "profiles" table.
-            lines.append(f"[{_fmt_key(table)}.{_fmt_key(key)}]")
-            for sub_key, sub_value in sub.items():
-                if isinstance(sub_value, dict):
-                    raise TomlWriteError(f"{table}.{key}.{sub_key}: nesting deeper than two levels is not supported")
-                lines.append(f"{_fmt_key(sub_key)} = {_fmt_value(sub_value, where=f'{table}.{key}.{sub_key}')}")
+        _emit_table([table], body, lines)
         lines.append("")
 
     return "\n".join(lines).rstrip("\n") + "\n"

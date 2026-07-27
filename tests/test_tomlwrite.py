@@ -83,9 +83,33 @@ def test_scalars_before_subtables_regardless_of_insertion_order():
     assert roundtrip(data) == data
 
 
-def test_rejects_three_level_nesting():
-    with pytest.raises(TomlWriteError):
-        dumps({"a": {"b": {"c": {"d": "too deep"}}}})
+def test_three_level_nesting_roundtrips():
+    """[providers.volc.endpoints] — endpoint id -> the real model behind it."""
+    data = {
+        "providers": {
+            "volc": {
+                "image_model": "ep-2026-img",
+                "endpoints": {"ep-2026-img": "doubao-seedream-4-5-251128"},
+            }
+        }
+    }
+    assert roundtrip(data) == data
+
+
+def test_deep_nesting_roundtrips():
+    data = {"a": {"b": {"c": {"d": {"e": "deep"}}}}}
+    assert roundtrip(data) == data
+
+
+def test_scalar_before_subtable_at_every_level():
+    data = {"a": {"x": "1", "b": {"y": "2", "c": {"z": "3"}}}}
+    assert roundtrip(data) == data
+
+
+def test_dotted_endpoint_keys_are_quoted():
+    """Ark endpoint ids are safe, but a key with a dot must not split the table path."""
+    data = {"providers": {"volc": {"endpoints": {"ep.with.dots": "doubao-seedream-4-5-251128"}}}}
+    assert roundtrip(data) == data
 
 
 def test_table_name_needing_quotes():
