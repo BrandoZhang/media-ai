@@ -14,7 +14,7 @@ set -euo pipefail
 
 REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 # Fallback when the releases API is unreachable or rate-limited. Bump on release.
-DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-main}"
+DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.2.0}"
 
 main() {
   local version="" skills_dest="" do_init=1 dry_run=0
