@@ -359,3 +359,65 @@ class TestProbeClassification:
 
         monkeypatch.setitem(verify_mod._PROBES, "boom", lambda: (_ for _ in ()).throw(RuntimeError("kaboom")))
         assert verify_mod.probe("boom") == "unreachable"
+
+
+# ------------------------------------------------------- model lifecycle in the UI
+
+
+class TestModelChoicesSurfaceLifecycle:
+    """Discovery still lists deprecated and preview models — withholding them would be
+    worse — so anything offering a model to a human must label it. A user picking a
+    superseded model on setup day should not find out months later."""
+
+    @staticmethod
+    def hints(provider, group):
+        from media_ai.cli.init import _models_for
+
+        return {o.label: o.hint for o in _models_for(provider, group)}
+
+    def test_deprecated_model_is_labelled_with_its_replacement(self):
+        hint = self.hints("gemini", "image")["gemini-2.5-flash-image"]
+        assert "deprecated" in hint and "gemini-3.1-flash-image" in hint
+
+    def test_preview_model_is_labelled(self):
+        assert all("preview" in h for h in self.hints("gemini", "video").values())
+
+    def test_unverified_model_says_so(self):
+        assert "never live-tested" in self.hints("gemini", "video")["veo-3.1-generate-preview"]
+
+    def test_verified_model_shows_its_date(self):
+        assert "2026-07-12" in self.hints("gemini", "image")["gemini-3.1-flash-image"]
+
+    def test_every_candidate_carries_a_hint(self):
+        """A blank hint would render as an unqualified recommendation."""
+        for provider, group in (("gemini", "image"), ("gemini", "video"), ("openai", "image")):
+            for label, hint in self.hints(provider, group).items():
+                assert hint, f"{provider}/{group}:{label} offered with no lifecycle hint"
+
+    def test_current_and_verified_sort_ahead_of_deprecated(self):
+        from media_ai.cli.init import _models_for
+
+        labels = [o.label for o in _models_for("gemini", "image")]
+        assert labels[0] == "gemini-3.1-flash-image"
+        assert labels[-1] == "gemini-2.5-flash-image"
+
+    def test_removed_models_are_never_offered(self):
+        from media_ai.cli.init import _models_for
+
+        for group in ("image", "video"):
+            labels = {o.label for o in _models_for("openai", group)} | {
+                o.label for o in _models_for("gemini", group)
+            }
+            assert not any(x in labels for x in ("dall-e-3", "sora", "imagen-3.0-generate-002"))
+
+    def test_options_carry_the_id_as_their_value(self):
+        """The wizard writes Option.value into config; a mismatch would write a label."""
+        from media_ai.cli.init import _models_for
+
+        for o in _models_for("gemini", "image"):
+            assert o.value == o.label
+
+    def test_unknown_provider_degrades_to_free_text(self):
+        from media_ai.cli.init import _models_for
+
+        assert _models_for("nonexistent-provider", "image") == []

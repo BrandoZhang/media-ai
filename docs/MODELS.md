@@ -35,12 +35,19 @@ durations, option names. Everything shared stays in the adapter, which assembles
 |---|---|---|---|
 | `ga` | yes | yes | yes |
 | `preview` | yes | yes (`experimental: true`) | yes |
-| `deprecated` | usually not (`discoverable=False`) | **yes** | yes |
+| `deprecated` | `discoverable` decides — some are still listed | **yes** | yes |
 | `removed` | no | no — raises, naming the replacement | no |
 
 Deprecated deliberately still describes itself: planning a migration off a model means
 inspecting it. Removed refuses, in both `capabilities()` and the generate path, so
 discovery and execution can never disagree about whether a model exists.
+
+`discoverable` is independent of `status`. A deprecated model may still be listed —
+`gemini-2.5-flash-image` is, because it was before and withdrawing it from discovery
+would be a behaviour change. Anything that *offers* models to a human must therefore
+show `status`, not assume discovery already filtered: `media-ai init` labels each
+candidate `deprecated → <replacement>` or `preview`, and sorts current-and-verified
+first.
 
 Retiring a model is an edit here, not a new branch in a capability method — and a test
 enforces that anything `deprecated` or `removed` names a `replacement`, so a retirement

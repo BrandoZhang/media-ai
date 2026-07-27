@@ -229,19 +229,47 @@ def _collect_credentials(providers: dict[str, list[str]], prompter) -> dict[str,
 # --------------------------------------------------------------------- models
 
 
-def _models_for(provider: str, group: str) -> list[str]:
-    """Candidate model ids a provider offers for a skill group."""
+def _model_hint(caps) -> str:
+    """What a user needs to know before making this model their default.
+
+    Discovery lists deprecated and preview models — they are still callable, and
+    withholding them would be worse. But offering one unlabelled means someone picks
+    a superseded model on setup day and finds out months later.
+    """
+    bits = []
+    if caps.status == "deprecated":
+        bits.append(f"deprecated → {caps.replacement}" if caps.replacement else "deprecated")
+    elif caps.status == "preview":
+        bits.append("preview")
+    bits.append(f"verified {caps.verified}" if caps.verified else "never live-tested")
+    return " · ".join(bits)
+
+
+def _rank(caps) -> tuple:
+    """Sort key: current before preview before deprecated, verified before not."""
+    order = {"ga": 0, "preview": 1, "deprecated": 2, "removed": 3}
+    return (order.get(caps.status, 9), 0 if caps.verified else 1)
+
+
+def _models_for(provider: str, group: str) -> list[Option]:
+    """Candidate models for a skill group, labelled with lifecycle and provenance.
+
+    Returns Options rather than bare ids so the caller cannot show one without its
+    status — the catalogue knowing a model is deprecated is no use if the wizard
+    that sets it as a default does not say so.
+    """
     try:
         prov = registry.get_provider(provider)
         wanted = {op for op in Operation if op.value.split(".", 1)[0] == group}
-        out = []
+        found = []
         for model in prov.models():
             caps = prov.capabilities(model)
             for block in (caps.image, caps.video, caps.audio):
                 if block is not None and block.operations & wanted:
-                    out.append(model)
+                    found.append(caps)
                     break
-        return out
+        found.sort(key=_rank)
+        return [Option(label=c.model, hint=_model_hint(c), value=c.model) for c in found]
     except Exception:  # noqa: BLE001 - discovery is best-effort; free text still works
         return []
 
@@ -272,9 +300,9 @@ def _configure_volc_endpoints(groups: set[str], prompter) -> dict:
                     idx = prompter.select(
                         f"  which model does {model} serve?\n"
                         "  (this is what lets the CLI know its capabilities)",
-                        [Option(c) for c in candidates],
+                        candidates,
                     )
-                    endpoints[model] = candidates[idx]
+                    endpoints[model] = candidates[idx].value
     if endpoints:
         table["endpoints"] = endpoints
     return table
@@ -301,8 +329,8 @@ def _configure_models(providers: list[str], groups: set[str], prompter, *, advan
                 candidates = _models_for(provider, group)
                 if not candidates:
                     continue
-                idx = prompter.select(f"{provider} — model for {label}", [Option(c) for c in candidates])
-                table[key] = candidates[idx]
+                idx = prompter.select(f"{provider} — model for {label}", candidates)
+                table[key] = candidates[idx].value
         if table:
             out[provider] = table
     return out
