@@ -26,7 +26,7 @@ from ..core.result import SCHEMA_VERSION
 from ..core.types import Operation
 from ..credentials import stores
 from ..credentials.profile import config_path
-from ..credentials.tomlwrite import dumps, write_private, write_public
+from ..credentials.tomlwrite import atomic_write, dumps, write_private, write_public
 from . import common
 from ._announce import announcements
 from ._discovery import (
@@ -92,14 +92,21 @@ def _load(path: Path) -> dict:
 
 def _backup(path: Path) -> Path | None:
     """Copy a file aside before rewriting it. Comments are not preserved by the
-    writer, so the original is the only record of anything hand-written."""
+    writer, so the original is the only record of anything hand-written.
+
+    Created at the *source file's* mode from the start rather than written and then
+    chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
+    order leaves them in a world-readable file for as long as the write takes — and
+    permanently if the process dies in between. Same reasoning as
+    ``tomlwrite.atomic_write``, which is what does the work here.
+    """
     if not path.is_file():
         return None
+    mode = path.stat().st_mode & 0o777
     for n in range(1, 1000):
         candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
         if not candidate.exists():
-            candidate.write_bytes(path.read_bytes())
-            os.chmod(candidate, path.stat().st_mode & 0o777)
+            atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
             return candidate
     raise MediaError(f"too many backups beside {path}", category=ErrorCategory.CLI)
 
@@ -199,7 +206,7 @@ def _preselected_dests(choices: list[Option]) -> list[int]:
     return existing or ([0] if choices else [])
 
 
-def _plan_installs(skills: list[str], dests: list[Path], prompter) -> list[dict]:
+def _plan_installs(skills: list[str], dests: list[Path], prompter, *, unattended: bool = False) -> list[dict]:
     """Decide what will be written where. Asks about collisions; **writes nothing**.
 
     Split from the writing so that every question in the wizard is answered before
@@ -209,8 +216,14 @@ def _plan_installs(skills: list[str], dests: list[Path], prompter) -> list[dict]
     A copy that already matches the packaged skill is neither written nor asked about.
     That is what makes a second ``install.sh`` quiet: nothing has changed, so there is
     nothing to decide.
+
+    ``unattended`` takes the default for the one question that survives that — an
+    edited copy is updated. Without it a CI upgrade that changed a packaged SKILL.md
+    would stop on a prompt nothing can answer, which is the rule ``--non-interactive``
+    exists to prevent.
     """
-    overwrite_all = skip_all = False
+    overwrite_all = unattended
+    skip_all = False
     plan = []
     for dest in dests:
         install, write, skipped = [], [], []
@@ -323,6 +336,14 @@ def _rank(caps) -> tuple:
     return (order.get(caps.status, 9), 0 if caps.verified else 1)
 
 
+# Groups whose models are *not* the ids `models()` enumerates. ElevenLabs runs music
+# and sound effects on their own models and declares them in dedicated capability
+# fields, while lumping every audio operation into one `AudioCaps.operations` — so
+# matching on the operation set alone would offer TTS ids as the music default, and
+# the wizard would write one into config for `music generate` to fail on.
+_MODEL_FIELDS = {"music": "music_models", "sound": "sound_models"}
+
+
 def _models_for(provider: str, group: str) -> list[Option]:
     """Candidate models for a skill group, labelled with lifecycle and provenance.
 
@@ -333,13 +354,21 @@ def _models_for(provider: str, group: str) -> list[Option]:
     try:
         prov = registry.get_provider(provider)
         wanted = {op for op in Operation if op.value.split(".", 1)[0] == group}
-        found = []
+        field_name = _MODEL_FIELDS.get(group)
+        found, declared = [], []
         for model in prov.models():
             caps = prov.capabilities(model)
             for block in (caps.image, caps.video, caps.audio):
-                if block is not None and block.operations & wanted:
-                    found.append(caps)
-                    break
+                if block is None or not block.operations & wanted:
+                    continue
+                declared += list(getattr(block, field_name, ()) or ()) if field_name else []
+                found.append(caps)
+                break
+        if field_name and declared:
+            # These ids are not in `models()`, so there is no ModelCapabilities to
+            # label them with — say where they came from instead of nothing.
+            seen = dict.fromkeys(declared)
+            return [Option(label=m, hint=f"{provider} {group} model", value=m) for m in seen]
         found.sort(key=_rank)
         return [Option(label=c.model, hint=_model_hint(c), value=c.model) for c in found]
     except Exception:  # noqa: BLE001 - discovery is best-effort; free text still works
@@ -422,6 +451,13 @@ class _Answers:
     The wizard is two halves: fill this in, then apply it. Keeping them apart is what
     lets a step be re-run — which is what "go back" is — and what keeps Ctrl-C from
     leaving half a configuration behind.
+
+    **Every step clears the fields it owns before it does anything else**, including
+    on the paths where it decides it has nothing to ask. Re-running a step otherwise
+    leaves the previous run's answer behind: go back and deselect a provider, and the
+    key typed for it would still be written — or, worse, ``providers`` would name a
+    provider that ``needed`` no longer has, and the next step would die on a KeyError
+    holding every answer the user had just given.
     """
 
     skills: list[str] = field(default_factory=list)
@@ -431,6 +467,7 @@ class _Answers:
     providers: list[str] = field(default_factory=list)
     creds: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
+    verify: dict[str, bool] = field(default_factory=dict)
 
 
 def _wizard(args, prompter) -> dict:
@@ -458,12 +495,13 @@ def _wizard(args, prompter) -> dict:
             lambda: _ask_providers(args, prompter, answers),
             lambda: _ask_credentials(args, prompter, answers),
             lambda: _ask_models(args, prompter, answers),
+            lambda: _ask_verify(args, prompter, answers),
         ],
         prompter,
     )
     _apply(args, answers, summary)
-    if args.verify and answers.creds:
-        summary["verified"] = _verify(sorted(answers.creds), prompter)
+    if answers.verify:
+        summary["verified"] = _probe_keys(answers.verify, prompter)
     _report(summary, prompter)
     return summary
 
@@ -472,6 +510,7 @@ def _wizard(args, prompter) -> dict:
 
 
 def _ask_skills(args, prompter, answers: _Answers) -> None:
+    answers.skills = []
     # --non-interactive means "take the defaults, ask nothing" — it has to hold for
     # every question below, or an unattended run blocks on a prompt it cannot answer.
     if args.non_interactive:
@@ -491,6 +530,7 @@ def _ask_skills(args, prompter, answers: _Answers) -> None:
 
 
 def _ask_dests(args, prompter, answers: _Answers) -> None:
+    answers.dests = []
     if args.skills_dest:
         answers.dests = [Path(args.skills_dest).expanduser().resolve()]
         return
@@ -512,10 +552,15 @@ def _ask_dests(args, prompter, answers: _Answers) -> None:
 
 
 def _ask_collisions(args, prompter, answers: _Answers) -> None:
-    answers.plan = _plan_installs(answers.skills, answers.dests, prompter) if answers.dests else []
+    answers.plan = []
+    if answers.dests:
+        answers.plan = _plan_installs(
+            answers.skills, answers.dests, prompter, unattended=args.non_interactive
+        )
 
 
 def _ask_providers(args, prompter, answers: _Answers) -> None:
+    answers.needed, answers.providers = {}, []
     if args.skills_only or args.non_interactive:
         # Credentials are never collected unattended: there is nothing sensible to
         # default a key to, and guessing one would be worse than stopping here.
@@ -536,17 +581,36 @@ def _ask_providers(args, prompter, answers: _Answers) -> None:
 
 
 def _ask_credentials(args, prompter, answers: _Answers) -> None:
+    answers.creds = {}
     if not answers.providers:
         return
     answers.creds = _collect_credentials({p: answers.needed[p] for p in answers.providers}, prompter)
 
 
 def _ask_models(args, prompter, answers: _Answers) -> None:
+    answers.models = {}
     if not answers.providers:
         return
     answers.models = _configure_models(
         answers.providers, _groups_for(answers.skills), prompter, advanced=args.advanced
     )
+
+
+def _ask_verify(args, prompter, answers: _Answers) -> None:
+    """Decide *whether* to probe each key. The probing itself happens after the apply.
+
+    Asked here rather than beside the probe so the rule holds without an exception:
+    a question after the writes have happened would make "cancelled; nothing was
+    written" a lie, and an Esc there would escape the step driver entirely.
+    """
+    answers.verify = {}
+    if not args.verify:
+        return
+    for provider in sorted(answers.creds):
+        answers.verify[provider] = provider != "openai" or prompter.confirm(
+            "openai has no free probe — verifying costs one small image generation. Verify it?",
+            default=False,
+        )
 
 
 # -- and then the doing ----------------------------------------------------
@@ -573,15 +637,23 @@ def _merge_write(path: Path, data: dict, writer, header: str, args, summary: dic
     The "only if" matters for re-runs: without it, answering the same questions a
     second time leaves a second ``credentials.toml.bak`` — a copy of the same keys,
     under a name nobody will remember to delete.
+
+    The *write* still happens either way, because it is what sets the mode: the
+    resolver refuses a group- or world-readable ``credentials.toml``, and re-running
+    the wizard is the obvious way to fix one. Skipping the write for identical content
+    would leave that broken with no way back short of a manual ``chmod``. The content
+    is unchanged, so the file is not — only its permissions can be.
     """
     text = dumps(data, header=header)
-    summary["wrote"].append(str(path))
-    if args.dry_run or _unchanged(path, text):
+    if args.dry_run:
+        summary["wrote"].append(str(path))  # nothing happened; `dry_run: true` says so
         return
-    backup = _backup(path)
-    if backup:
-        summary["backed_up"].append(str(backup))
+    if not _unchanged(path, text):
+        backup = _backup(path)
+        if backup:
+            summary["backed_up"].append(str(backup))
     writer(path, text)
+    summary["wrote"].append(str(path))
 
 
 def _unchanged(path: Path, text: str) -> bool:
@@ -591,20 +663,14 @@ def _unchanged(path: Path, text: str) -> bool:
         return False
 
 
-def _verify(providers: list[str], prompter) -> dict:
-    """Probe each configured key. Off by default — one provider has no free probe."""
+def _probe_keys(wanted: dict[str, bool], prompter) -> dict:
+    """Probe each key the user agreed to check. Asks nothing — that already happened."""
     from ._verify import probe
 
     out = {}
-    for provider in providers:
-        if provider == "openai" and not prompter.confirm(
-            "openai has no free probe — verifying costs one small image generation. Verify it?",
-            default=False,
-        ):
-            out[provider] = "skipped"
-            continue
-        out[provider] = probe(provider)
-        prompter.note(f"  {provider}: {out[provider]}")
+    for provider, agreed in sorted(wanted.items()):
+        out[provider] = probe(provider) if agreed else "skipped"
+        prompter.note(f"{provider}: {out[provider]}")
     return out
 
 

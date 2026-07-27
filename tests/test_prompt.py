@@ -186,6 +186,18 @@ class TestGlyphFallbacks:
     def test_utf8_terminals_get_the_real_symbols(self):
         assert glyphs_for(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) is UNICODE
 
+    def test_a_narrow_terminal_never_overflows_the_box(self, monkeypatch):
+        """An overflowing row wraps onto two physical lines while `_emit` counts one,
+        and every later `rewind` then erases the wrong rows."""
+        import shutil as sh
+
+        for columns in (20, 40, 80):
+            monkeypatch.setattr(sh, "get_terminal_size", lambda *_a, c=columns: os.terminal_size((c, 24)))
+            p, out = drawing()
+            p.box("Heads up", "a message long enough to need wrapping at any of these widths " * 3)
+            for line in plain(out.getvalue()).splitlines():
+                assert _display_width(line) <= columns, f"{columns}-column box emitted a {len(line)}-column row"
+
     def test_the_fallback_can_be_forced(self, monkeypatch):
         monkeypatch.setenv("MEDIA_ASCII", "1")
         assert glyphs_for(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) is ASCII
@@ -285,6 +297,14 @@ class TestRunSteps:
         with pytest.raises(Cancelled):
             run_steps([self.asking("a", [], p)], p)
 
+    def test_it_only_needs_what_the_protocol_promises(self):
+        """`run_steps` calls mark/rewind on whatever it is handed, so they are part of
+        the contract — not just something the three built-in prompters happen to have."""
+        from media_ai.cli._prompt import Prompter
+
+        for name in ("mark", "rewind", "questions"):
+            assert name in Prompter.__annotations__ or hasattr(Prompter, name), f"Prompter is missing {name}"
+
     def test_steps_that_never_go_back_run_once_each(self):
         p = ScriptedPrompter([0, 0, 0])
         calls = []
@@ -350,6 +370,23 @@ def test_fallback_back_token(typed):
     """No keypresses to intercept here, so going back is a word you can type."""
     with pytest.raises(GoBack):
         fallback(f"{typed}\n").select("pick", ["a", "b"])
+
+
+@pytest.mark.parametrize("typed", ["b", "B", " Back ", "<"])
+def test_the_back_token_means_the_same_on_every_prompter(typed):
+    """It was matched case-sensitively on a terminal and lowercased in the fallback,
+    so `Back` navigated under a pipe and became a literal answer on a tty — where it
+    would be written to disk as a path or an environment variable name."""
+    from media_ai.cli._prompt import is_back
+
+    assert is_back(typed)
+
+
+@pytest.mark.parametrize("typed", ["", "beta", "b.md", "banana"])
+def test_ordinary_answers_are_not_mistaken_for_it(typed):
+    from media_ai.cli._prompt import is_back
+
+    assert not is_back(typed)
 
 
 def test_fallback_back_token_in_a_multiselect():
@@ -521,6 +558,24 @@ def test_pty_escape_goes_back_without_waiting_for_more_input():
 def test_pty_arrow_keys_still_arrive_whole():
     """The other half of that bargain: the Esc-tail wait must not split an arrow key."""
     assert "RESULT=1" in run_in_pty(SELECT_BODY, [DOWN, ENTER])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        pytest.param(b"\x1b[H", id="home"),
+        pytest.param(b"\x1b[5~", id="pageup"),
+        pytest.param(b"\x1bOP", id="f1"),
+        pytest.param(b"\x1b[1;5A", id="ctrl-up"),
+    ],
+)
+def test_pty_an_unrecognised_escape_sequence_is_ignored(sequence):
+    """Only four sequences are decoded, and everything else used to fall through to
+    "esc" — which now means "go back", so Home would silently discard the step. The
+    tail also has to be swallowed: a leftover `a` in a multiselect means select-all."""
+    out = run_in_pty(MULTI_BODY, [sequence, ENTER])
+    assert "RESULT=0" in out, f"{sequence!r} did not leave the selection alone"
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")

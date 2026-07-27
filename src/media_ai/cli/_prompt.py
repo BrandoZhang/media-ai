@@ -61,6 +61,7 @@ __all__ = [
     "FallbackPrompter",
     "ScriptedPrompter",
     "get_prompter",
+    "is_back",
     "run_steps",
 ]
 
@@ -69,15 +70,28 @@ __all__ = [
 # there is no Esc to intercept). Deliberately not a plausible answer to any of them.
 BACK_TOKENS = ("<", "b", "back")
 
+
+def is_back(typed: str) -> bool:
+    """Whether a typed line means "go back".
+
+    One function so every prompt agrees: matching case-sensitively in one
+    implementation and not in another made ``Back`` navigate under a pipe and become
+    a literal answer on a terminal — where it would be written to disk as a path or
+    an environment variable name.
+    """
+    return typed.strip().lower() in BACK_TOKENS
+
+
 ESC = "\x1b"
 _CTRL_C = "\x03"
 _CTRL_D = "\x04"
 
 # How long to wait for the rest of an escape sequence before calling it a bare Esc.
-# Terminals emit the whole sequence in a single write, so this only has to outlast
-# scheduling jitter — long enough not to split an arrow key, short enough that Esc
-# still feels instant.
-_ESC_TAIL_SECONDS = 0.05
+# A terminal emits the whole sequence in one write, so locally this only has to outlast
+# scheduling jitter; over ssh or a loaded multiplexer the tail can arrive later, and an
+# arrow key that misses the deadline reads as Esc. Hence a value well above local
+# jitter, and an escape hatch for links slow enough to need more.
+_ESC_TAIL_SECONDS = float(os.getenv("MEDIA_ESC_DELAY", "0.15"))
 
 # Reserve rows for the step title, the rail's closing line, the key hint, and the
 # "n more" markers around a scrolled viewport.
@@ -225,6 +239,10 @@ class Prompter(Protocol):
     def intro(self, title: str) -> None: ...
     def outro(self, message: str) -> None: ...
     def box(self, title: str, message: str) -> None: ...
+    # Both are called by run_steps on whatever it is handed, so they belong to the
+    # contract even though only the terminal implementation has anything to undo.
+    def mark(self) -> int: ...
+    def rewind(self, mark: int) -> None: ...
     def select(self, title: str, options: Sequence[Option | str], *, default: int = 0) -> int: ...
     def multiselect(
         self, title: str, options: Sequence[Option | str], *, preselected: Sequence[int] = ()
@@ -286,12 +304,27 @@ class TerminalPrompter:
             return ch
         # A bare Esc and the first byte of an arrow key are the same byte. Reading the
         # rest unconditionally hangs on a bare Esc until the user presses something
-        # else — so wait a moment for a tail that a terminal always sends in one go,
-        # and treat silence as the key itself.
+        # else — so wait for a tail that a terminal sends in one go, and treat silence
+        # as the key itself.
         if not select.select([self._fd], [], [], _ESC_TAIL_SECONDS)[0]:
             return "esc"
         seq = os.read(self._fd, 2).decode("utf-8", "replace")
-        return {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq, "esc")
+        key = {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq)
+        if key:
+            return key
+        # Something longer or unrecognised: Home, PageUp, F-keys, Alt-chords, an arrow
+        # in application-cursor mode. Drain the rest of it and report nothing rather
+        # than guessing — mapping these onto Esc would silently throw away the step
+        # the user is on, and leaving the tail buffered would feed `~`/`;`/`A` back as
+        # keystrokes (and `a` in a multiselect means select-all).
+        self._drain()
+        return "unknown"
+
+    def _drain(self) -> None:
+        """Swallow whatever is left of an escape sequence already in the buffer."""
+        while select.select([self._fd], [], [], 0)[0]:
+            if not os.read(self._fd, 32):
+                return
 
     def _width(self) -> int:
         return shutil.get_terminal_size((80, 24)).columns
@@ -376,16 +409,22 @@ class TerminalPrompter:
         question.
         """
         g = self._g
-        room = max(20, self._width() - 8)
+        # Every row is `bar + 2 spaces + inner-1 columns + bar`, so the box can be at
+        # most four columns narrower than the terminal. Overflowing would wrap each
+        # row onto two physical lines while `_emit` counted one, and every later
+        # `rewind` would then erase the wrong rows.
+        room = max(16, self._width() - 4) - 3
         body = [line for para in message.strip("\n").split("\n") for line in _detail_lines(para, room, limit=99)]
-        inner = min(max([_display_width(title) + 2, *(_display_width(line) for line in body)]) + 2, room + 2)
+        title = _truncate(title, room)
+        inner = min(max([_display_width(title) + 2, *(_display_width(line) for line in body)]) + 2, room + 1)
 
         def row(content: str = "") -> str:
-            """Pad to the box width. Built by hand, not through ``_rail``: the closing
-            bar is a coloured suffix, and truncating a string with escapes in it both
-            corrupts the sequence and miscounts the width."""
-            filled = content + " " * max(0, inner - _display_width(content) - 1)
-            return f"{_paint(g.bar, _DIM)}  {filled}{_paint(g.bar, _DIM)}"
+            """Fit content to the box width, padding *or* trimming. Built by hand,
+            not through ``_rail``: the closing bar is a coloured suffix, and
+            truncating a string with escapes in it both corrupts the sequence and
+            miscounts the width."""
+            fitted = _truncate(content, inner - 1)
+            return f"{_paint(g.bar, _DIM)}  {fitted}{' ' * (inner - _display_width(fitted) - 1)}{_paint(g.bar, _DIM)}"
 
         dashes = g.bar_h * max(1, inner - _display_width(title) - 2)
         lines = [
@@ -546,7 +585,7 @@ class TerminalPrompter:
     def text(self, title: str, *, default: str = "") -> str:
         hint = f"[{default}]" if default else ""
         value, height = self._ask_line(title, f"{hint}  (< to go back)".strip(), self._readline)
-        if value in BACK_TOKENS:
+        if is_back(value):
             raise GoBack
         answer = value or default
         # Redrawing over typed input is only safe while it fits on one line; a wrapped
@@ -572,7 +611,7 @@ class TerminalPrompter:
                 raise Cancelled from exc
 
         value, height = self._ask_line(title, "input hidden, < to go back", read)
-        if value in BACK_TOKENS:
+        if is_back(value):
             raise GoBack
         # Never echo the value, not even its length: a fixed-width mask.
         self._submitted(title, self._g.mask * 8 if value.strip() else "(empty)", height)
@@ -644,7 +683,7 @@ class FallbackPrompter:
     def _answer(self) -> str:
         """A line of input, with the typed back-token turned into :class:`GoBack`."""
         raw = self._readline()
-        if raw.lower() in BACK_TOKENS:
+        if is_back(raw):
             raise GoBack
         return raw
 
@@ -724,7 +763,7 @@ class FallbackPrompter:
             value = getpass.getpass(f"{title}: ", stream=self._out)
         except (EOFError, KeyboardInterrupt) as exc:
             raise Cancelled from exc
-        if value.strip().lower() in BACK_TOKENS:
+        if is_back(value):
             raise GoBack
         return value
 

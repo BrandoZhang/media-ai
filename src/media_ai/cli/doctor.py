@@ -23,6 +23,7 @@ import argparse
 import shutil
 import stat
 import sys
+import tomllib
 from pathlib import Path
 
 from .. import __version__
@@ -34,6 +35,7 @@ from ..credentials.resolver import default_chain
 from ..credentials.stores import credentials_path
 from . import common
 from ._discovery import available_skills
+from ._prompt import UNICODE, glyphs_for
 from ._skillstore import installed_skills, known_dests, load_receipt, skill_is_current
 
 __all__ = ["main"]
@@ -96,7 +98,26 @@ def _check_files() -> list[dict]:
         out.append(_check("credentials-file", "fail", f"{creds} is group/world accessible; run: chmod 600 {creds}"))
     else:
         out.append(_check("credentials-file", "ok", f"{creds} (0600)"))
+    for name, path in (("config", config), ("credentials-file", creds)):
+        if path.is_file() and (bad := _unparseable(path)):
+            out.append(_check(name, "fail", bad))
     return out
+
+
+def _unparseable(path: Path) -> str:
+    """A description of why a TOML file cannot be read, or ``""``.
+
+    Named separately because this is the failure a user is most likely to be holding
+    when they run ``doctor``: a hand-edited config file with a typo in it, which every
+    other command reports only as a confusing error mid-generation.
+    """
+    try:
+        tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        return f"{path} is not valid TOML: {exc}"
+    except OSError as exc:
+        return f"{path} cannot be read: {exc}"
+    return ""
 
 
 def _check_credentials() -> list[dict]:
@@ -118,6 +139,12 @@ def _check_credentials() -> list[dict]:
             cred = chain.resolve(name)
         except MediaError:
             out.append(_check(f"credential:{name}", "warn", "no credential found (unconfigured)"))
+            continue
+        except Exception as exc:  # noqa: BLE001 - a broken source is a finding, not a crash
+            # A malformed credentials.toml reaches here as a TOMLDecodeError. Letting
+            # it out would abandon the whole diagnosis — including the file-mode check
+            # that is trying to explain the very problem being diagnosed.
+            out.append(_check(f"credential:{name}", "fail", f"{type(exc).__name__}: {exc}"))
             continue
         # `source` is a descriptor like "env:OPENAI_API_KEY" — never the key itself.
         out.append(_check(f"credential:{name}", "ok", f"resolved from {cred.source}"))
@@ -142,27 +169,21 @@ def _check_skills() -> list[dict]:
         skills = installed_skills(root)
         if not skills:
             continue
-        stale = [s for s in skills if _differs(root, s)]
-        unknown = [s for s in skills if s not in available_skills()]
+        shipped = set(available_skills())
+        stale = [s for s in skills if s in shipped and not skill_is_current(root, s)]
+        unknown = [s for s in skills if s not in shipped]
         detail = f"{len(skills)} skill(s) in {root}"
         if unknown:
             detail += f"; not shipped by this version: {', '.join(unknown)}"
         if stale:
             detail += f"; differs from media-ai {__version__}: {', '.join(stale)} — re-run `media-ai init`"
-        out.append(_check("skills", "warn" if stale else "ok", detail))
+        # A skill this version does not ship is as much a problem as a stale one: the
+        # agent is reading instructions for a CLI that is no longer installed. Both
+        # have to reach the verdict, or `doctor` says "everything checks out" over it.
+        out.append(_check("skills", "warn" if stale or unknown else "ok", detail))
     if not out:
         out.append(_check("skills", "warn", "no Agent Skills installed; run `media-ai init --skills-only`"))
     return out
-
-
-def _differs(dest: Path, skill: str) -> bool:
-    """Whether an installed skill still matches the packaged one.
-
-    Same comparison the installer uses to decide whether a copy needs refreshing, so
-    the two can never disagree about what "up to date" means. A skill this version
-    does not ship is not drift — it is reported separately.
-    """
-    return skill in available_skills() and not skill_is_current(dest, skill)
 
 
 # -------------------------------------------------------------------- report
@@ -179,8 +200,14 @@ def _diagnose(args) -> dict:
 
 
 def _print(checks: list[dict], status: str) -> None:
-    """Human rendering on stderr; stdout stays the one JSON object."""
-    mark = {"ok": "✓", "warn": "!", "fail": "✗"}
+    """Human rendering on stderr; stdout stays the one JSON object.
+
+    The marks degrade with the terminal: ``doctor`` is most useful on a constrained
+    box, which is exactly where stderr may not encode ``✓`` — and an
+    ``UnicodeEncodeError`` here would take down the diagnosis it is reporting.
+    """
+    unicode_ok = glyphs_for(sys.stderr) is UNICODE
+    mark = {"ok": "✓", "warn": "!", "fail": "✗"} if unicode_ok else {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
     for c in checks:
         print(f"  {mark[c['status']]} {c['check']:<22} {c['detail']}", file=sys.stderr)
     verdict = {

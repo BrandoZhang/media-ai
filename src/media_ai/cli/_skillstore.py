@@ -24,6 +24,7 @@ from __future__ import annotations
 import shutil
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from .. import __version__
@@ -44,6 +45,7 @@ __all__ = [
     "remove_skill",
     "skill_is_current",
 ]
+
 
 @dataclass(frozen=True)
 class AgentDir:
@@ -95,22 +97,55 @@ def known_dests() -> list[Path]:
 
 
 def copy_skill(name: str, dest_root: Path) -> list[Path]:
-    """Copy one packaged skill directory to ``dest_root/<name>``, preserving
-    ``references/`` subdirectories. Returns the files written."""
+    """Install one packaged skill into ``dest_root/<name>``. Returns the files written.
+
+    A *sync*, not a copy: files the packaged skill no longer ships are removed. Only
+    adding would mean a reference file dropped in a release lingers forever — and
+    since "is this copy current?" compares whole trees, the leftover would make the
+    skill permanently look modified, so every later run would re-ask about a
+    collision that updating cannot resolve.
+    """
     written: list[Path] = []
+    target_root = dest_root / name
+    # An existing symlink (the manual install in skills/README.md) is replaced rather
+    # than written through — and a *dangling* one has to go before mkdir, which does
+    # not treat a broken link as an existing directory and would raise FileExistsError
+    # halfway through the apply phase.
+    if target_root.is_symlink():
+        target_root.unlink()
 
     def walk(src, out: Path):
         out.mkdir(parents=True, exist_ok=True)
+        packaged = set()
         for entry in src.iterdir():
             target = out / entry.name
+            packaged.add(entry.name)
             if entry.is_dir():
                 walk(entry, target)
             else:
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                elif target.is_symlink():
+                    target.unlink()
                 target.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
                 written.append(target)
+        for stale in out.iterdir():
+            if stale.name not in packaged:
+                stale.unlink() if stale.is_symlink() or stale.is_file() else shutil.rmtree(stale)
 
-    walk(skill_root(name), dest_root / name)
+    walk(skill_root(name), target_root)
     return written
+
+
+@lru_cache(maxsize=None)
+def _packaged_tree(name: str) -> dict[str, str]:
+    """The packaged skill's files, read once per process.
+
+    Every (destination, skill) pair compares against the same packaged tree, and it
+    may live inside a zip — re-reading it per pair turns a ten-skill install into
+    twenty reads of the same files.
+    """
+    return _tree(skill_root(name))
 
 
 def _tree(root) -> dict[str, str]:
@@ -139,16 +174,17 @@ def skill_is_current(dest: Path, name: str) -> bool:
 
     This is what makes re-running the installer quiet: a skill that already matches
     is neither written nor asked about, so a second run with nothing to change asks
-    nothing and touches nothing. A symlinked install is current by construction — it
-    *is* the packaged directory.
+    nothing and touches nothing. A symlink that resolves is current by construction —
+    it *is* the packaged directory; a dangling one is not current, it is broken, and
+    reporting it as fine would leave `doctor` blessing a skill the agent cannot read.
     """
     target = dest / name
     if target.is_symlink():
-        return True
+        return target.exists()
     if not target.is_dir():
         return False
     try:
-        return _tree(skill_root(name)) == _tree(target)
+        return _packaged_tree(name) == _tree(target)
     except (OSError, UnicodeDecodeError):
         # Unreadable or not text: treat as drifted, so the caller offers to refresh it.
         return False
@@ -251,14 +287,6 @@ def record_install(dests: list[Path]) -> Path | None:
             entries[str(dest)] = {"skills": skills, "version": __version__}
         else:
             entries.pop(str(dest), None)
-    return _write_receipt(entries)
-
-
-def forget(dests: list[Path | str]) -> Path | None:
-    """Drop destinations from the receipt after their skills were removed."""
-    entries = load_receipt()
-    for dest in dests:
-        entries.pop(str(dest), None)
     return _write_receipt(entries)
 
 

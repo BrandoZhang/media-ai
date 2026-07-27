@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -325,6 +326,67 @@ class TestGoingBack:
             run(args, [pick("media-ai-image"), [0], 0, Cancelled])
         assert not (home / "sk").exists(), "skills were installed before the last question"
 
+    def test_a_deselected_provider_takes_its_key_with_it(self, home):
+        """Go back and untick the provider: the key typed for it was already in hand,
+        and writing it anyway would store a credential the user's final answer said
+        not to configure."""
+        args = make_args(skills_dest=str(home / "sk"))
+        # skills -> providers -> mode -> (key: go back) -> providers: none
+        summary, _ = run(args, [pick("media-ai-image"), [0], 0, GoBack, []])
+        assert summary["providers"] == []
+        assert not (home / "credentials.toml").exists()
+
+    def test_going_back_to_a_local_only_skill_does_not_crash(self, home):
+        """`providers` and `needed` are set by the same step; leaving one behind made
+        the next step die on a KeyError, taking every answer with it."""
+        args = make_args(skills_dest=str(home / "sk"))
+        # image -> a provider -> mode -> back to providers -> back to skills -> concat
+        summary, _ = run(
+            args, [pick("media-ai-image"), [0], 0, GoBack, GoBack, pick("media-ai-concat")],
+        )
+        assert summary["ok"] is True
+        assert summary["providers"] == []
+        assert "media-ai-concat" in summary["skills"][0]["installed"]
+
+
+def provider_index(name: str, skills=("media-ai-image",)) -> list[int]:
+    """Answer the provider menu by name, for the same reason as :func:`pick`."""
+    return [sorted(init_mod.providers_for_skills(list(skills))).index(name)]
+
+
+class TestVerifyIsAskedBeforeAnythingIsWritten:
+    """`--verify` used to ask its question *after* the apply phase, which made the
+    cancel message ("nothing was written") false and let an Esc escape the driver.
+
+    Only openai is asked about — it is the one with no free probe — so these drive it.
+    """
+
+    def test_cancelling_at_the_verify_question_writes_nothing(self, home):
+        args = make_args(skills_dest=str(home / "sk"), verify=True)
+        with pytest.raises(Cancelled):
+            run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, Cancelled])
+        assert not (home / "credentials.toml").exists()
+
+    def test_going_back_from_the_verify_question_is_not_an_error(self, home, monkeypatch):
+        import media_ai.cli._verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "probe", lambda p: "ok")
+        args = make_args(skills_dest=str(home / "sk"), verify=True)
+        summary, _ = run(
+            args,
+            [pick("media-ai-image"), provider_index("openai"), 0, SECRET, GoBack, 0, SECRET, True],
+        )
+        assert summary["ok"] is True and summary["verified"] == {"openai": "ok"}
+
+    def test_declining_the_paid_probe_is_recorded_not_run(self, home, monkeypatch):
+        import media_ai.cli._verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} without asking"))
+        args = make_args(skills_dest=str(home / "sk"), verify=True)
+        summary, _ = run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, False])
+        assert summary["verified"] == {"openai": "skipped"}
+        assert (home / "credentials.toml").is_file(), "declining the probe must not undo the install"
+
 
 # --------------------------------------------------------------------- receipt
 
@@ -401,6 +463,47 @@ class TestRerunIsANoOp:
         args2, _ = self.flow(home)
         summary, _ = run(args2, [pick("media-ai-image"), [0], 0, "sk-a-different-key-4242"])
         assert summary["backed_up"], "overwriting a key must keep the old file"
+
+    def test_a_rerun_repairs_a_loose_credentials_mode(self, home):
+        """The resolver refuses a group/world-readable credentials.toml, and re-running
+        the wizard is the obvious remedy — so the write cannot be skipped just because
+        the content matches."""
+        args, answers = self.flow(home)
+        run(args, answers)
+        path = home / "credentials.toml"
+        path.chmod(0o644)
+        run(*self.flow(home))
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_wrote_lists_only_files_that_were_written(self, home):
+        """A caller diffing `wrote[]` across runs to spot config churn should not get
+        a hit from a run that wrote the same bytes."""
+        args, answers = self.flow(home)
+        summary, _ = run(args, answers)
+        assert str(home / "credentials.toml") in summary["wrote"]
+        for path in summary["wrote"]:
+            assert Path(path).is_file(), f"{path} reported as written but does not exist"
+
+    def test_a_backup_is_never_world_readable_even_briefly(self, home):
+        """It holds every key the original did."""
+        args, answers = self.flow(home)
+        run(args, answers)
+        args2, _ = self.flow(home)
+        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, "sk-a-different-key-4242"])
+        backup = Path(summary["backed_up"][0])
+        assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+
+    def test_an_unattended_upgrade_never_stops_on_a_prompt(self, home):
+        """`--non-interactive` has to hold for *every* question, including the one an
+        edited copy would otherwise raise."""
+        dest = home / "sk"
+        args = make_args(skills_only=True, non_interactive=True, skills_dest=str(dest))
+        run(args, [])
+        (dest / "media-ai-image" / "SKILL.md").write_text("edited", encoding="utf-8")
+        summary, prompter = run(make_args(skills_only=True, non_interactive=True, skills_dest=str(dest)), [])
+        assert prompter.asked == []
+        assert "media-ai-image" in summary["skills"][0]["written"]
+        assert "edited" not in (dest / "media-ai-image" / "SKILL.md").read_text()
 
     def test_a_locally_edited_skill_is_still_offered(self, home):
         """Unchanged is silent; *changed* is exactly what the user should be asked about."""

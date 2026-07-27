@@ -21,9 +21,12 @@ main() {
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --version)      version="${2:-}"; shift 2 ;;
+      # `shift 2` on a flag given as the last argument returns non-zero, which under
+      # `set -e` kills the installer with no output at all. Check for the value first
+      # and say what is missing.
+      --version)      need_value "$@"; version="$2"; shift 2 ;;
       --version=*)    version="${1#*=}"; shift ;;
-      --skills-dest)  skills_dest="${2:-}"; shift 2 ;;
+      --skills-dest)  need_value "$@"; skills_dest="$2"; shift 2 ;;
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
       --no-init)      do_init=0; shift ;;
       --uninstall)    do_uninstall=1; shift ;;
@@ -80,6 +83,16 @@ USAGE
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*" >&2; }
 err() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
+
+# Refuse a flag whose value is missing, with a message. Called as `need_value "$@"`,
+# so $1 is the flag and $2 is the value that has to be there.
+need_value() {
+  if [ $# -lt 2 ]; then
+    err "$1 needs a value (e.g. $1 v0.2.0)"
+    usage
+    exit 2
+  fi
+}
 
 check_platform() {
   case "$(uname -s)" in
@@ -182,10 +195,13 @@ run_init() {
     printf '      media-ai init\n' >&2
     return 0
   fi
+  # stdout is discarded for the same reason run_uninstall discards it: `init` ends by
+  # printing its machine-contract JSON object, which after a wizard the user just
+  # finished reading is noise landing under the closing line.
   if [ -n "$skills_dest" ]; then
-    media-ai init --skills-dest "$skills_dest" < /dev/tty || true
+    media-ai init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
   else
-    media-ai init < /dev/tty || true
+    media-ai init < /dev/tty >/dev/null || true
   fi
 }
 

@@ -106,6 +106,40 @@ def test_a_loose_credentials_file_is_a_failure(home):
     assert result["status"] == "fail"
 
 
+class TestABrokenFileDoesNotTakeDownTheDiagnosis:
+    """A hand-edited config with a typo in it is the most likely thing a user is
+    holding when they reach for `doctor` — so it has to be reported, not raised."""
+
+    def test_unparseable_credentials_are_a_finding(self, home):
+        path = home / "cfg" / "credentials.toml"
+        path.write_text("this is not toml =\n", encoding="utf-8")
+        path.chmod(0o600)
+        result = diagnose()
+        assert result["status"] == "fail"
+        assert any("not valid TOML" in c["detail"] for c in result["checks"])
+
+    def test_the_other_checks_still_run(self, home):
+        """The version, ffmpeg and file-mode lines are what explain the problem."""
+        path = home / "cfg" / "credentials.toml"
+        path.write_text("this is not toml =\n", encoding="utf-8")
+        path.chmod(0o600)
+        found = checks(diagnose())
+        assert found["ffmpeg"]["status"] == "ok" and "media-ai" in found["version"]["detail"]
+
+    def test_unparseable_config_is_a_finding_too(self, home):
+        (home / "cfg" / "config.toml").write_text("[broken\n", encoding="utf-8")
+        assert any("not valid TOML" in c["detail"] for c in diagnose()["checks"])
+
+
+def test_marks_degrade_on_a_terminal_that_cannot_encode_them(home, monkeypatch, capsys):
+    """`doctor` is most useful on a constrained box — which is exactly where stderr
+    may not encode ✓, and where raising would take down the diagnosis."""
+    monkeypatch.setenv("MEDIA_ASCII", "1")
+    diagnose()
+    err = capsys.readouterr().err
+    assert "✓" not in err and "ok  " in err
+
+
 def test_a_correct_credentials_file_passes(home):
     path = home / "cfg" / "credentials.toml"
     path.write_text('[openai]\napi_key = "x"\n', encoding="utf-8")
@@ -136,6 +170,25 @@ def test_a_stale_copy_is_flagged(home):
     found = checks(diagnose())["skills"]
     assert found["status"] == "warn"
     assert "media-ai-shared" in found["detail"] and "media-ai init" in found["detail"]
+
+
+def test_a_skill_this_version_does_not_ship_is_a_warning(home):
+    """The agent is reading instructions for a CLI that is no longer installed;
+    reporting "everything checks out" over that is the wrong answer."""
+    dest = home / "fakehome" / ".claude" / "skills"
+    copy_skill("media-ai-shared", dest)
+    (dest / "media-ai-from-the-future").mkdir()
+    (dest / "media-ai-from-the-future" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    result = diagnose()
+    assert checks(result)["skills"]["status"] == "warn"
+    assert "media-ai-from-the-future" in checks(result)["skills"]["detail"]
+
+
+def test_a_dangling_symlink_is_not_reported_as_up_to_date(home, tmp_path):
+    dest = home / "fakehome" / ".claude" / "skills"
+    dest.mkdir(parents=True)
+    (dest / "media-ai-shared").symlink_to(tmp_path / "nowhere")
+    assert checks(diagnose())["skills"]["status"] == "warn"
 
 
 def test_a_symlinked_skill_can_never_be_stale(home):
