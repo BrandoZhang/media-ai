@@ -91,6 +91,7 @@ and may include a provider-specific `raw` block.
   `io`/`unknown`→1). `retryable` is true for `rate_limit`, `timeout`, `provider`.
 - `details.unsupported[]` lists exactly which request fields were rejected — the
   precise fix for an exit-3 failure.
+- `io` and `unknown` both map to **exit 1** — a local failure (unreadable input, unwritable output) or an unclassified one. Neither is retryable on its own; read `error.message`.
 
 ## Machine-friendly flags
 

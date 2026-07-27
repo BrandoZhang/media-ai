@@ -22,11 +22,13 @@ from pathlib import Path
 from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import normalize_ratio
+from ..core.modelspec import apply_spec
 from ..core.mediaref import to_data_uri
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
+from ._catalog import VOLC
 from ._volc_errors import classify, parse_error_body, task_failure_error, to_media_error
 
 _ARK_MIN_IMAGE_PIXELS = 2560 * 1440  # Seedream method-2 floor
@@ -35,6 +37,7 @@ _TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
 
 class VolcProvider(HttpProvider):
     name = "volc"
+    catalog = VOLC
     auth_scheme = "bearer"
 
     def __init__(self, *, credentials=None, config=None) -> None:
@@ -62,16 +65,24 @@ class VolcProvider(HttpProvider):
         return model.lower().startswith("ep-")
 
     def _is_video_model(self, model: str, modality: Modality | None = None) -> bool:
-        # A mapped endpoint is classified by the model it actually serves, so the
-        # answer no longer depends on what the caller happened to ask for.
         backing = self.backing_model(model)
         if backing != model:
-            return "seedance" in backing.lower() or backing == self.video_model
+            # A mapped endpoint is classified by the model it actually serves, so the
+            # answer no longer depends on what the caller happened to ask for. Same
+            # test as the unmapped path below — a configured video model that is not in
+            # the catalogue must be recognised through either route.
+            return self._catalog_is_video(backing) or backing == self.video_model
         # Trust the modality the command declared; only guess from the name during
         # discovery (modality is None), which is best-effort.
         if modality is not None:
             return modality == Modality.VIDEO
-        return "seedance" in model.lower() or model == self.video_model
+        return self._catalog_is_video(model) or model == self.video_model
+
+    @staticmethod
+    def _catalog_is_video(model: str) -> bool:
+        """Modality from the catalogue rather than a `"seedance" in name` test."""
+        spec = VOLC.get(model)
+        return bool(spec and spec.caps.get("modality") == "video")
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
@@ -88,14 +99,17 @@ class VolcProvider(HttpProvider):
             if endpoint else None
         )
         if backing != model:
-            # Report the id the caller used and the API expects, but describe the
-            # model behind it.
             # Classify by the real model *name*, not the requested modality: the whole
             # point of the mapping is that we no longer have to take the caller's word
             # for what an opaque id can do.
             resolved = self._capabilities_for(backing, None)
+            # Inherit the backing model's lifecycle too. Mapping an endpoint onto a
+            # deprecated model is exactly when someone needs to be told, and reporting
+            # the endpoint as `ga` would hide it behind the indirection.
+            apply_spec(resolved, VOLC.get(backing))
             return replace(resolved, model=model, notes=resolved.notes + (f"custom endpoint for {backing}",))
-        return self._capabilities_for(model, modality, endpoint=endpoint, note=note)
+        return apply_spec(self._capabilities_for(model, modality, endpoint=endpoint, note=note),
+                          VOLC.get(model))
 
     def _capabilities_for(
         self, model: str, modality: Modality | None = None, *, endpoint: bool = False, note: str | None = None
@@ -114,7 +128,9 @@ class VolcProvider(HttpProvider):
                     supports_watermark_control=True, supports_return_last_frame=True,
                     options=("camera_fixed",),
                 ),
-                notes=(note,) if note else ("model IDs are account-specific; enable them in the Volcengine console",),
+                # Notes for a catalogued model come from its spec via apply_spec;
+                # repeating them here printed every one twice.
+                notes=(note,) if note else (),
             )
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
@@ -127,7 +143,7 @@ class VolcProvider(HttpProvider):
                 max_count=15, output_formats=("png",),
                 supports_seed=True, max_references=9, options=("watermark",),
             ),
-            notes=(note,) if note else ("size below 2560x1440 falls back to the '2K' preset",),
+            notes=(note,) if note else (),
         )
 
     # ---- images ----------------------------------------------------------

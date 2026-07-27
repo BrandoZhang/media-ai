@@ -134,6 +134,16 @@ class ModelCapabilities:
     notes: tuple[str, ...] = ()
     experimental: bool = False
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    status: str = "ga"
+    """Lifecycle: ``ga`` | ``preview`` | ``deprecated`` | ``removed``. From the model
+    catalogue, so an agent can avoid a model that is on its way out rather than
+    discovering it the day the provider withdraws it."""
+    replacement: str | None = None
+    """What to move to, when ``status`` is ``deprecated``."""
+    verified: str | None = None
+    """ISO date this model was last exercised against the live API; ``None`` means
+    never. Reported rather than defaulted, so "we have not checked this" stays
+    visible instead of looking the same as "we checked and it was fine"."""
 
     def to_dict(self) -> dict:
         def enc(v):

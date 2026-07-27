@@ -28,11 +28,13 @@ from urllib.parse import urlencode
 
 from ..core.capabilities import AudioCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
+from ..core.modelspec import apply_spec
 from ..core.mediaref import guess_mime
 from ..core.result import Artifact, GenerationResult
 from ..core.types import DialogueRequest, Modality, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
+from ._catalog import ELEVENLABS
 
 # Output formats accepted by the API (codec_samplerate[_bitrate]).
 _OUTPUT_FORMATS = (
@@ -50,7 +52,6 @@ _OPTIONS = _VOICE_SETTINGS + _BODY_OPTIONS + _QUERY_OPTIONS
 # codec prefix -> mime, for when the file extension doesn't match --output-format.
 _CODEC_MIME = {"mp3": "audio/mpeg", "wav": "audio/wav", "pcm": "audio/L16",
                "opus": "audio/opus", "ulaw": "audio/basic", "alaw": "audio/basic"}
-_TTS_MODELS = ("eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3")
 
 # Music (compose) — models, output formats (incl. "auto"), and --option knobs.
 _MUSIC_MODELS = ("music_v1", "music_v2")
@@ -78,6 +79,7 @@ _SOUND_MIN_S, _SOUND_MAX_S = 0.5, 30.0
 
 class ElevenLabsProvider(HttpProvider):
     name = "elevenlabs"
+    catalog = ELEVENLABS
     auth_scheme = "xi-api-key"
 
     def __init__(self, *, credentials=None, config=None) -> None:
@@ -94,14 +96,15 @@ class ElevenLabsProvider(HttpProvider):
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return list(_TTS_MODELS)
+        return ELEVENLABS.discoverable_ids()
 
     def default_model(self, modality: Modality | None) -> str:
         return self.model
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.model
-        return ModelCapabilities(
+        spec = ELEVENLABS.require(model)
+        return apply_spec(ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.AUDIO}),
             audio=AudioCaps(
                 operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE,
@@ -137,7 +140,7 @@ class ElevenLabsProvider(HttpProvider):
             notes=("mp3_44100_192 needs Creator tier+; pcm/wav 44.1kHz needs Pro tier+",
                    "language_code is ignored by multilingual_v2 models",
                    "music: prompt OR composition_plan; `music plan` is credit-free"),
-        )
+        ), spec)
 
     # ---- speech (text -> single voice) -----------------------------------
     def generate_speech(self, req: SpeechRequest) -> GenerationResult:

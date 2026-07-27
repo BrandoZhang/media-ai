@@ -22,12 +22,14 @@ from pathlib import Path
 
 from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
+from ..core.modelspec import apply_spec
 from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
 from ..core.result import Artifact, GenerationResult
 from ..core.types import ImageRequest, Modality
 from ..core.usage import record_usage
 from ._base import HttpProvider
+from ._catalog import OPENAI
 
 # GPT Image accepts a fixed size enum on the pre-gpt-image-2 models; gpt-image-2
 # takes an arbitrary size subject to the constraints declared in `capabilities`.
@@ -46,29 +48,27 @@ _SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp
 
 
 def _is_gpt_image_2(model: str) -> bool:
-    """gpt-image-2 (and dated snapshots) — the arbitrary-size, high-fidelity family."""
-    return model.lower().startswith("gpt-image-2")
+    """Whether a model takes arbitrary sizes, per the catalogue rather than its name.
+
+    Was ``startswith("gpt-image-2")``, which quietly made every future id a non-match.
+    """
+    spec = OPENAI.get(model)
+    return bool(spec and spec.caps.get("arbitrary_sizes"))
 
 
 def _supports_input_fidelity(model: str) -> bool:
-    """`input_fidelity` is a knob only on gpt-image-1 / gpt-image-1.5. gpt-image-2
-    always processes inputs at high fidelity (the param is rejected), and the mini
-    tier doesn't expose it."""
-    m = model.lower()
-    return m.startswith("gpt-image-1") and not m.endswith("mini")
-
-
-def _is_dalle(model: str) -> bool:
-    """DALL·E was dropped; the id is still routed here (via the ``dall-e`` model hint)
-    only so a request returns a clear removal error instead of falling back to mock."""
-    return model.lower().startswith("dall-e")
+    """``input_fidelity`` is a knob only some tiers expose — gpt-image-2 processes
+    inputs at high fidelity and rejects the parameter, and the mini tier lacks it."""
+    spec = OPENAI.get(model)
+    return bool(spec and spec.caps.get("input_fidelity"))
 
 
 class OpenAIProvider(HttpProvider):
     name = "openai"
+    catalog = OPENAI
     auth_scheme = "bearer"
     # `dall-e`/`sora` route here only to return a clear unsupported/removal error (the
-    # provider is GPT-Image-only); see `_is_dalle` / no-video handling.
+    # provider is GPT-Image-only); the catalogue marks them removed.
     model_hints = ("gpt-image", "dall-e", "sora")
 
     def __init__(self, *, credentials=None, config=None) -> None:
@@ -86,7 +86,7 @@ class OpenAIProvider(HttpProvider):
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"]
+        return OPENAI.discoverable_ids()
 
     def default_model(self, modality: Modality | None) -> str | None:
         # Image-only provider: no default video model.
@@ -94,13 +94,12 @@ class OpenAIProvider(HttpProvider):
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.image_model
-        if _is_dalle(model):
-            raise _dalle_removed(model)
+        spec = OPENAI.require(model)   # raises for a removed model, naming its replacement
         arbitrary = _is_gpt_image_2(model)
         options = ("moderation", "output_compression")
         if _supports_input_fidelity(model):
             options += ("input_fidelity",)
-        return ModelCapabilities(
+        return apply_spec(ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
@@ -121,10 +120,7 @@ class OpenAIProvider(HttpProvider):
                 supports_mask=True, max_references=16,
                 options=options,
             ),
-            notes=(("gpt-image-2: arbitrary sizes — both edges ÷16, max edge 3840px, edge ratio ≤3:1, "
-                    "total pixels 655360–8294400; no transparent background",)
-                   if arbitrary else ("token-billed; base64 output only; fixed sizes 1024x1024/1536x1024/1024x1536",)),
-        )
+        ), spec)
 
     # ---- size mapping ----------------------------------------------------
     def _size(self, model: str, req: ImageRequest) -> str:
@@ -156,8 +152,10 @@ class OpenAIProvider(HttpProvider):
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         model = req.model or self.image_model
-        if _is_dalle(model):
-            raise _dalle_removed(model)
+        # Refuse a retired model here as well as in capabilities(), so the two agree:
+        # a caller must never be able to send a request for something discovery says
+        # is gone.
+        OPENAI.require(model)
         client, headers = self._prepare()
         if req.operation == Operation.IMAGE_EDIT or req.references or req.mask:
             data = self._edit(client, headers, model, req)
@@ -256,15 +254,6 @@ class OpenAIProvider(HttpProvider):
             cat = ErrorCategory.RATE_LIMIT
         details = {"status": status, **extra}
         return MediaError(f"OpenAI HTTP {status}: {body}", category=cat, code=code, provider=self.name, details=details)
-
-
-def _dalle_removed(model: str) -> MediaError:
-    """DALL·E was dropped (the current Images API rejects its ``response_format``);
-    point callers at GPT Image."""
-    return MediaError(
-        f"DALL·E model {model!r} is no longer supported; use a GPT Image model such as gpt-image-2",
-        category=ErrorCategory.UNSUPPORTED, provider="openai", model=model,
-    )
 
 
 def _parse_error(body: str) -> tuple[str | None, dict]:

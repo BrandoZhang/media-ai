@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ..core.capabilities import AudioCaps, GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
+from ..core.modelspec import ModelStatus, apply_spec
 from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, Modality, SpeechRequest, VideoRequest
@@ -36,16 +37,11 @@ from ..media import ffmpeg, pillow
 from ..media.audio import write_pcm_wav
 from . import _gemini_files
 from ._base import HttpProvider
+from ._catalog import GEMINI
 
-# The 10 aspect ratios every Nano Banana model shares. Gemini 3.1 Flash Image adds
-# the four extreme banner ratios; Pro / Lite / 2.5 stay on the standard set.
-_STD_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
-_ULTRAWIDE_RATIOS = ("1:4", "4:1", "1:8", "8:1")
-_FLASH_RATIOS = _STD_RATIOS + _ULTRAWIDE_RATIOS
-
-# Gemini 2.5/3.1 text-to-speech models and the 30 prebuilt voices (style/tone/pace
-# are directed via the prompt text / --instruction, not a parameter).
-_TTS_MODELS = ("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview")
+# The 30 prebuilt TTS voices (style/tone/pace are directed via the prompt text /
+# --instruction, not a parameter). Which models exist, and their aspect-ratio sets,
+# live in the catalogue — see providers/_catalog.py.
 _GEMINI_VOICES = (
     "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
     "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
@@ -55,35 +51,28 @@ _GEMINI_VOICES = (
 
 
 def _family(model: str) -> str:
-    m = model.lower()
-    if "tts" in m:
-        return "tts"
-    if m.startswith("veo"):
-        return "veo"
-    if m.startswith("imagen"):
-        return "imagen"  # dropped; routed here only to return a clear removal error
-    return "native"
+    """Which capability builder a model uses, from the catalogue rather than its name.
 
-
-def _native_tier(model: str) -> str:
-    """Classify a Nano Banana model id into its capability tier.
-
-    ``gemini-3.1-flash-lite-image`` → ``lite``; ``gemini-3-pro-image`` → ``pro``;
-    ``gemini-2.5-flash-image`` → ``legacy``; everything else (``gemini-3.1-flash-image``
-    and future defaults) → ``flash``.
+    A ``veo-`` prefix or a ``tts`` substring used to decide this. That guessed right
+    for the ids that existed when it was written and silently wrong for anything else;
+    the catalogue says so explicitly instead.
     """
-    m = model.lower()
-    if "lite" in m:
-        return "lite"
-    if "pro" in m:
-        return "pro"
-    if "2.5" in m:
-        return "legacy"
-    return "flash"
+    spec = GEMINI.get(model)
+    if spec is None:
+        return "native"
+    if spec.status is ModelStatus.REMOVED:
+        return "removed"
+    kind = spec.caps.get("kind")
+    if kind == "tts":
+        return "tts"
+    if "resolutions" in spec.caps:
+        return "veo"
+    return "native"
 
 
 class GeminiProvider(HttpProvider):
     name = "gemini"
+    catalog = GEMINI
     auth_scheme = "x-goog"
 
     def __init__(self, *, credentials=None, config=None) -> None:
@@ -106,11 +95,9 @@ class GeminiProvider(HttpProvider):
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
         # Deprecated snapshots (veo-2.0 / veo-3.0) still resolve via --model and
-        # capabilities(), but are omitted from discovery in favour of the current
-        # Nano Banana + Veo 3.1 lineup.
-        return ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
-                "gemini-2.5-flash-image", "veo-3.1-generate-preview",
-                "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview", *_TTS_MODELS]
+        # capabilities(); the catalogue marks them undiscoverable so they aren't
+        # offered to new callers.
+        return GEMINI.discoverable_ids()
 
     def default_model(self, modality: Modality | None) -> str:
         if modality == Modality.VIDEO:
@@ -122,14 +109,13 @@ class GeminiProvider(HttpProvider):
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         if model is None:
             model = self.tts_model if modality == Modality.AUDIO else self.image_model
+        spec = GEMINI.require(model)   # raises for a removed model, naming its replacement
         fam = _family(model)
         if fam == "tts":
-            return self._audio_caps(model)
+            return apply_spec(self._audio_caps(model), spec)
         if fam == "veo":
-            return self._veo_caps(model)
-        if fam == "imagen":
-            raise _imagen_removed(model)
-        return self._native_caps(model)
+            return apply_spec(self._veo_caps(model, spec), spec)
+        return apply_spec(self._native_caps(model, spec), spec)
 
     def _audio_caps(self, model: str) -> ModelCapabilities:
         return ModelCapabilities(
@@ -146,75 +132,55 @@ class GeminiProvider(HttpProvider):
                    "--instruction, not parameters; language is auto-detected; output is 24kHz WAV",),
         )
 
-    def _veo_caps(self, model: str) -> ModelCapabilities:
-        m = model.lower()
-        v31 = m.startswith("veo-3.1")
-        lite = "lite" in m
-        v2 = m.startswith("veo-2")
-        full_31 = v31 and not lite  # Veo 3.1 & 3.1 Fast: references, extension, 4K
-        if v2:
-            resolutions, durations, audio = ("720p",), (5, 6, 7, 8), False
-        elif lite:
-            resolutions, durations, audio = ("720p", "1080p"), (4, 6, 8), True
-        else:  # Veo 3.x (incl. deprecated 3.0) & Fast
-            resolutions, durations, audio = ("720p", "1080p", "4k"), (4, 6, 8), True
-        if full_31:
-            note = ("Veo 3.1: first/last frame, up to 3 reference images (--reference-image), and video "
-                    "extension (--reference-video continues a Veo clip ≤141s); durationSeconds must be 8 "
-                    "for extension/reference-images/1080p/4K")
-        elif lite:
-            note = "Veo 3.1 Lite: text/image-to-video, 720p/1080p; no reference images, extension, or 4K"
-        else:
-            note = "deprecated snapshot — prefer veo-3.1-generate-preview"
+    def _veo_caps(self, model: str, spec) -> ModelCapabilities:
+        """Veo capabilities, with the per-generation differences read from the catalogue.
+
+        These used to be re-derived from the id on every call (``startswith("veo-3.1")``,
+        ``"lite" in m``), which meant a new Veo id silently inherited whichever branch
+        it happened to fall into.
+        """
+        c = spec.caps
+        refs = bool(c.get("references"))
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
-            experimental=m.endswith("preview"),
             video=VideoCaps(
                 is_async=True, aspect_ratios=("16:9", "9:16"),
-                resolutions=resolutions, durations=durations,
-                supports_first_frame=True, supports_last_frame=v31,
-                supports_reference_images=full_31, supports_reference_videos=full_31,
+                resolutions=tuple(c.get("resolutions", ())),
+                durations=tuple(c.get("durations", ())),
+                supports_first_frame=True, supports_last_frame=bool(c.get("last_frame")),
+                supports_reference_images=refs, supports_reference_videos=refs,
                 supports_seed=True, supports_negative_prompt=True,
-                supports_audio=audio, audio_default=audio or None,
+                supports_audio=bool(c.get("audio")), audio_default=c.get("audio") or None,
                 supports_cancel=False, options=("person_generation",),
             ),
-            notes=(note, "SynthID watermark is unconditional; on the Developer API generateAudio is unreliable "
-                   "(Veo 3.x audio is native, Veo 2 is silent); jobs cannot be cancelled"),
+            notes=("SynthID watermark is unconditional; on the Developer API generateAudio is "
+                   "unreliable (Veo 3.x audio is native, Veo 2 is silent); jobs cannot be cancelled",),
         )
 
-    def _native_caps(self, model: str) -> ModelCapabilities:
-        tier = _native_tier(model)
-        if tier == "lite":
-            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K",), 14, ()
-            note = "Nano Banana 2 Lite: 1K only, no grounding; tuned for speed and scale"
-        elif tier == "pro":
-            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K", "2K", "4K"), 14, ("grounding",)
-            note = ("Nano Banana Pro: 1K/2K/4K, Google Search grounding, interleaved output; "
-                    "thinking is always on")
-        elif tier == "legacy":
-            ratios, sizes, max_refs, options = _STD_RATIOS, ("1K",), 3, ()
-            note = "Nano Banana (2.5, legacy): imageSize fixed at 1K, up to 3 refs; prefer gemini-3.1-flash-image"
-        else:  # flash — Nano Banana 2
-            ratios, sizes, max_refs = _FLASH_RATIOS, ("512", "1K", "2K", "4K"), 14
-            options = ("grounding", "thinking_level")
-            note = ("Nano Banana 2: 512px/1K/2K/4K, Google Search grounding, "
-                    "thinking_level minimal|high, video-to-image")
+    def _native_caps(self, model: str, spec) -> ModelCapabilities:
+        """Nano Banana capabilities, with per-tier differences read from the catalogue."""
+        c = spec.caps
         return ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
             image=ImageCaps(
                 operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=ratios,
-                named_sizes=sizes, max_count=4, output_formats=("png", "jpeg", "webp"),
-                max_references=max_refs, options=options,
+                geometry_mode=GeometryMode.ASPECT_RATIO,
+                aspect_ratios=tuple(c.get("aspect_ratios", ())),
+                named_sizes=tuple(c.get("named_sizes", ())),
+                max_count=4, output_formats=("png", "jpeg", "webp"),
+                max_references=int(c.get("max_references", 3)),
+                options=tuple(c.get("options", ())),
             ),
-            notes=(note, "native conversational image gen/edit; SynthID watermark is unconditional"),
+            notes=("native conversational image gen/edit; SynthID watermark is unconditional",),
         )
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         model = req.model or self.image_model
-        if _family(model) == "imagen":
-            raise _imagen_removed(model)
+        # Refuse a retired model here as well as in capabilities(), so the two agree:
+        # a caller must never be able to send a request for something discovery says
+        # is gone.
+        GEMINI.require(model)
         return self._native(model, req)
 
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:
@@ -492,15 +458,6 @@ def _grounding_tools(req: ImageRequest) -> list[dict]:
     is handled server-side). Supported on the Flash and Pro models.
     """
     return [{"google_search": {}}] if req.options.get("grounding") else []
-
-
-def _imagen_removed(model: str) -> MediaError:
-    """Imagen was dropped (deprecated by Google); point callers at Nano Banana."""
-    return MediaError(
-        f"Imagen model {model!r} is no longer supported (deprecated by Google); "
-        "use a Nano Banana model such as gemini-3.1-flash-image",
-        category=ErrorCategory.UNSUPPORTED, provider="gemini", model=model,
-    )
 
 
 # --------------------------------------------------------------------------

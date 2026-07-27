@@ -104,6 +104,7 @@ and finalizes (downloads) via the same adapter.
 | `core/types.py` | Normalized `ImageRequest`/`VideoRequest`/`SpeechRequest`/`DialogueRequest`/`MusicRequest`/`SoundEffectRequest`, `MediaRef` (any input source), `GeometrySpec` |
 | `core/capabilities.py` | Per-model `ModelCapabilities` schema + `validate_request()` — drives discovery **and** gating |
 | `core/registry.py` | Dynamic provider registry, `register_provider()`, entry-point discovery, model→provider routing |
+| `core/modelspec.py` | The model catalogue: `ModelSpec`/`Catalog` — lifecycle (ga/preview/deprecated/removed), live-API verification, and deliberate fallbacks for unknown ids |
 | `core/provider.py` | The `Provider` interface (no transport assumptions) |
 | `core/{errors,result}.py` | Error taxonomy→exit codes; result/job types + the stdout JSON contract (`schema_version`) |
 | `core/{geometry,usage,logging}.py` | Geometry primitives; JSONL cost ledger; redacted stderr logging |

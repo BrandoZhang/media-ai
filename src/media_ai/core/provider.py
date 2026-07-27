@@ -35,6 +35,10 @@ class Provider:
 
     name: str = "base"
     requires_credentials: bool = True
+    catalog = None
+    """Optional :class:`~media_ai.core.modelspec.Catalog` describing this provider's
+    models. When set, ``all_models()`` can report retired and undiscoverable ids that
+    ``models()`` deliberately withholds."""
     # Lowercase substrings that route a bare ``--model`` id to this provider when
     # it is discovered via an entry point (see media_ai.core.registry).
     model_hints: tuple[str, ...] = ()
@@ -82,6 +86,22 @@ class Provider:
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError
+
+    def all_models(self) -> list[str]:
+        """Every model this adapter knows, including deprecated and removed ones.
+
+        ``models()`` answers "what should I use?"; this answers "what do you know
+        about?" — the question you need to plan a migration off something retired.
+        Always a superset of ``models()``. That is not automatic: Volc's discovery
+        comes from config/env (an ``ep-…`` endpoint the user enabled), not from the
+        catalogue, so returning catalogue ids alone would *drop* the very models that
+        account can actually call and list two it never enabled.
+        """
+        listed = self.models()
+        if self.catalog is None:
+            return listed
+        known = self.catalog.real_ids()
+        return listed + [m for m in known if m not in listed]
 
     def default_model(self, modality: Modality) -> str | None:  # pragma: no cover
         raise NotImplementedError

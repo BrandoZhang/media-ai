@@ -154,6 +154,7 @@ media-ai usage
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
 - [docs/PROVIDERS.md](docs/PROVIDERS.md) — per-provider setup + capability matrix
+- [docs/MODELS.md](docs/MODELS.md) — the model catalogue: lifecycle, retirement, live verification
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker
 - [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) — invocation contract for Agent Skills
 - [docs/EXTENDING.md](docs/EXTENDING.md) — add a custom provider (no core changes)
