@@ -28,11 +28,13 @@ from urllib.parse import urlencode
 
 from ..core.capabilities import AudioCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
+from ..core.modelspec import apply_spec
 from ..core.mediaref import guess_mime
 from ..core.result import Artifact, GenerationResult
 from ..core.types import DialogueRequest, Modality, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
 from ..core.usage import record_usage
 from ._base import HttpProvider
+from ._catalog import ELEVENLABS
 
 # Output formats accepted by the API (codec_samplerate[_bitrate]).
 _OUTPUT_FORMATS = (
@@ -78,6 +80,7 @@ _SOUND_MIN_S, _SOUND_MAX_S = 0.5, 30.0
 
 class ElevenLabsProvider(HttpProvider):
     name = "elevenlabs"
+    catalog = ELEVENLABS
     auth_scheme = "xi-api-key"
 
     def __init__(self, *, credentials=None, config=None) -> None:
@@ -94,14 +97,15 @@ class ElevenLabsProvider(HttpProvider):
 
     # ---- discovery -------------------------------------------------------
     def models(self) -> list[str]:
-        return list(_TTS_MODELS)
+        return ELEVENLABS.discoverable_ids()
 
     def default_model(self, modality: Modality | None) -> str:
         return self.model
 
     def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
         model = model or self.model
-        return ModelCapabilities(
+        spec = ELEVENLABS.require(model)
+        return apply_spec(ModelCapabilities(
             provider=self.name, model=model, modalities=frozenset({Modality.AUDIO}),
             audio=AudioCaps(
                 operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE,
@@ -137,7 +141,7 @@ class ElevenLabsProvider(HttpProvider):
             notes=("mp3_44100_192 needs Creator tier+; pcm/wav 44.1kHz needs Pro tier+",
                    "language_code is ignored by multilingual_v2 models",
                    "music: prompt OR composition_plan; `music plan` is credit-free"),
-        )
+        ), spec)
 
     # ---- speech (text -> single voice) -----------------------------------
     def generate_speech(self, req: SpeechRequest) -> GenerationResult:
