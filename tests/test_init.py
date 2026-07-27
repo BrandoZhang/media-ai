@@ -118,16 +118,57 @@ def dests(*labels: str) -> list[int]:
 def test_installs_to_several_destinations(home):
     args = make_args(skills_only=True)
     # skills=[image]; two distinct conventions; no custom path
-    summary, _ = run(args, [pick("media-ai-image"), dests("~/.claude/skills", "~/.codex/skills"), False])
+    summary, _ = run(args, [pick("media-ai-image"), dests("~/.claude/skills", "~/.codex/skills")])
     assert len(summary["skills"]) == 2
     assert all(entry["installed"] for entry in summary["skills"])
 
 
-def test_custom_destination_is_accepted(home):
-    args = make_args(skills_only=True)
-    summary, _ = run(args, [pick("media-ai-image"), [], True, str(home / "custom")])
-    assert summary["skills"][0]["dest"] == str(home / "custom")
-    assert (home / "custom" / "media-ai-shared" / "SKILL.md").is_file()
+class TestACustomPath:
+    """A custom path is one more place to install to, so it is a row in the same list
+    as the rest rather than a follow-up question — and unticked, it costs no question."""
+
+    @staticmethod
+    def custom_row() -> list[int]:
+        choices = init_mod._dest_choices()
+        return [next(i for i, o in enumerate(choices) if o.value == init_mod.CUSTOM_DEST)]
+
+    def test_it_is_the_last_row_and_never_pre_ticked(self, home):
+        choices = init_mod._dest_choices()
+        assert choices[-1].value == init_mod.CUSTOM_DEST
+        assert self.custom_row()[0] not in init_mod._preselected_dests(choices)
+
+    def test_ticking_it_asks_for_the_path(self, home):
+        args = make_args(skills_only=True)
+        summary, _ = run(args, [pick("media-ai-image"), self.custom_row(), str(home / "custom")])
+        assert summary["skills"][0]["dest"] == str(home / "custom")
+        assert (home / "custom" / "media-ai-shared" / "SKILL.md").is_file()
+
+    def test_it_installs_alongside_the_ticked_conventions(self, home):
+        args = make_args(skills_only=True)
+        picked = dests("~/.claude/skills") + self.custom_row()
+        summary, _ = run(args, [pick("media-ai-image"), picked, str(home / "custom")])
+        assert {e["dest"] for e in summary["skills"]} == {str(home / ".claude/skills"), str(home / "custom")}
+
+    def test_leaving_it_unticked_asks_nothing(self, home):
+        args = make_args(skills_only=True)
+        _summary, prompter = run(args, [pick("media-ai-image"), dests("~/.claude/skills")])
+        assert not any("path" in q.lower() for q in prompter.asked)
+
+    def test_an_empty_path_adds_no_destination(self, home):
+        args = make_args(skills_only=True)
+        picked = dests("~/.claude/skills") + self.custom_row()
+        summary, _ = run(args, [pick("media-ai-image"), picked, "   "])
+        assert [e["dest"] for e in summary["skills"]] == [str(home / ".claude/skills")]
+
+    def test_going_back_from_the_path_returns_to_the_list(self, home):
+        """Its own step, so back lands on the destinations rather than past them."""
+        args = make_args(skills_only=True)
+        _summary, prompter = run(
+            args,
+            [pick("media-ai-image"), self.custom_row(), GoBack, dests("~/.claude/skills")],
+        )
+        assert prompter.asked.count("Where should they be installed?") == 2
+        assert prompter.asked.count("Which skills should be installed?") == 1
 
 
 class TestDestinationDefaults:
@@ -156,12 +197,14 @@ class TestDestinationDefaults:
 
     def test_labels_are_real_paths(self, home):
         for option in init_mod._dest_choices():
+            if option.value == init_mod.CUSTOM_DEST:
+                continue
             assert option.label.startswith(("~/", "./"))
             assert str(option.value).endswith(option.label.lstrip("~.").lstrip("/"))
 
     def test_pressing_enter_installs_something(self, home):
         args = make_args(skills_only=True)
-        summary, _ = run(args, [pick("media-ai-image"), init_mod._preselected_dests(init_mod._dest_choices()), False])
+        summary, _ = run(args, [pick("media-ai-image"), init_mod._preselected_dests(init_mod._dest_choices())])
         assert summary["skills"] and summary["skills"][0]["installed"]
 
 
@@ -256,7 +299,9 @@ class TestDestinationsExplainThemselves:
         monkeypatch.chdir(home / "proj")  # otherwise ~ and . are the same directory
         rows = self.by_label(home)
         assert "all projects" in rows["~/.claude/skills"].hint
-        assert "this project" in rows["./.claude/skills"].hint
+        # "current folder", not "this project": `./` is wherever the shell happens to be.
+        assert "current folder" in rows["./.claude/skills"].hint
+        assert str(home / "proj") in rows["./.claude/skills"].detail
 
     def test_a_directory_that_does_not_exist_says_so(self, home):
         detail = self.by_label(home)["~/.trae/skills"].detail
@@ -306,14 +351,14 @@ class TestGoingBack:
         args = make_args(skills_only=True)
         # skills -> destinations (go back) -> skills -> destinations -> no custom path
         _summary, prompter = run(
-            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills"), False],
+            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills")],
         )
         assert prompter.asked.count("Which skills should be installed?") == 2
 
     def test_the_second_answer_is_the_one_that_counts(self, home):
         args = make_args(skills_only=True)
         summary, _ = run(
-            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills"), False],
+            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills")],
         )
         installed = summary["skills"][0]["installed"]
         assert "media-ai-video" in installed and "media-ai-image" not in installed

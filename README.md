@@ -53,8 +53,9 @@ media-ai init --skills-only   # just install the Agent Skills
 │
 ◆  Where should they be installed?
 │  ◼ ~/.claude/skills  (Claude Code · all projects · 9 installed)
-│  ◻ ./.claude/skills  (Claude Code · this project)
+│  ◻ ./.claude/skills  (Claude Code · current folder)
 │  ◻ ~/.agents/skills  (AGENTS.md · all projects)
+│  ◻ somewhere else…  (type a path)
 │  ↑↓ move · space toggle · a all · enter confirm · esc back
 └
 ```
@@ -69,11 +70,12 @@ whatever is already there rather than overwriting it.
 
 The prompts follow [clack](https://github.com/bombshell-dev/clack)'s conventions —
 one connected rail, answered steps kept on screen, `●`/`○` for pick-one and `◼`/`◻`
-for pick-any — drawn with `termios` and ANSI escapes rather than a dependency, and
-degrading to numbered menus (and to ASCII glyphs) wherever a real terminal is not
-available. **Esc** goes back to the previous question (type `b` where there are no
-keypresses to read); **Ctrl-C** cancels. Nothing is written until the last question is
-answered, so both are safe at any point.
+for pick-any, keys echoed as `▪▪▪▪` so you can see you are typing — drawn with
+`termios` and ANSI escapes rather than a dependency, and degrading to numbered menus
+(and to ASCII glyphs) wherever a real terminal is not available. **Esc** goes back to
+the previous question (type `b` where there are no keypresses to read); **Ctrl-C**
+cancels. Nothing is written until the last question is answered, so both are safe at
+any point.
 
 **Re-running is the upgrade path**, and it is quiet: a skill that already matches the
 packaged version is neither rewritten nor asked about, and identical answers do not

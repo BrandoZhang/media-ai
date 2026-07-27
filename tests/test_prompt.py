@@ -697,6 +697,51 @@ def test_pty_confirm_accepts_the_letter_keys():
     assert "RESULT=False" in run_in_pty(CONFIRM_BODY, [b"n", ENTER])
 
 
+SECRET_BODY = """
+    from media_ai.cli._prompt import get_prompter, GoBack
+    p = get_prompter()
+    try:
+        print("RESULT=%s" % p.secret("API key"))
+    except GoBack:
+        print("RESULT=back")
+"""
+
+
+class TestMaskedSecretInput:
+    """`getpass` shows nothing at all, which leaves you unable to tell a key being
+    typed from a terminal that has stopped listening. clack echoes a mask; so do we."""
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_the_value_is_read_correctly(self):
+        assert "RESULT=sk-abc123" in run_in_pty(SECRET_BODY, [b"sk-abc123", ENTER])
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_the_characters_are_never_echoed(self):
+        drawn = run_in_pty_watching_the_terminal(SECRET_BODY, [b"sk-secret", ENTER])
+        # Everything the prompt drew, before the child prints the value it read back.
+        assert "sk-secret" not in drawn.split("RESULT=")[0]
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_one_mask_glyph_per_character(self):
+        drawn = plain(run_in_pty_watching_the_terminal(SECRET_BODY, [b"abcd", ENTER]))
+        assert "▪▪▪▪" in drawn, "typing showed nothing back"
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_backspace_removes_a_character(self):
+        assert "RESULT=ab" in run_in_pty(SECRET_BODY, [b"abc", b"\x7f", ENTER])
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_escape_goes_back(self):
+        assert "RESULT=back" in run_in_pty(SECRET_BODY, [b"abc", b"\x1b"])
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+    def test_the_finished_step_records_a_fixed_width_mask(self):
+        """The transcript (and the scrollback) must not leak the key's length."""
+        drawn = plain(run_in_pty_watching_the_terminal(SECRET_BODY, [b"abc", ENTER]))
+        assert "◇  API key" in drawn
+        assert "▪" * 8 in drawn.split("◇  API key")[-1]
+
+
 def run_in_pty_watching_the_terminal(body: str, keys: list[bytes]) -> str:
     """Like ``run_in_pty`` but returns what was drawn *to the terminal*.
 

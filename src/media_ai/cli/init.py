@@ -157,6 +157,12 @@ def _dest_state(path: Path) -> tuple[str, str]:
     return "", "The directory is there, with no media-ai skills in it yet."
 
 
+#: Sentinel for the "somewhere else" row. A row rather than a follow-up question:
+#: a custom path is one more place to install to, so it belongs in the same list as
+#: the rest — and left unticked (the default) it costs no question at all.
+CUSTOM_DEST = "custom"
+
+
 def _dest_choices() -> list[Option]:
     """Every agent convention at user and project level, best guess first.
 
@@ -167,8 +173,8 @@ def _dest_choices() -> list[Option]:
     almost always means.
 
     Each row says which agent reads it and how far the install reaches, because the
-    choice between ``~/.claude/skills`` and ``./.claude/skills`` is a real one (every
-    project, or only this checkout) and the paths alone do not make that obvious.
+    choice between ``~/.claude/skills`` and ``./.claude/skills`` is a real one and the
+    paths alone do not make that obvious.
     """
     ranked = []
     seen: set[str] = set()
@@ -181,8 +187,12 @@ def _dest_choices() -> list[Option]:
             if str(path.resolve()) in seen:
                 continue
             seen.add(str(path.resolve()))
-            short, long = ("all projects", "every project on this machine") if depth == 0 else (
-                "this project", "this project only"
+            # "current folder", not "this project": `./` is wherever the shell happens
+            # to be, which is a project directory only if you started the wizard in one.
+            short, long = (
+                ("all projects", "every project on this machine")
+                if depth == 0
+                else ("current folder", f"the current folder only — {Path.cwd()}")
             )
             found, sentence = _dest_state(path)
             option = Option(
@@ -193,7 +203,16 @@ def _dest_choices() -> list[Option]:
             )
             ranked.append(((not path.is_dir(), rank, depth), option))
     ranked.sort(key=lambda row: row[0])
-    return [option for _key, option in ranked]
+    out = [option for _key, option in ranked]
+    out.append(
+        Option(
+            label="somewhere else…",
+            hint="type a path",
+            value=CUSTOM_DEST,
+            detail="Tick this to be asked for a directory — any other place your agent reads skills from.",
+        )
+    )
+    return out
 
 
 def _preselected_dests(choices: list[Option]) -> list[int]:
@@ -201,9 +220,12 @@ def _preselected_dests(choices: list[Option]) -> list[int]:
 
     Pre-ticking nothing would make "press enter through the wizard" install nothing at
     all — and then report success, which is the one outcome a first run must not have.
+    "Somewhere else…" is never pre-ticked: the default has to be *not* adding one, or
+    entering through the wizard stops to ask for a path nobody wanted.
     """
-    existing = [i for i, opt in enumerate(choices) if Path(str(opt.value)).is_dir()]
-    return existing or ([0] if choices else [])
+    real = [(i, opt) for i, opt in enumerate(choices) if opt.value != CUSTOM_DEST]
+    existing = [i for i, opt in real if Path(str(opt.value)).is_dir()]
+    return existing or ([real[0][0]] if real else [])
 
 
 def _plan_installs(skills: list[str], dests: list[Path], prompter, *, unattended: bool = False) -> list[dict]:
@@ -462,6 +484,8 @@ class _Answers:
 
     skills: list[str] = field(default_factory=list)
     dests: list[Path] = field(default_factory=list)
+    want_custom: bool = False
+    custom_dest: Path | None = None
     plan: list[dict] = field(default_factory=list)
     needed: dict[str, list[str]] = field(default_factory=dict)
     providers: list[str] = field(default_factory=list)
@@ -491,6 +515,7 @@ def _wizard(args, prompter) -> dict:
         [
             lambda: _ask_skills(args, prompter, answers),
             lambda: _ask_dests(args, prompter, answers),
+            lambda: _ask_custom_dest(args, prompter, answers),
             lambda: _ask_collisions(args, prompter, answers),
             lambda: _ask_providers(args, prompter, answers),
             lambda: _ask_credentials(args, prompter, answers),
@@ -530,7 +555,7 @@ def _ask_skills(args, prompter, answers: _Answers) -> None:
 
 
 def _ask_dests(args, prompter, answers: _Answers) -> None:
-    answers.dests = []
+    answers.dests, answers.want_custom = [], False
     if args.skills_dest:
         answers.dests = [Path(args.skills_dest).expanduser().resolve()]
         return
@@ -541,22 +566,36 @@ def _ask_dests(args, prompter, answers: _Answers) -> None:
             category=ErrorCategory.CLI,
         )
     choices = _dest_choices()
-    chosen = prompter.multiselect(
+    chosen = [choices[i].value for i in prompter.multiselect(
         "Where should they be installed?", choices, preselected=_preselected_dests(choices),
-    )
-    answers.dests = [choices[i].value for i in chosen]
-    if prompter.confirm("Add a custom path as well?", default=False):
-        raw = prompter.text("Path")
-        if raw.strip():
-            answers.dests.append(Path(raw).expanduser().resolve())
+    )]
+    answers.want_custom = CUSTOM_DEST in chosen
+    answers.dests = [dest for dest in chosen if dest != CUSTOM_DEST]
+
+
+def _ask_custom_dest(args, prompter, answers: _Answers) -> None:
+    """The path behind the "somewhere else…" row.
+
+    Its own step so that going back from it returns to the destination list rather
+    than past it — and so that not ticking the row asks nothing at all, which is what
+    the driver then steps over on the way back.
+    """
+    answers.custom_dest = None
+    if not answers.want_custom:
+        return
+    raw = prompter.text("Path to install to")
+    if raw.strip():
+        answers.custom_dest = Path(raw).expanduser().resolve()
+
+
+def _all_dests(answers: _Answers) -> list[Path]:
+    return [*answers.dests, *([answers.custom_dest] if answers.custom_dest else [])]
 
 
 def _ask_collisions(args, prompter, answers: _Answers) -> None:
     answers.plan = []
-    if answers.dests:
-        answers.plan = _plan_installs(
-            answers.skills, answers.dests, prompter, unattended=args.non_interactive
-        )
+    if dests := _all_dests(answers):
+        answers.plan = _plan_installs(answers.skills, dests, prompter, unattended=args.non_interactive)
 
 
 def _ask_providers(args, prompter, answers: _Answers) -> None:

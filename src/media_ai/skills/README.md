@@ -67,8 +67,9 @@ media-ai uninstall            # take them back out again
 
 The wizard offers the conventions agents actually read — `.claude/skills`,
 `.agents/skills`, `.codex/skills`, `.trae/skills`, `.openclaw/skills` — each at
-user level (`~/`) or project level (`./`), plus a custom path. Directories that
-already exist are pre-ticked; you can install to several at once. Every destination
+user level (`~/`, every project on the machine) or in the current folder (`./`),
+plus a "somewhere else…" row for any other path. Directories that already exist
+are pre-ticked; you can install to several at once. Every destination
 is recorded in `~/.config/media-ai/installed-skills.toml` so `media-ai uninstall`
 can find them again, and `media-ai doctor` reports any copy that has drifted from
 the version the CLI ships.

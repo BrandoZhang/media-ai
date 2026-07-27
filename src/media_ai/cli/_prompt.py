@@ -300,12 +300,16 @@ class TerminalPrompter:
 
     def _read_key(self) -> str:
         ch = os.read(self._fd, 1).decode("utf-8", "replace")
-        if ch != ESC:
-            return ch
-        # A bare Esc and the first byte of an arrow key are the same byte. Reading the
-        # rest unconditionally hangs on a bare Esc until the user presses something
-        # else — so wait for a tail that a terminal sends in one go, and treat silence
-        # as the key itself.
+        return self._escape() if ch == ESC else ch
+
+    def _escape(self) -> str:
+        """Classify an ESC byte that has already been read.
+
+        A bare Esc and the first byte of an arrow key are the same byte. Reading the
+        rest unconditionally hangs on a bare Esc until the user presses something
+        else — so wait for a tail that a terminal sends in one go, and treat silence
+        as the key itself.
+        """
         if not select.select([self._fd], [], [], _ESC_TAIL_SECONDS)[0]:
             return "esc"
         seq = os.read(self._fd, 2).decode("utf-8", "replace")
@@ -602,20 +606,52 @@ class TerminalPrompter:
         return line.decode("utf-8", "replace").strip()
 
     def secret(self, title: str) -> str:
-        import getpass
-
-        def read() -> str:
-            try:
-                return getpass.getpass("", stream=self._out)
-            except (EOFError, KeyboardInterrupt) as exc:
-                raise Cancelled from exc
-
-        value, height = self._ask_line(title, "input hidden, < to go back", read)
+        value, height = self._ask_line(title, "masked · esc to go back", self._read_masked)
         if is_back(value):
             raise GoBack
-        # Never echo the value, not even its length: a fixed-width mask.
+        # The typed value is echoed as it is typed but never *recorded*: the finished
+        # step shows a fixed-width mask, so the transcript left on screen (and in any
+        # scrollback) says nothing about the key, not even how long it is.
         self._submitted(title, self._g.mask * 8 if value.strip() else "(empty)", height)
         return value
+
+    def _read_masked(self) -> str:
+        """Read a line, echoing one mask glyph per character.
+
+        ``getpass`` shows nothing at all, which leaves you unable to tell a key that
+        is being typed from a terminal that has stopped listening — and pasting a
+        60-character key into apparent silence is exactly when you want to see
+        *something*. So this echoes the way clack's password prompt does: the
+        characters are hidden, the fact that you are typing is not.
+        """
+        data = bytearray()
+
+        def redraw() -> None:
+            shown = self._g.mask * len(data.decode("utf-8", "ignore"))
+            self._write(f"\r{ESC}[2K{_paint(self._g.bar, _DIM)}  {shown}")
+
+        with self._raw():
+            self._write(f"{ESC}[?25h")  # a cursor to type at; _raw hides it by default
+            while True:
+                byte = os.read(self._fd, 1)
+                if not byte or byte in (b"\x03", b"\x04"):
+                    raise Cancelled
+                if byte == b"\x1b":
+                    if self._escape() == "esc":
+                        raise GoBack
+                    continue  # arrows and friends have no meaning in a password field
+                if byte in (b"\r", b"\n"):
+                    break
+                if byte in (b"\x7f", b"\x08"):  # backspace: drop a whole character,
+                    text = data.decode("utf-8", "ignore")  # not one byte of one
+                    data = bytearray(text[:-1].encode("utf-8"))
+                elif byte[0] >= 0x20:  # printable, or a byte of a multi-byte character
+                    data += byte
+                redraw()
+        # Raw mode echoes nothing, so the newline the caller's line arithmetic expects
+        # has to be written here.
+        self._write("\r\n")
+        return data.decode("utf-8", "replace")
 
     def confirm(self, title: str, *, default: bool = True) -> bool:
         """A two-option radio, the way clack renders yes/no — arrows, y/n, or enter."""
