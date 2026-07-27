@@ -17,10 +17,22 @@ import tomllib
 import pytest
 
 from media_ai.cli import init as init_mod
+from media_ai.cli._discovery import core_skills, selectable_skills
 from media_ai.cli._prompt import Cancelled, ScriptedPrompter
 from media_ai.core.errors import ErrorCategory, MediaError
 
 SECRET = "sk-sentinel-do-not-leak-9f3a"
+
+
+def pick(*names: str) -> list[int]:
+    """Answer the skill menu by name.
+
+    The menu offers only the *optional* tier, so positions shift whenever a skill is
+    added or promoted; naming what is picked keeps these tests about the flow rather
+    than about the ordering of a list they do not own.
+    """
+    offered = selectable_skills()
+    return [offered.index(name) for name in names]
 
 
 @pytest.fixture
@@ -92,23 +104,64 @@ def test_non_interactive_never_collects_credentials(home):
 def test_shared_skill_is_always_included(home):
     """media-ai-shared is the contract the others build on."""
     args = make_args(skills_dest=str(home / "sk"), skills_only=True)
-    summary, _ = run(args, [[2]])  # pick a single non-shared skill
+    summary, _ = run(args, [pick("media-ai-image")])
     assert "media-ai-shared" in summary["skills"][0]["installed"]
+
+
+def dests(*labels: str) -> list[int]:
+    """Answer the destination menu by label, for the same reason as :func:`pick`."""
+    choices = init_mod._dest_choices()
+    return [next(i for i, o in enumerate(choices) if o.label == label) for label in labels]
 
 
 def test_installs_to_several_destinations(home):
     args = make_args(skills_only=True)
-    # skills=[image]; destinations=first two; no custom path
-    summary, _ = run(args, [[2], [0, 1], False])
+    # skills=[image]; two distinct conventions; no custom path
+    summary, _ = run(args, [pick("media-ai-image"), dests("~/.claude/skills", "~/.codex/skills"), False])
     assert len(summary["skills"]) == 2
     assert all(entry["installed"] for entry in summary["skills"])
 
 
 def test_custom_destination_is_accepted(home):
     args = make_args(skills_only=True)
-    summary, _ = run(args, [[2], [], True, str(home / "custom")])
+    summary, _ = run(args, [pick("media-ai-image"), [], True, str(home / "custom")])
     assert summary["skills"][0]["dest"] == str(home / "custom")
     assert (home / "custom" / "media-ai-shared" / "SKILL.md").is_file()
+
+
+class TestDestinationDefaults:
+    """Pressing enter through the wizard has to install something.
+
+    Pre-ticking nothing would end a first run with a success message and an empty
+    disk — the one outcome the wizard must not produce.
+    """
+
+    def test_existing_agent_directories_are_preselected(self, home):
+        (home / ".codex" / "skills").mkdir(parents=True)
+        choices = init_mod._dest_choices()
+        picked = init_mod._preselected_dests(choices)
+        assert [choices[i].label for i in picked] == ["~/.codex/skills"]
+
+    def test_the_same_directory_is_never_offered_twice(self, home):
+        """Running from your home directory makes `~/…` and `./…` the same path."""
+        labels = [o.label for o in init_mod._dest_choices()]
+        paths = [str(o.value) for o in init_mod._dest_choices()]
+        assert len(paths) == len(set(paths)) == len(labels)
+
+    def test_with_nothing_installed_the_leading_guess_is_ticked(self, home):
+        choices = init_mod._dest_choices()
+        assert init_mod._preselected_dests(choices) == [0]
+        assert choices[0].label == "~/.claude/skills"
+
+    def test_labels_are_real_paths(self, home):
+        for option in init_mod._dest_choices():
+            assert option.label.startswith(("~/", "./"))
+            assert str(option.value).endswith(option.label.lstrip("~.").lstrip("/"))
+
+    def test_pressing_enter_installs_something(self, home):
+        args = make_args(skills_only=True)
+        summary, _ = run(args, [pick("media-ai-image"), init_mod._preselected_dests(init_mod._dest_choices()), False])
+        assert summary["skills"] and summary["skills"][0]["installed"]
 
 
 def test_existing_skill_can_be_skipped(home):
@@ -116,7 +169,7 @@ def test_existing_skill_can_be_skipped(home):
     (dest / "media-ai-shared").mkdir(parents=True)
     (dest / "media-ai-shared" / "SKILL.md").write_text("hand written", encoding="utf-8")
     args = make_args(skills_only=True, skills_dest=str(dest))
-    summary, _ = run(args, [[5], 1])  # 1 = "skip"
+    summary, _ = run(args, [pick("media-ai-image"), 1])  # 1 = "skip"
     assert "media-ai-shared" in summary["skills"][0]["skipped"]
     assert (dest / "media-ai-shared" / "SKILL.md").read_text() == "hand written"
 
@@ -126,8 +179,80 @@ def test_existing_skill_can_be_overwritten(home):
     (dest / "media-ai-shared").mkdir(parents=True)
     (dest / "media-ai-shared" / "SKILL.md").write_text("stale", encoding="utf-8")
     args = make_args(skills_only=True, skills_dest=str(dest))
-    run(args, [[5], 0])  # 0 = "overwrite"
+    run(args, [pick("media-ai-image"), 0])  # 0 = "overwrite"
     assert "stale" not in (dest / "media-ai-shared" / "SKILL.md").read_text()
+
+
+# ------------------------------------------------------- what the menu asks about
+
+
+class TestTheSkillMenu:
+    """The menu should contain choices, and only choices.
+
+    Offering the shared contract, capability discovery, cost accounting, or the async
+    job skill invites a selection that half-works: deselect ``media-ai-shared`` and
+    every other skill loses its contract; deselect ``media-ai-job`` and an async video
+    generation has no way to be collected.
+    """
+
+    @staticmethod
+    def menu(home, answers):
+        args = make_args(skills_only=True, skills_dest=str(home / "sk"))
+        summary, prompter = run(args, answers)
+        return summary, prompter
+
+    def test_only_optional_skills_are_offered(self, home):
+        _summary, prompter = self.menu(home, [pick("media-ai-image")])
+        assert [o.value for o in prompter.offered[0]] == selectable_skills()
+
+    def test_every_row_carries_a_description(self, home):
+        _summary, prompter = self.menu(home, [pick("media-ai-image")])
+        for option in prompter.offered[0]:
+            assert option.detail, f"{option.label} offered with nothing describing it"
+            assert option.hint, f"{option.label} offered without saying what it costs"
+
+    def test_core_skills_install_without_being_picked(self, home):
+        summary, _ = self.menu(home, [[]])
+        assert set(summary["skills"][0]["installed"]) == set(core_skills())
+
+    def test_video_brings_the_job_skill_with_it(self, home):
+        summary, _ = self.menu(home, [pick("media-ai-video")])
+        installed = summary["skills"][0]["installed"]
+        assert "media-ai-job" in installed
+        assert (home / "sk" / "media-ai-job" / "SKILL.md").is_file()
+
+    def test_the_automatic_additions_are_reported(self, home):
+        """Writing directories nobody asked for is fine; doing it quietly is not."""
+        _summary, prompter = self.menu(home, [pick("media-ai-video")])
+        notes = "\n".join(prompter.notes)
+        assert "media-ai-job" in notes and "needed by media-ai-video" in notes
+
+    def test_picking_only_local_skills_asks_for_no_key(self, home):
+        args = make_args(skills_dest=str(home / "sk"))
+        summary, prompter = run(args, [pick("media-ai-concat")])
+        assert summary["providers"] == []
+        assert "no credentials needed" in "\n".join(prompter.notes)
+
+
+# --------------------------------------------------------------------- receipt
+
+
+def test_install_is_recorded_for_uninstall(home):
+    from media_ai.cli._skillstore import load_receipt
+
+    args = make_args(skills_only=True, skills_dest=str(home / "sk"))
+    run(args, [pick("media-ai-image")])
+    receipt = load_receipt()
+    assert str(home / "sk") in receipt
+    assert "media-ai-image" in receipt[str(home / "sk")]["skills"]
+
+
+def test_dry_run_records_nothing(home):
+    from media_ai.cli._skillstore import load_receipt, receipt_path
+
+    args = make_args(skills_only=True, skills_dest=str(home / "sk"), dry_run=True)
+    run(args, [pick("media-ai-image")])
+    assert not receipt_path().exists() and load_receipt() == {}
 
 
 # --------------------------------------------------------------- credentials
@@ -135,7 +260,7 @@ def test_existing_skill_can_be_overwritten(home):
 
 def image_only_flow(home, *, key=SECRET, mode=0):
     """skills=[image] -> dest -> providers=[first] -> storage mode -> key."""
-    return make_args(skills_dest=str(home / "sk")), [[2], [0], mode, key]
+    return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], mode, key]
 
 
 def test_pasted_key_lands_in_credentials_toml(home):
@@ -158,7 +283,7 @@ def test_credentials_file_is_0600(home):
 def test_env_reference_mode_keeps_the_key_off_disk(home):
     args = make_args(skills_dest=str(home / "sk"))
     # mode 1 = reference an env var; then accept the suggested variable name
-    summary, _ = run(args, [[2], [0], 1, None])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 1, None])
     provider = summary["providers"][0]
     assert creds(home)[provider]["api_key"].startswith("env://")
 
@@ -225,7 +350,7 @@ def test_unreadable_existing_config_is_an_error_not_an_overwrite(home):
 
 def test_dry_run_writes_nothing(home):
     args = make_args(skills_dest=str(home / "sk"), dry_run=True)
-    summary, _ = run(args, [[2], [0], 0, SECRET])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 0, SECRET])
     assert summary["dry_run"] is True
     assert not (home / "credentials.toml").exists()
     assert not (home / "sk").exists()
@@ -233,7 +358,7 @@ def test_dry_run_writes_nothing(home):
 
 def test_dry_run_still_reports_what_it_would_write(home):
     args = make_args(skills_dest=str(home / "sk"), dry_run=True)
-    summary, _ = run(args, [[2], [0], 0, SECRET])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 0, SECRET])
     assert summary["wrote"], "dry run should still name the files"
     assert summary["skills"][0]["installed"]
 
@@ -255,7 +380,7 @@ def test_cancel_midway_writes_nothing(home, monkeypatch):
     # skills, destinations, providers answered; then the user aborts at the key prompt.
     monkeypatch.setattr(
         init_mod, "get_prompter",
-        lambda **kw: ScriptedPrompter([[2], [0], 0, Cancelled]),
+        lambda **kw: ScriptedPrompter([pick("media-ai-image"), [0], 0, Cancelled]),
     )
     with pytest.raises(MediaError):
         init_mod._do(make_args(skills_dest=str(home / "sk")))

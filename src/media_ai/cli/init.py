@@ -27,21 +27,16 @@ from ..credentials import stores
 from ..credentials.profile import config_path
 from ..credentials.tomlwrite import dumps, write_private, write_public
 from . import common
-from ._discovery import available_skills, operations_for_skill, providers_for_skills, skill_root
-from ._prompt import Cancelled, Option, get_prompter
-
-# Agent conventions that read SKILL.md directories. Adding one is a single row; the
-# layouts are assumed identical (<root>/skills/<name>/SKILL.md) until shown otherwise.
-SKILL_DESTS = (
-    ("claude", ".claude/skills"),
-    ("agents", ".agents/skills"),
-    ("codex", ".codex/skills"),
-    ("trae", ".trae/skills"),
-    ("openclaw", ".openclaw/skills"),
+from ._discovery import (
+    available_skills,
+    operations_for_skill,
+    providers_for_skills,
+    resolve_selection,
+    selectable_skills,
+    skill_info,
 )
-
-# The shared skill is the common contract the others build on, so it always ships.
-ALWAYS_INSTALL = "media-ai-shared"
+from ._prompt import Cancelled, Option, get_prompter
+from ._skillstore import SKILL_DESTS, copy_skill, record_install
 
 # Which config keys hold a provider's default model, per skill group. These are
 # genuinely separate models — Gemini's image/Veo/TTS families are disjoint, and
@@ -71,8 +66,9 @@ CONFIG_HEADER = (
 )
 
 
-def credentials_path() -> Path:
-    return Path(os.getenv("MEDIA_CREDENTIALS_FILE", "~/.config/media-ai/credentials.toml")).expanduser()
+#: Re-exported so the wizard and everything that has to clean up after it name the
+#: same file. The definition lives beside the reader in ``credentials/stores.py``.
+credentials_path = stores.credentials_path
 
 
 # --------------------------------------------------------------------------- io
@@ -110,44 +106,68 @@ def _backup(path: Path) -> Path | None:
 
 
 def _skill_choices(skills: list[str]) -> list[Option]:
+    """One row per skill: what it costs (hint) and what it is (detail).
+
+    A bare list of ``media-ai-*`` names is not a choice a user can make — nothing on
+    it says what ``media-ai-sound`` does, or that ``media-ai-concat`` needs no key. So
+    the skill's own blurb is shown beside it.
+    """
     out = []
     for skill in skills:
         ops = operations_for_skill(skill)
         hint = "no credentials needed" if not ops else ", ".join(sorted(o.value for o in ops))
-        if skill == ALWAYS_INSTALL:
-            hint = "required by the others"
-        out.append(Option(label=skill, hint=hint, value=skill))
+        out.append(Option(label=skill, hint=hint, value=skill, detail=skill_info(skill).summary))
     return out
+
+
+def _report_additions(reasons: dict[str, str], prompter) -> None:
+    """Say what is being installed beyond what was ticked, and why.
+
+    Adding directories a user did not select is defensible; doing it silently is not —
+    they are the ones who will find the extra folders later.
+    """
+    if not reasons:
+        return
+    width = max(len(name) for name in reasons)
+    lines = "\n".join(f"  {name:<{width}}  {why}" for name, why in sorted(reasons.items()))
+    prompter.note(f"Also installing:\n{lines}")
 
 
 def _dest_choices() -> list[Option]:
-    """Every agent convention at user and project level, existing ones first."""
-    out = []
-    for _key, segment in SKILL_DESTS:
-        for base, label in ((Path.home(), "~"), (Path.cwd(), "./")):
+    """Every agent convention at user and project level, best guess first.
+
+    Ordered by how likely it is to be the one wanted: directories that already exist
+    (the agent is installed and in use), then the declared order of the conventions,
+    then user level before project level — installing to ``~`` makes the skills work
+    in every checkout, which is what someone running the wizard for the first time
+    almost always means.
+    """
+    ranked = []
+    seen: set[str] = set()
+    for rank, (_key, segment) in enumerate(SKILL_DESTS):
+        for depth, (base, label) in enumerate(((Path.home(), "~/"), (Path.cwd(), "./"))):
             path = base / segment
-            out.append(Option(label=f"{label}{segment}", hint="exists" if path.is_dir() else "", value=path))
-    out.sort(key=lambda o: (not o.hint, o.label))
-    return out
+            # Run the wizard from your home directory and "~/…" and "./…" are the same
+            # directory; offering it twice means installing to it twice, and being
+            # asked to confirm an overwrite of the copy just made.
+            if str(path.resolve()) in seen:
+                continue
+            seen.add(str(path.resolve()))
+            exists = path.is_dir()
+            option = Option(label=f"{label}{segment}", hint="exists" if exists else "", value=path)
+            ranked.append(((not exists, rank, depth), option))
+    ranked.sort(key=lambda row: row[0])
+    return [option for _key, option in ranked]
 
 
-def _copy_skill(name: str, dest_root: Path) -> list[Path]:
-    """Copy one packaged skill directory to ``dest_root/<name>``, preserving
-    ``references/`` subdirectories. Returns the files written."""
-    written: list[Path] = []
+def _preselected_dests(choices: list[Option]) -> list[int]:
+    """Tick the directories that already exist, or the leading guess if none do.
 
-    def walk(src, out: Path):
-        out.mkdir(parents=True, exist_ok=True)
-        for entry in src.iterdir():
-            target = out / entry.name
-            if entry.is_dir():
-                walk(entry, target)
-            else:
-                target.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
-                written.append(target)
-
-    walk(skill_root(name), dest_root / name)
-    return written
+    Pre-ticking nothing would make "press enter through the wizard" install nothing at
+    all — and then report success, which is the one outcome a first run must not have.
+    """
+    existing = [i for i, opt in enumerate(choices) if opt.hint]
+    return existing or ([0] if choices else [])
 
 
 def _install_skills(skills: list[str], dests: list[Path], prompter, *, dry_run: bool) -> list[dict]:
@@ -176,9 +196,13 @@ def _install_skills(skills: list[str], dests: list[Path], prompter, *, dry_run: 
                     skipped.append(skill)
                     continue
             if not dry_run:
-                _copy_skill(skill, dest)
+                copy_skill(skill, dest)
             installed.append(skill)
         report.append({"dest": str(dest), "installed": installed, "skipped": skipped})
+    if not dry_run:
+        # Record where they landed so `media-ai uninstall` can find them again —
+        # including a custom path no amount of scanning would guess.
+        record_install(dests)
     return report
 
 
@@ -344,24 +368,41 @@ def _groups_for(skills: list[str]) -> set[str]:
 
 
 def _wizard(args, prompter) -> dict:
-    prompter.note("media-ai setup\n")
+    """Run the steps, then always close the run off.
+
+    The steps bail out early in several places — nothing to configure, no provider
+    picked, ``--skills-only``. Each of those is a *finished* run, so the summary and
+    the closing line are drawn here rather than at the end of the last step, where
+    four of the five exits would miss them (and leave the UI's rail hanging open).
+    """
+    prompter.intro("media-ai setup")
     summary: dict = {
         "ok": True, "schema_version": SCHEMA_VERSION, "operation": "init",
         "wrote": [], "backed_up": [], "providers": [], "skills": [], "dry_run": bool(args.dry_run),
     }
+    _steps(args, prompter, summary)
+    _report(summary, prompter)
+    return summary
 
+
+def _steps(args, prompter, summary: dict) -> None:
     # -- skills ----------------------------------------------------------
     # --non-interactive means "take the defaults, ask nothing" — it has to hold for
     # every question below, or an unattended run blocks on a prompt it cannot answer.
-    all_skills = available_skills()
     if args.non_interactive:
-        skills = all_skills
+        skills = available_skills()
     else:
+        # Only the *optional* skills are a real choice. The shared contract, discovery
+        # and cost accounting are assumed by everything else, and the job skill is
+        # half of what async video generation means — offering those four produces
+        # selections that half-work, not informed consent. See `_discovery.TIERS`.
+        offered = selectable_skills()
         picked = prompter.multiselect(
-            "Which skills should be installed?", _skill_choices(all_skills),
-            preselected=list(range(len(all_skills))),
+            "Which skills should be installed?", _skill_choices(offered),
+            preselected=list(range(len(offered))),
         )
-        skills = sorted({all_skills[i] for i in picked} | {ALWAYS_INSTALL})
+        skills, reasons = resolve_selection([offered[i] for i in picked])
+        _report_additions(reasons, prompter)
 
     if args.skills_dest:
         dests = [Path(args.skills_dest).expanduser().resolve()]
@@ -374,7 +415,8 @@ def _wizard(args, prompter) -> dict:
     else:
         choices = _dest_choices()
         chosen = prompter.multiselect(
-            "Where should they be installed? (space to toggle, several are fine)", choices,
+            "Where should they be installed?",
+            choices, preselected=_preselected_dests(choices),
         )
         dests = [choices[i].value for i in chosen]
         if prompter.confirm("Add a custom path as well?", default=False):
@@ -388,13 +430,13 @@ def _wizard(args, prompter) -> dict:
     if args.skills_only or args.non_interactive:
         # Credentials are never collected unattended: there is nothing sensible to
         # default a key to, and guessing one would be worse than stopping here.
-        return summary
+        return
 
     # -- providers derived from the skills -------------------------------
     needed = providers_for_skills(skills)
     if not needed:
-        prompter.note("\nThe selected skills run locally — no credentials needed.")
-        return summary
+        prompter.note("The selected skills run locally — no credentials needed.")
+        return
 
     choices = [
         Option(p, hint=", ".join(s.removeprefix("media-ai-") for s in sk), value=p)
@@ -406,7 +448,7 @@ def _wizard(args, prompter) -> dict:
     )
     providers = [choices[i].value for i in picked]
     if not providers:
-        return summary
+        return
 
     # -- credentials + model defaults ------------------------------------
     creds = _collect_credentials({p: needed[p] for p in providers}, prompter)
@@ -437,9 +479,6 @@ def _wizard(args, prompter) -> dict:
     if args.verify:
         summary["verified"] = _verify(sorted(creds), prompter)
 
-    _report(summary, providers, prompter)
-    return summary
-
 
 def _verify(providers: list[str], prompter) -> dict:
     """Probe each configured key. Off by default — one provider has no free probe."""
@@ -458,17 +497,16 @@ def _verify(providers: list[str], prompter) -> dict:
     return out
 
 
-def _report(summary: dict, providers: list[str], prompter) -> None:
-    prompter.note("\nDone.")
+def _report(summary: dict, prompter) -> None:
     for path in summary["wrote"]:
-        prompter.note(f"  wrote {path}")
+        prompter.note(f"wrote {path}")
     for path in summary["backed_up"]:
-        prompter.note(f"  backed up {path}")
+        prompter.note(f"backed up {path}")
+    providers = summary["providers"]
     if providers:
-        prompter.note(
-            f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}"
-        )
+        prompter.note(f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}")
     prompter.note("\nTry it offline:\n  media-ai image generate --provider mock --prompt hello --output /tmp/x.png")
+    prompter.outro("Done. `media-ai doctor` checks this install; `media-ai uninstall` undoes it.")
 
 
 # -------------------------------------------------------------------- entry

@@ -14,6 +14,12 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities"
+  install:
+    tier: core
+    summary: >-
+      The contract every other media-ai skill builds on: one JSON object on stdout,
+      exit codes by category, how to pick a provider/model, and how credentials stay
+      out of the agent's context.
 ---
 
 # media-ai-shared — foundation for the media-ai CLI

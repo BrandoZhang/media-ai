@@ -12,6 +12,12 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  install:
+    tier: optional
+    summary: >-
+      Read text aloud — a single narrator or a multi-voice conversation — with
+      ElevenLabs voices or Gemini TTS, plus per-character timestamp sidecars for
+      subtitles.
 ---
 
 # media-ai-speech — text → speech

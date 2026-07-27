@@ -10,6 +10,11 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai concat --help"
+  install:
+    tier: optional
+    summary: >-
+      Stitch generated clips into one finished video with the bundled ffmpeg. Runs
+      locally — no provider, no credentials, no cost.
 ---
 
 # media-ai-concat — join clips into one film

@@ -48,6 +48,16 @@ def broker_resolver(provider: str) -> Credential | None:
     return BrokeredHandle(provider=provider, endpoint=endpoint, token=token)
 
 
+def credentials_path() -> Path:
+    """Where the secret-bearing credentials file lives (``$MEDIA_CREDENTIALS_FILE``).
+
+    Public because ``media-ai init``/``uninstall``/``doctor`` all have to name the
+    same file this module reads; a second copy of the default would be a bug waiting
+    for someone to change one of them.
+    """
+    return Path(os.getenv("MEDIA_CREDENTIALS_FILE", "~/.config/media-ai/credentials.toml")).expanduser()
+
+
 def _read_credentials_toml() -> dict | None:
     """Parse ``~/.config/media-ai/credentials.toml`` (override with
     ``MEDIA_CREDENTIALS_FILE``), or return ``None`` when the file is absent.
@@ -55,7 +65,7 @@ def _read_credentials_toml() -> dict | None:
     The file must not be world/group readable (``chmod 600``); a looser mode is
     refused rather than silently trusted.
     """
-    path = Path(os.getenv("MEDIA_CREDENTIALS_FILE", "~/.config/media-ai/credentials.toml")).expanduser()
+    path = credentials_path()
     if not path.is_file():
         return None
     mode = path.stat().st_mode

@@ -10,6 +10,11 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  install:
+    tier: optional
+    summary: >-
+      Generate sound effects from a description — whooshes, impacts, foley, UI
+      clicks, ambience — one-shot or seamlessly looping. ElevenLabs.
 ---
 
 # media-ai-sound — text → sound effect

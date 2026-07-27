@@ -10,10 +10,15 @@ from __future__ import annotations
 import pytest
 
 from media_ai.cli._discovery import (
+    TIERS,
     available_skills,
+    core_skills,
     operations_for_skill,
     provider_matrix,
     providers_for_skills,
+    resolve_selection,
+    selectable_skills,
+    skill_info,
 )
 from media_ai.core import registry
 from media_ai.core.types import Operation
@@ -69,6 +74,91 @@ def test_every_packaged_skill_is_classified():
     for skill in available_skills():
         ops = operations_for_skill(skill)
         assert ops or skill in LOCAL_ONLY, f"{skill} maps to no operation and is not known-local"
+
+
+# ------------------------------------------------------------- self-description
+
+
+class TestSkillMetadata:
+    """Every skill has to describe itself, because the installer shows a *menu*.
+
+    A list of ``media-ai-*`` directory names is not a choice anyone can make: nothing
+    on it says what ``media-ai-sound`` does or which of them are assumed by the rest.
+    """
+
+    def test_every_skill_declares_a_summary(self):
+        for skill in available_skills():
+            summary = skill_info(skill).summary
+            assert summary, f"{skill} would be offered with no description"
+            assert len(summary) > 40, f"{skill}: {summary!r} is too terse to choose from"
+
+    def test_every_skill_declares_a_known_tier(self):
+        for skill in available_skills():
+            assert skill_info(skill).tier in TIERS
+
+    def test_summary_is_not_the_agent_facing_description(self):
+        """The `description` is keyword bait for skill matching; a human needs prose."""
+        for skill in available_skills():
+            assert "Use when asked" not in skill_info(skill).summary
+
+    def test_declared_dependencies_exist(self):
+        known = set(available_skills())
+        for skill in available_skills():
+            assert set(skill_info(skill).needs) <= known, f"{skill} needs a skill that does not ship"
+
+    def test_unknown_skill_degrades_instead_of_raising(self):
+        info = skill_info("media-ai-does-not-exist")
+        assert info.tier == "optional" and info.needs == () and info.summary == ""
+
+
+class TestInstallTiers:
+    """What the wizard asks about, and what it just does."""
+
+    def test_the_shared_contract_and_offline_helpers_are_never_asked_about(self):
+        assert set(core_skills()) == {"media-ai-shared", "media-ai-capabilities", "media-ai-usage"}
+
+    def test_core_skills_are_not_offered_as_a_choice(self):
+        assert not set(core_skills()) & set(selectable_skills())
+
+    def test_the_job_skill_is_a_dependency_not_a_choice(self):
+        """Async is half of what video generation *is*, not a separate preference."""
+        assert skill_info("media-ai-job").tier == "dependency"
+        assert "media-ai-job" not in selectable_skills()
+
+    def test_video_pulls_in_the_job_skill(self):
+        skills, reasons = resolve_selection(["media-ai-video"])
+        assert "media-ai-job" in skills
+        assert reasons["media-ai-job"] == "needed by media-ai-video"
+
+    def test_picking_nothing_still_installs_the_core(self):
+        skills, reasons = resolve_selection([])
+        assert set(skills) == set(core_skills())
+        assert all(why == "always installed" for why in reasons.values())
+
+    def test_every_addition_is_explained(self):
+        """Extra directories may be written; doing it silently may not."""
+        picked = ["media-ai-image", "media-ai-video"]
+        skills, reasons = resolve_selection(picked)
+        assert set(reasons) == set(skills) - set(picked)
+
+    def test_an_explicit_pick_is_never_reported_as_automatic(self):
+        _skills, reasons = resolve_selection(["media-ai-image"])
+        assert "media-ai-image" not in reasons
+
+    def test_resolution_is_stable_and_sorted(self):
+        a, _ = resolve_selection(["media-ai-video", "media-ai-image"])
+        b, _ = resolve_selection(["media-ai-image", "media-ai-video"])
+        assert a == b == sorted(a)
+
+    def test_only_ever_resolves_to_skills_that_ship(self):
+        skills, _ = resolve_selection([*selectable_skills(), "media-ai-not-a-skill"])
+        assert set(skills) - {"media-ai-not-a-skill"} <= set(available_skills())
+
+    def test_selecting_everything_offered_covers_every_packaged_skill(self):
+        """Nothing should be unreachable: a skill that ships but can never be chosen
+        is one nobody will ever have."""
+        skills, _ = resolve_selection(selectable_skills())
+        assert set(skills) == set(available_skills())
 
 
 # ------------------------------------------------------------------ matrix

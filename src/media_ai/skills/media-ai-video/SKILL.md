@@ -11,6 +11,15 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --model veo-3.1-generate-preview"
+  install:
+    tier: optional
+    # Generation is asynchronous on every real backend, so the poll/finalize/cancel
+    # skill is part of using this one, not a separate decision.
+    needs: ["media-ai-job"]
+    summary: >-
+      Turn a prompt, a first/last frame, or reference media into a clip, with
+      Seedance and Veo. Generation is asynchronous — this covers both waiting and
+      polling.
 ---
 
 # media-ai-video — generate video

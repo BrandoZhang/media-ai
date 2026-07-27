@@ -1,18 +1,21 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
-Groups: ``init``, ``image``, ``video``, ``speech``, ``music``, ``sound``, ``concat``,
-``job``, ``capabilities``, ``usage``. Each group is also reachable directly; this
-umbrella reshapes argv so the group's own argparse sees a clean program name.
+Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
+``music``, ``sound``, ``concat``, ``job``, ``capabilities``, ``usage``. Each group is
+also reachable directly; this umbrella reshapes argv so the group's own argparse sees
+a clean program name.
 """
 
 from __future__ import annotations
 
 import sys
 
-from .cli import capabilities, concat, image, init, job, music, sound, speech, usage, video
+from .cli import capabilities, concat, doctor, image, init, job, music, sound, speech, uninstall, usage, video
 
 _GROUPS = {
     "init": init.main,
+    "doctor": doctor.main,
+    "uninstall": uninstall.main,
     "image": image.main,
     "video": video.main,
     "speech": speech.main,
@@ -31,6 +34,8 @@ def _usage(stream) -> None:
         print(f"  {name}", file=stream)
     print("\nexamples:", file=stream)
     print("  media-ai init                      # first-run setup: keys, models, skills", file=stream)
+    print("  media-ai doctor                    # check the install offline (PATH, ffmpeg, keys, skills)", file=stream)
+    print("  media-ai uninstall                 # remove the skills; keeps config unless asked", file=stream)
     print("  media-ai image generate --prompt 'a red bicycle' --output bike.png", file=stream)
     print("  media-ai video generate --prompt 'twin suns setting' --output clip.mp4", file=stream)
     print("  media-ai speech generate --text 'hello there' --output hi.mp3 --provider elevenlabs", file=stream)
@@ -63,6 +68,13 @@ def main() -> int:
     # behaviour, and the same exemption cli/common.parse_args makes.
     if argv and argv[0] in ("-h", "--help"):
         _usage(sys.stdout)
+        return 0
+    if argv and argv[0] in ("-V", "--version", "version"):
+        # Same exemption: a version query is a request, so plain text and exit 0.
+        # `media-ai doctor` is the machine-readable route to the same number.
+        from . import __version__
+
+        print(f"media-ai {__version__}")
         return 0
     if not argv:
         return _usage_error("no command given; expected: media-ai <group> <op> [args...]")

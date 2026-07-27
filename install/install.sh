@@ -17,7 +17,7 @@ REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.2.0}"
 
 main() {
-  local version="" skills_dest="" do_init=1 dry_run=0
+  local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 purge=0 assume_yes=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -26,11 +26,21 @@ main() {
       --skills-dest)  skills_dest="${2:-}"; shift 2 ;;
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
       --no-init)      do_init=0; shift ;;
+      --uninstall)    do_uninstall=1; shift ;;
+      --purge)        purge=1; shift ;;
+      -y|--yes)       assume_yes=1; shift ;;
       --dry-run)      dry_run=1; shift ;;
       -h|--help)      usage; return 0 ;;
       *) err "unknown option: $1"; usage; return 2 ;;
     esac
   done
+
+  # Before ensure_uv: installing uv in order to uninstall would be absurd, and the
+  # CLI may well have been installed some other way.
+  if [ "$do_uninstall" -eq 1 ]; then
+    run_uninstall "$purge" "$assume_yes" "$dry_run"
+    return $?
+  fi
 
   check_platform
   ensure_uv
@@ -58,7 +68,13 @@ usage: install.sh [options]
   --version REF      install this git ref (tag, branch, or sha; default: latest tag)
   --skills-dest PATH install Agent Skills here without asking
   --no-init          skip the configuration wizard
-  --dry-run          print what would be installed and exit
+  --dry-run          print what would be done and exit
+
+uninstalling:
+
+  --uninstall        remove the installed Agent Skills, then the CLI itself
+  --purge            with --uninstall: also delete config.toml and credentials.toml
+  -y, --yes          with --uninstall: don't ask, take the defaults
 USAGE
 }
 
@@ -166,6 +182,46 @@ run_init() {
   else
     media-ai init < /dev/tty || true
   fi
+}
+
+run_uninstall() {
+  # Two halves, in this order: the CLI removes what it wrote (skills, and — only if
+  # asked — the config files), then this removes the CLI. It cannot be done the other
+  # way round, because the first half runs the CLI.
+  local purge="$1" assume_yes="$2" dry_run="$3"
+  local flags=() have_tty=1
+
+  if [ "$purge" -eq 1 ]; then flags+=(--purge); fi
+  if [ "$dry_run" -eq 1 ]; then flags+=(--dry-run); fi
+  # Same /dev/tty test as run_init: under `curl … | bash` the pipe owns stdin, and
+  # with no terminal at all the wizard must not wait for an answer that cannot come.
+  # Without one, --yes is implied: skills go, configuration stays unless --purge.
+  : 2>/dev/null < /dev/tty || have_tty=0
+  if [ "$assume_yes" -eq 1 ] || [ "$have_tty" -eq 0 ]; then flags+=(--yes); fi
+
+  if command -v media-ai >/dev/null 2>&1; then
+    say "removing installed Agent Skills…"
+    if [ "$have_tty" -eq 1 ]; then
+      media-ai uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
+    else
+      media-ai uninstall "${flags[@]+"${flags[@]}"}" >/dev/null || true
+    fi
+  else
+    err "media-ai is not on PATH; skipping skill removal (run 'media-ai uninstall' yourself if it is installed elsewhere)"
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    say "would run: uv tool uninstall media-ai"
+    return 0
+  fi
+  if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q '^media-ai'; then
+    say "removing the media-ai CLI…"
+    uv tool uninstall media-ai >&2
+  else
+    err "media-ai was not installed as a uv tool; remove it however you installed it:"
+    err "  pip uninstall media-ai"
+  fi
+  return 0
 }
 
 main "$@"

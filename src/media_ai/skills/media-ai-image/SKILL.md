@@ -11,6 +11,12 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --model gpt-image-2"
+  install:
+    tier: optional
+    summary: >-
+      Make and edit pictures from a prompt — logos, icons, illustrations, photos —
+      with optional reference images and inpaint masks. Backed by GPT-Image, Nano
+      Banana, or Seedream.
 ---
 
 # media-ai-image — generate & edit images

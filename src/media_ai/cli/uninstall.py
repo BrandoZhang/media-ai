@@ -1,0 +1,247 @@
+"""``media-ai uninstall`` — undo what ``media-ai init`` wrote.
+
+Installing is only half a lifecycle. ``init`` copies skill directories into several
+agent conventions at once and writes two files under ``~/.config/media-ai``; without
+this command the only way back is to remember all of that and delete it by hand.
+
+Two rules shape it:
+
+- **Configuration is kept unless asked for.** Skills are copies of packaged files and
+  cost nothing to restore; ``credentials.toml`` holds keys that may exist nowhere else
+  and ``config.toml`` holds endpoint ids that were typed in by hand. So the default is
+  skills-only, and removing either file takes an explicit flag or an explicit "yes" —
+  never a default, never a bundled ``--all``.
+- **Nothing is removed that was not recognisably installed.** Every deletion goes
+  through :mod:`media_ai.cli._skillstore`, which touches only ``media-ai-*``
+  directories carrying a ``SKILL.md``, and unlinks symlinks rather than following
+  them. A wrong ``--skills-dest`` fails loudly instead of recursing.
+
+The CLI itself is left in place: it is what is running. The removal command for it is
+printed, and carried in the JSON as ``remove_cli`` so ``install.sh --uninstall`` can
+finish the job.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from ..core.result import SCHEMA_VERSION
+from ..credentials.profile import config_path
+from ..credentials.stores import credentials_path
+from . import common
+from ._prompt import Cancelled, Option, get_prompter
+from ._skillstore import (
+    installed_skills,
+    known_dests,
+    load_receipt,
+    prune_empty,
+    receipt_path,
+    record_install,
+    remove_skill,
+)
+
+__all__ = ["main"]
+
+
+# ------------------------------------------------------------------- discovery
+
+
+def _candidates(explicit: list[str] | None) -> list[tuple[Path, list[str]]]:
+    """``[(dest, [skill, …]), …]`` for every directory holding installed skills.
+
+    Without ``--skills-dest`` this looks in the receipt (which knows about custom
+    paths) *and* the conventional locations (which cover hand-copied installs and
+    anything predating the receipt). Order is receipt-first so the paths a user chose
+    lead the list.
+    """
+    roots = (
+        [Path(p).expanduser() for p in explicit]
+        if explicit
+        else [Path(p).expanduser() for p in load_receipt()] + known_dests()
+    )
+    out: list[tuple[Path, list[str]]] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        skills = installed_skills(root)
+        if skills:
+            out.append((root, skills))
+    return out
+
+
+def _dest_choices(found: list[tuple[Path, list[str]]]) -> list[Option]:
+    return [
+        Option(
+            label=str(dest),
+            hint=f"{len(skills)} skill{'s' if len(skills) != 1 else ''}",
+            value=dest,
+            detail=", ".join(skills),
+        )
+        for dest, skills in found
+    ]
+
+
+# --------------------------------------------------------------------- removal
+
+
+def _remove_skills(found: list[tuple[Path, list[str]]], summary: dict, *, dry_run: bool) -> None:
+    if not found:
+        return
+    for dest, skills in found:
+        removed = [skill for skill in skills if dry_run or remove_skill(dest, skill)]
+        summary["skills"].append({"dest": str(dest), "removed": removed})
+    if dry_run:
+        return
+    for dest, _skills in found:
+        # An emptied skills directory is litter; a directory with anything left in it
+        # is somebody else's. rmdir tells the two apart without a heuristic.
+        if prune_empty(dest):
+            summary["removed"].append(str(dest))
+    # Re-derives each entry from what is left on disk, so a partial removal keeps an
+    # accurate receipt and a full one deletes it.
+    record_install([dest for dest, _ in found])
+
+
+def _remove_file(path: Path, summary: dict, *, dry_run: bool) -> None:
+    if not dry_run:
+        path.unlink(missing_ok=True)
+    summary["removed"].append(str(path))
+
+
+def _backups_of(path: Path) -> list[Path]:
+    """``init`` copies a file aside before rewriting it. A backup of the credentials
+    file holds the same keys, so removing one without the other would leave the secret
+    on disk under a name the user is even less likely to remember."""
+    return sorted(p for p in path.parent.glob(path.name + ".bak*") if p.is_file())
+
+
+# ---------------------------------------------------------------- the command
+
+
+def _uninstall(args, prompter) -> dict:
+    prompter.intro("media-ai uninstall")
+    summary: dict = {
+        "ok": True, "schema_version": SCHEMA_VERSION, "operation": "uninstall",
+        "skills": [], "removed": [], "kept": [], "dry_run": bool(args.dry_run),
+    }
+    interactive = not args.yes
+
+    # -- decide ----------------------------------------------------------
+    # Every question is asked before anything is deleted, so Ctrl-C at any prompt
+    # leaves the install exactly as it was — the same invariant `init` holds for
+    # writes. A half-answered uninstall would be the worst of both states.
+    found = _candidates(args.skills_dest)
+    if args.keep_skills:
+        summary["kept"] += [str(dest) for dest, _ in found]
+        found = []
+    elif not found:
+        prompter.note("No installed Agent Skills found.")
+    elif interactive:
+        choices = _dest_choices(found)
+        picked = set(prompter.multiselect(
+            "Remove the media-ai skills installed here?", choices, preselected=list(range(len(choices))),
+        ))
+        summary["kept"] += [str(dest) for i, (dest, _) in enumerate(found) if i not in picked]
+        found = [entry for i, entry in enumerate(found) if i in picked]
+
+    # Asked about separately: someone rotating machines wants the model defaults gone
+    # but the keys kept, and a shared box is the other way round.
+    doomed: list[Path] = []
+    for flag, path, what in (
+        ("config", config_path(), "provider defaults, profiles, endpoint ids"),
+        ("credentials", credentials_path(), "API keys — may exist nowhere else"),
+    ):
+        if not path.is_file():
+            continue
+        wanted = bool(getattr(args, flag) or args.purge)
+        if not wanted and interactive:
+            wanted = prompter.confirm(f"Also remove {path}\n  ({what})?", default=False)
+        if wanted:
+            doomed += [path, *_backups_of(path)]
+        else:
+            summary["kept"].append(str(path))
+
+    # -- execute ---------------------------------------------------------
+    _remove_skills(found, summary, dry_run=args.dry_run)
+    for path in doomed:
+        _remove_file(path, summary, dry_run=args.dry_run)
+    if not args.dry_run and not receipt_path().is_file():
+        prune_empty(config_path().parent)
+
+    summary["remove_cli"] = _remove_cli_hint()
+    _report(summary, prompter)
+    return summary
+
+
+def _remove_cli_hint() -> str:
+    """How to remove the CLI itself — which this command deliberately does not do.
+
+    Deleting the package out from under the interpreter that is running it works on
+    POSIX but is not something to do on a user's behalf, and the installer is the
+    piece that knows how it was installed. ``uv tool`` puts each tool in its own
+    environment under ``…/uv/tools/<name>``, which is what makes it recognisable here.
+    """
+    parts = Path(sys.prefix).resolve().parts
+    if "uv" in parts and "tools" in parts:
+        return "uv tool uninstall media-ai"
+    return "pip uninstall media-ai"
+
+
+def _report(summary: dict, prompter) -> None:
+    verb = "would remove" if summary["dry_run"] else "removed"
+    for entry in summary["skills"]:
+        if entry["removed"]:
+            prompter.note(f"{verb} {len(entry['removed'])} skill(s) from {entry['dest']}")
+    for path in summary["removed"]:
+        prompter.note(f"{verb} {path}")
+    for path in summary["kept"]:
+        prompter.note(f"kept    {path}")
+    prompter.note(f"\nThe media-ai CLI itself is still installed. To remove it:\n  {summary['remove_cli']}")
+    prompter.outro("Dry run — nothing was changed." if summary["dry_run"] else "Done.")
+
+
+# -------------------------------------------------------------------- entry
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="media-ai uninstall",
+        description="Remove installed Agent Skills, and optionally the configuration files.",
+    )
+    ap.add_argument("--skills-dest", action="append", default=None,
+                    help="only look here (repeatable); default: the install receipt + the usual agent directories")
+    ap.add_argument("--keep-skills", action="store_true", help="leave installed Agent Skills in place")
+    ap.add_argument("--config", action="store_true", help="also remove config.toml (kept by default)")
+    ap.add_argument("--credentials", action="store_true", help="also remove credentials.toml (kept by default)")
+    ap.add_argument("--purge", action="store_true", help="remove skills, config.toml and credentials.toml")
+    ap.add_argument("--yes", "-y", action="store_true", help="don't ask; remove skills, keep config unless flagged")
+    ap.add_argument("--dry-run", action="store_true", help="report what would be removed without removing it")
+    ap.add_argument("--pretty", action="store_true")
+    ap.add_argument("--log-level", default=None)
+    ap.add_argument("--metadata-out", default=None)
+    return ap
+
+
+def _do(args) -> dict:
+    prompter = get_prompter(force_fallback=args.yes)
+    try:
+        return _uninstall(args, prompter)
+    except Cancelled:
+        from ..core.errors import ErrorCategory, MediaError
+
+        # Truthful because every prompt is answered before the first deletion.
+        raise MediaError("uninstall cancelled; nothing was removed", category=ErrorCategory.CLI) from None
+
+
+def main() -> int:
+    args = common.parse_args(_build_parser())
+    return common.run(_do, args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
