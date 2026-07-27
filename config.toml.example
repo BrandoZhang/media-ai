@@ -41,3 +41,57 @@ credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"
 # [profiles.dev]
 # provider = "gemini"
 # model    = "gemini-3.1-flash-image"
+
+# ---------------------------------------------------------------------------
+# [providers.<name>] — per-provider defaults (NON-SECRET, like everything here)
+#
+# A profile pins ONE `model`, which cannot say "images use one model and video
+# another" on the same provider. Those defaults are genuinely different models:
+# Gemini's image / Veo / TTS families are disjoint, and ElevenLabs splits further
+# by operation (speech vs dialogue vs music vs sound). Set them here.
+#
+# Resolution order, most specific first:
+#   --model  →  the active profile's `model`  →  [providers.<name>]  →  env var
+#   →  the adapter's built-in default
+# Unknown keys are ignored, so a newer config stays readable by an older CLI.
+
+# [providers.gemini]
+# image_model = "gemini-3-pro-image"            # also -3.1-flash-image / -flash-lite-image
+# video_model = "veo-3.1-fast-generate-preview" # also veo-3.1-generate-preview / -lite-
+# tts_model   = "gemini-3.1-flash-tts-preview"  # also gemini-2.5-flash/pro-preview-tts
+
+# Ark model ids are account-specific: a custom endpoint (ep-…) only exists on the
+# account that created it, so the built-in defaults may not be enabled on yours.
+# [providers.volc]
+# image_model = "ep-2026...-img"
+# video_model = "ep-2026...-vid"
+
+# An endpoint id names a DEPLOYMENT, not a model — `ep-2026…-zrbtw` says nothing
+# about what it can do. Map it to the model it actually serves and everything the
+# CLI knows about that model (which operations, geometry limits, options) applies
+# to the endpoint. Without a mapping the CLI has to fail open and let the API be
+# the authority, so e.g. "does this endpoint support image editing?" can only be
+# answered by trying it.
+#
+# The wire request still uses the ep- id, which is the only name Ark accepts.
+# [providers.volc.endpoints]
+# "ep-2026...-img" = "doubao-seedream-4-5-251128"
+# "ep-2026...-vid" = "doubao-seedance-2-0-260128"
+#
+# Any provider addressed by deployment id works the same way (Azure-style
+# deployments, a gateway that renames models):
+# [providers.openai.endpoints]
+# "my-image-deployment" = "gpt-image-2"
+
+# [providers.openai]
+# image_model = "gpt-image-1.5"                 # also gpt-image-2 / -1 / -1-mini
+
+# [providers.elevenlabs]
+# model          = "eleven_turbo_v2_5"          # speech.generate
+# dialogue_model = "eleven_v3"                  # speech.dialogue
+# music_model    = "music_v2"                   # music.generate / music.plan
+# sound_model    = "eleven_text_to_sound_v2"    # sound.generate
+
+# base_url works here too, for a provider you always reach through a gateway:
+# [providers.openai]
+# base_url = "https://gateway.internal/v1"

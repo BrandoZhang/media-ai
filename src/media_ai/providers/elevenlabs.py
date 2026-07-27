@@ -86,10 +86,10 @@ class ElevenLabsProvider(HttpProvider):
         # can target a regional residency endpoint (us/eu/in/sg) without a code change.
         self.base_url = (self.config.get("base_url") or os.getenv("ELEVENLABS_BASE_URL")
                          or "https://api.elevenlabs.io/v1").rstrip("/")
-        self.model = os.getenv("ELEVENLABS_MODEL") or "eleven_multilingual_v2"
-        self.dialogue_model = os.getenv("ELEVENLABS_DIALOGUE_MODEL") or "eleven_v3"
-        self.music_model = os.getenv("ELEVENLABS_MUSIC_MODEL") or "music_v1"
-        self.sound_model = os.getenv("ELEVENLABS_SOUND_MODEL") or _SOUND_MODEL
+        self.model = self.config.get("model") or os.getenv("ELEVENLABS_MODEL") or "eleven_multilingual_v2"
+        self.dialogue_model = self.config.get("dialogue_model") or os.getenv("ELEVENLABS_DIALOGUE_MODEL") or "eleven_v3"
+        self.music_model = self.config.get("music_model") or os.getenv("ELEVENLABS_MUSIC_MODEL") or "music_v1"
+        self.sound_model = self.config.get("sound_model") or os.getenv("ELEVENLABS_SOUND_MODEL") or _SOUND_MODEL
         self.default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "JBFqnCBsd6RMkjVDRZzb"
 
     # ---- discovery -------------------------------------------------------
@@ -128,6 +128,7 @@ class ElevenLabsProvider(HttpProvider):
                 music_options=_MUSIC_OPTIONS,
                 # sound effects
                 supports_sound=True,
+                sound_models=(_SOUND_MODEL,),
                 sound_output_formats=_SOUND_OUTPUT_FORMATS,
                 sound_min_seconds=_SOUND_MIN_S,
                 sound_max_seconds=_SOUND_MAX_S,

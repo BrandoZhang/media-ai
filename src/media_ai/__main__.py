@@ -1,17 +1,18 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
-Groups: ``image``, ``video``, ``speech``, ``music``, ``sound``, ``concat``, ``job``,
-``capabilities``, ``usage``. Each group is also reachable directly; this umbrella
-reshapes argv so the group's own argparse sees a clean program name.
+Groups: ``init``, ``image``, ``video``, ``speech``, ``music``, ``sound``, ``concat``,
+``job``, ``capabilities``, ``usage``. Each group is also reachable directly; this
+umbrella reshapes argv so the group's own argparse sees a clean program name.
 """
 
 from __future__ import annotations
 
 import sys
 
-from .cli import capabilities, concat, image, job, music, sound, speech, usage, video
+from .cli import capabilities, concat, image, init, job, music, sound, speech, usage, video
 
 _GROUPS = {
+    "init": init.main,
     "image": image.main,
     "video": video.main,
     "speech": speech.main,
@@ -31,6 +32,7 @@ def main() -> int:
         for name in _GROUPS:
             print(f"  {name}")
         print("\nexamples:")
+        print("  media-ai init                      # first-run setup: keys, models, skills")
         print("  media-ai image generate --prompt 'a red bicycle' --output bike.png")
         print("  media-ai video generate --prompt 'twin suns setting' --output clip.mp4")
         print("  media-ai speech generate --text 'hello there' --output hi.mp3 --provider elevenlabs")

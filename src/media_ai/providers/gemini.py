@@ -92,9 +92,9 @@ class GeminiProvider(HttpProvider):
                          or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
         # Nano Banana 2 (gemini-3.1-flash-image) is Google's recommended go-to image
         # model; Veo 3.1 supersedes the deprecated Veo 2/3.0 line.
-        self.image_model = os.getenv("GEMINI_IMAGE_MODEL") or "gemini-3.1-flash-image"
-        self.video_model = os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
-        self.tts_model = os.getenv("GEMINI_TTS_MODEL") or "gemini-2.5-flash-preview-tts"
+        self.image_model = self.config.get("image_model") or os.getenv("GEMINI_IMAGE_MODEL") or "gemini-3.1-flash-image"
+        self.video_model = self.config.get("video_model") or os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
+        self.tts_model = self.config.get("tts_model") or os.getenv("GEMINI_TTS_MODEL") or "gemini-2.5-flash-preview-tts"
         self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
         self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
         # generateContent references up to this many raw bytes (summed) are inlined as

@@ -114,6 +114,9 @@ class AudioCaps:
     music_options: tuple[str, ...] = ()
     # --- sound effects (sound.generate) ---
     supports_sound: bool = False
+    # Mirrors ``music_models``: sound.generate runs on its own model, distinct from the
+    # TTS model ``models()`` enumerates, so discovery needs it named here to be complete.
+    sound_models: tuple[str, ...] = ()
     sound_output_formats: tuple[str, ...] = ()
     sound_min_seconds: float | None = None
     sound_max_seconds: float | None = None
