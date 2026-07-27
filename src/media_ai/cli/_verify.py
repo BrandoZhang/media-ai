@@ -26,7 +26,16 @@ _BAD_KEY_MARKERS = (
     "permission_denied",
     "invalid_api_key",
 )
-_MISSING_MARKERS = ("no credential found for provider",)
+# "There is nothing to check", not "what you gave me was rejected". The env-var
+# markers matter because storing a reference is one of the wizard's two offered modes:
+# the variable is routinely not exported in the shell the wizard itself runs in, and
+# telling that user their key is invalid sends them to rotate a perfectly good one.
+_MISSING_MARKERS = (
+    "no credential found for provider",
+    "is unset",
+    "not set",
+    "no such account",
+)
 
 
 def classify(exc: MediaError | None) -> str:

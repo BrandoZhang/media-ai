@@ -9,6 +9,11 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai usage --help"
+  install:
+    tier: core
+    summary: >-
+      Read back what a run cost — tokens, characters, artifacts — from the local
+      usage ledger, per command or across a whole pipeline.
 ---
 
 # media-ai-usage — account for generation cost

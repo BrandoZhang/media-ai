@@ -11,6 +11,12 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  install:
+    tier: optional
+    summary: >-
+      Compose a song, a soundtrack, or a jingle from a description — or from an
+      editable composition plan you can revise before spending credits. ElevenLabs
+      Music.
 ---
 
 # media-ai-music — compose music

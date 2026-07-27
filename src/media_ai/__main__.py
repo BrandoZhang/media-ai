@@ -1,28 +1,40 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
-Groups: ``init``, ``image``, ``video``, ``speech``, ``music``, ``sound``, ``concat``,
-``job``, ``capabilities``, ``usage``. Each group is also reachable directly; this
-umbrella reshapes argv so the group's own argparse sees a clean program name.
+Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
+``music``, ``sound``, ``concat``, ``job``, ``capabilities``, ``usage``. Each group is
+also reachable directly; this umbrella reshapes argv so the group's own argparse sees
+a clean program name.
 """
 
 from __future__ import annotations
 
 import sys
 
-from .cli import capabilities, concat, image, init, job, music, sound, speech, usage, video
+from importlib import import_module
 
+# Group -> the `cli` module implementing it, imported on dispatch rather than up front.
+# `init` alone pulls in the terminal UI, skill discovery, the frontmatter parser and
+# the install store; a generation command can reach none of that and should not pay
+# for importing it.
 _GROUPS = {
-    "init": init.main,
-    "image": image.main,
-    "video": video.main,
-    "speech": speech.main,
-    "music": music.main,
-    "sound": sound.main,
-    "concat": concat.main,
-    "job": job.main,
-    "capabilities": capabilities.main,
-    "usage": usage.main,
+    "init": "init",
+    "doctor": "doctor",
+    "uninstall": "uninstall",
+    "image": "image",
+    "video": "video",
+    "speech": "speech",
+    "music": "music",
+    "sound": "sound",
+    "concat": "concat",
+    "job": "job",
+    "capabilities": "capabilities",
+    "usage": "usage",
 }
+
+
+def group_main(group: str):
+    """The entry point for one group, imported now."""
+    return import_module(f".cli.{_GROUPS[group]}", __package__).main
 
 
 def _usage(stream) -> None:
@@ -31,6 +43,8 @@ def _usage(stream) -> None:
         print(f"  {name}", file=stream)
     print("\nexamples:", file=stream)
     print("  media-ai init                      # first-run setup: keys, models, skills", file=stream)
+    print("  media-ai doctor                    # check the install offline (PATH, ffmpeg, keys, skills)", file=stream)
+    print("  media-ai uninstall                 # remove the skills; keeps config unless asked", file=stream)
     print("  media-ai image generate --prompt 'a red bicycle' --output bike.png", file=stream)
     print("  media-ai video generate --prompt 'twin suns setting' --output clip.mp4", file=stream)
     print("  media-ai speech generate --text 'hello there' --output hi.mp3 --provider elevenlabs", file=stream)
@@ -64,13 +78,20 @@ def main() -> int:
     if argv and argv[0] in ("-h", "--help"):
         _usage(sys.stdout)
         return 0
+    if argv and argv[0] in ("-V", "--version", "version"):
+        # Same exemption: a version query is a request, so plain text and exit 0.
+        # `media-ai doctor` is the machine-readable route to the same number.
+        from . import __version__
+
+        print(f"media-ai {__version__}")
+        return 0
     if not argv:
         return _usage_error("no command given; expected: media-ai <group> <op> [args...]")
     group, rest = argv[0], argv[1:]
     if group not in _GROUPS:
         return _usage_error(f"unknown group {group!r}; expected one of: {', '.join(_GROUPS)}")
     sys.argv = [f"media-ai {group}", *rest]
-    return _GROUPS[group]()
+    return group_main(group)()
 
 
 if __name__ == "__main__":

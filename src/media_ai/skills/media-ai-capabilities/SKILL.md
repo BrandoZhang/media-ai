@@ -11,6 +11,12 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai capabilities --help"
+  install:
+    tier: core
+    summary: >-
+      Ask the CLI what a provider or model actually supports — sizes, ratios,
+      durations, options — before generating, so a request fails at the keyboard
+      instead of after a billed call.
 ---
 
 # media-ai-capabilities — discover before you generate

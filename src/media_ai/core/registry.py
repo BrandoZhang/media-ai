@@ -130,7 +130,8 @@ def _register_builtins() -> None:
     register_provider("volc", _volc, model_hints=("doubao", "seedream", "seedance"))
     # `dall-e`/`sora` route here so a request for a (dropped) DALL·E or the
     # unsupported Sora model gets a clear error instead of silently falling back to
-    # mock — see OpenAIProvider._is_dalle / its no-video handling. Likewise `imagen-`
+    # mock — the catalogue marks them REMOVED/unsupported and the adapter raises on
+    # them, rather than name-matching in code. Likewise `imagen-`
     # routes to gemini for a clear "use Nano Banana" removal error.
     register_provider("openai", _openai, model_hints=("gpt-image", "dall-e", "sora"))
     register_provider("gemini", _gemini, model_hints=("gemini-", "imagen-", "veo-"))

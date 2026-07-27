@@ -17,7 +17,7 @@ import stat
 import tempfile
 from pathlib import Path
 
-__all__ = ["dumps", "write_private", "write_public", "TomlWriteError"]
+__all__ = ["atomic_write", "dumps", "write_private", "write_public", "TomlWriteError"]
 
 
 class TomlWriteError(ValueError):
@@ -123,7 +123,7 @@ def dumps(data: dict, *, header: str | None = None) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def _atomic_write(path: Path, text: str, *, mode: int) -> None:
+def atomic_write(path: Path, text: str, *, mode: int) -> None:
     """Write ``text`` to ``path`` with ``mode``, never exposing a wider mode in between.
 
     The temp file is created 0600 by ``mkstemp`` and narrowed/widened *before* any
@@ -159,9 +159,9 @@ def write_private(path: Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, stat.S_IRWXU)  # 0700
-    _atomic_write(path, text, mode=0o600)
+    atomic_write(path, text, mode=0o600)
 
 
 def write_public(path: Path, text: str) -> None:
     """Write a non-secret file (``config.toml``) as 0644, atomically."""
-    _atomic_write(path, text, mode=0o644)
+    atomic_write(path, text, mode=0o644)

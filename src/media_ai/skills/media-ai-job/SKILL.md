@@ -11,6 +11,11 @@ metadata:
   requires:
     bins: ["media-ai"]
   cliHelp: "media-ai job query --help"
+  install:
+    tier: dependency
+    summary: >-
+      Poll, download, or cancel a queued generation. Installed automatically with any
+      skill that can hand back a job instead of a finished file.
 ---
 
 # media-ai-job — async job lifecycle

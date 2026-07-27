@@ -35,10 +35,74 @@ media-ai init                 # pick skills, providers, keys, model defaults
 media-ai init --skills-only   # just install the Agent Skills
 ```
 
-The wizard is skill-first — you choose what you want to do ("generate images") and it
-works out which providers that needs, then asks for one key per provider. It writes
+```text
+┌  media-ai setup
+│
+◇  Heads up ──────────────────────────────────────────────────╮
+│                                                             │
+│  media-ai is under rapid development. Interfaces, flags,    │
+│  and the result schema can change between releases…         │
+│                                                             │
+├─────────────────────────────────────────────────────────────╯
+◇  Which skills should be installed?
+│  media-ai-image, media-ai-video
+│
+│  Also installing:
+│    media-ai-capabilities  always installed
+│    media-ai-job           needed by media-ai-video
+│
+◆  Where should they be installed?
+│  ◼ ~/.claude/skills  (Claude Code · all projects · 9 installed)
+│  ◻ ./.claude/skills  (Claude Code · current folder)
+│  ◻ ~/.agents/skills  (AGENTS.md · all projects)
+│  ◻ somewhere else…  (type a path)
+│  ↑↓ move · space toggle · a all · enter confirm · esc back
+└
+```
+
+The wizard is skill-first — you choose what you want to do ("generate images"), each
+option described in plain language as you move through it, and it works out which
+providers that needs, then asks for one key per provider. Only genuine choices are
+offered: the shared contract, capability discovery and cost accounting always install,
+and the async-job skill comes along with video. It writes
 `~/.config/media-ai/credentials.toml` (chmod 600) and `config.toml`, merging into
 whatever is already there rather than overwriting it.
+
+The prompts follow [clack](https://github.com/bombshell-dev/clack)'s conventions —
+one connected rail, answered steps kept on screen, `●`/`○` for pick-one and `◼`/`◻`
+for pick-any, keys echoed as `▪▪▪▪` so you can see you are typing — drawn with
+`termios` and ANSI escapes rather than a dependency, and degrading to numbered menus
+(and to ASCII glyphs) wherever a real terminal is not available. **Esc** goes back to
+the previous question (type `b` where there are no keypresses to read); **Ctrl-C**
+cancels. Nothing is written until the last question is answered, so both are safe at
+any point.
+
+**Re-running is the upgrade path**, and it is quiet: a skill that already matches the
+packaged version is neither rewritten nor asked about, and identical answers do not
+leave a second `credentials.toml.bak`. A second `install.sh` with nothing to change
+leaves the filesystem byte-identical.
+
+### Checking and removing
+
+```bash
+media-ai doctor                        # offline check: PATH, ffmpeg, file modes, which keys resolve, skill drift
+media-ai uninstall                     # remove the skills and the configuration
+media-ai uninstall --keep-credentials  # …but hold on to the API keys
+media-ai --version
+```
+
+`uninstall` finds the skills it installed (including custom paths, via a receipt at
+`~/.config/media-ai/installed-skills.toml`) and asks before it removes anything.
+**Uninstalling leaves nothing behind**: skills, `config.toml` and `credentials.toml`
+all go, so a later install is a fresh start rather than something that has to migrate
+whatever an older version left behind. Hold a file back with `--keep-config`,
+`--keep-credentials`, or `--keep-skills`; `--dry-run` shows what would go and `--yes`
+skips the questions. It leaves the CLI itself in place (it is what is running) and
+prints the one command that removes it; to do the whole lot in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash -s -- --uninstall
+```
 
 ### From a clone
 
@@ -74,6 +138,9 @@ media-ai concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
 media-ai job    query   --provider gemini --id <op> --output clip.mp4
 media-ai capabilities   [--provider P] [--model M]
 media-ai usage
+media-ai init           [--skills-only] [--advanced] [--verify]
+media-ai doctor
+media-ai uninstall      [--keep-skills] [--keep-config] [--keep-credentials] [--yes] [--dry-run]
 ```
 
 Speech works on `gemini` (Gemini 2.5/3.1 TTS — style directed in the prompt text, 30

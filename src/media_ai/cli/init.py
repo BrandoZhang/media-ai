@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core import registry
@@ -25,23 +26,19 @@ from ..core.result import SCHEMA_VERSION
 from ..core.types import Operation
 from ..credentials import stores
 from ..credentials.profile import config_path
-from ..credentials.tomlwrite import dumps, write_private, write_public
+from ..credentials.tomlwrite import atomic_write, dumps, write_private, write_public
 from . import common
-from ._discovery import available_skills, operations_for_skill, providers_for_skills, skill_root
-from ._prompt import Cancelled, Option, get_prompter
-
-# Agent conventions that read SKILL.md directories. Adding one is a single row; the
-# layouts are assumed identical (<root>/skills/<name>/SKILL.md) until shown otherwise.
-SKILL_DESTS = (
-    ("claude", ".claude/skills"),
-    ("agents", ".agents/skills"),
-    ("codex", ".codex/skills"),
-    ("trae", ".trae/skills"),
-    ("openclaw", ".openclaw/skills"),
+from ._announce import announcements
+from ._discovery import (
+    available_skills,
+    operations_for_skill,
+    providers_for_skills,
+    resolve_selection,
+    selectable_skills,
+    skill_info,
 )
-
-# The shared skill is the common contract the others build on, so it always ships.
-ALWAYS_INSTALL = "media-ai-shared"
+from ._prompt import Cancelled, GoBack, Option, get_prompter, run_steps
+from ._skillstore import SKILL_DESTS, copy_skill, installed_skills, record_install, skill_is_current
 
 # Which config keys hold a provider's default model, per skill group. These are
 # genuinely separate models — Gemini's image/Veo/TTS families are disjoint, and
@@ -71,8 +68,9 @@ CONFIG_HEADER = (
 )
 
 
-def credentials_path() -> Path:
-    return Path(os.getenv("MEDIA_CREDENTIALS_FILE", "~/.config/media-ai/credentials.toml")).expanduser()
+#: Re-exported so the wizard and everything that has to clean up after it name the
+#: same file. The definition lives beside the reader in ``credentials/stores.py``.
+credentials_path = stores.credentials_path
 
 
 # --------------------------------------------------------------------------- io
@@ -94,14 +92,21 @@ def _load(path: Path) -> dict:
 
 def _backup(path: Path) -> Path | None:
     """Copy a file aside before rewriting it. Comments are not preserved by the
-    writer, so the original is the only record of anything hand-written."""
+    writer, so the original is the only record of anything hand-written.
+
+    Created at the *source file's* mode from the start rather than written and then
+    chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
+    order leaves them in a world-readable file for as long as the write takes — and
+    permanently if the process dies in between. Same reasoning as
+    ``tomlwrite.atomic_write``, which is what does the work here.
+    """
     if not path.is_file():
         return None
+    mode = path.stat().st_mode & 0o777
     for n in range(1, 1000):
         candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
         if not candidate.exists():
-            candidate.write_bytes(path.read_bytes())
-            os.chmod(candidate, path.stat().st_mode & 0o777)
+            atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
             return candidate
     raise MediaError(f"too many backups beside {path}", category=ErrorCategory.CLI)
 
@@ -110,76 +115,178 @@ def _backup(path: Path) -> Path | None:
 
 
 def _skill_choices(skills: list[str]) -> list[Option]:
+    """One row per skill: what it costs (hint) and what it is (detail).
+
+    A bare list of ``media-ai-*`` names is not a choice a user can make — nothing on
+    it says what ``media-ai-sound`` does, or that ``media-ai-concat`` needs no key. So
+    the skill's own blurb is shown beside it.
+    """
     out = []
     for skill in skills:
         ops = operations_for_skill(skill)
         hint = "no credentials needed" if not ops else ", ".join(sorted(o.value for o in ops))
-        if skill == ALWAYS_INSTALL:
-            hint = "required by the others"
-        out.append(Option(label=skill, hint=hint, value=skill))
+        out.append(Option(label=skill, hint=hint, value=skill, detail=skill_info(skill).summary))
     return out
+
+
+def _report_additions(reasons: dict[str, str], prompter) -> None:
+    """Say what is being installed beyond what was ticked, and why.
+
+    Adding directories a user did not select is defensible; doing it silently is not —
+    they are the ones who will find the extra folders later.
+    """
+    if not reasons:
+        return
+    width = max(len(name) for name in reasons)
+    lines = "\n".join(f"  {name:<{width}}  {why}" for name, why in sorted(reasons.items()))
+    prompter.note(f"Also installing:\n{lines}")
+
+
+def _dest_state(path: Path) -> tuple[str, str]:
+    """``(hint, sentence)`` describing what is already at ``path``.
+
+    "exists" on its own was the wrong answer to the wrong question: it left the user
+    unable to tell whether the *directory* was there or whether media-ai's skills were
+    already in it — which is the difference between a first install and a refresh.
+    """
+    if not path.is_dir():
+        return "", "Does not exist yet; it will be created."
+    here = installed_skills(path)
+    if here:
+        return f"{len(here)} installed", f"Already holds {len(here)} media-ai skill(s), which this will bring up to date."
+    return "", "The directory is there, with no media-ai skills in it yet."
+
+
+#: Sentinel for the "somewhere else" row. A row rather than a follow-up question:
+#: a custom path is one more place to install to, so it belongs in the same list as
+#: the rest — and left unticked (the default) it costs no question at all.
+CUSTOM_DEST = "custom"
 
 
 def _dest_choices() -> list[Option]:
-    """Every agent convention at user and project level, existing ones first."""
-    out = []
-    for _key, segment in SKILL_DESTS:
-        for base, label in ((Path.home(), "~"), (Path.cwd(), "./")):
-            path = base / segment
-            out.append(Option(label=f"{label}{segment}", hint="exists" if path.is_dir() else "", value=path))
-    out.sort(key=lambda o: (not o.hint, o.label))
+    """Every agent convention at user and project level, best guess first.
+
+    Ordered by how likely it is to be the one wanted: directories that already exist
+    (the agent is installed and in use), then the declared order of the conventions,
+    then user level before project level — installing to ``~`` makes the skills work
+    in every checkout, which is what someone running the wizard for the first time
+    almost always means.
+
+    Each row says which agent reads it and how far the install reaches, because the
+    choice between ``~/.claude/skills`` and ``./.claude/skills`` is a real one and the
+    paths alone do not make that obvious.
+    """
+    ranked = []
+    seen: set[str] = set()
+    for rank, agent in enumerate(SKILL_DESTS):
+        for depth, (base, label) in enumerate(((Path.home(), "~/"), (Path.cwd(), "./"))):
+            path = base / agent.segment
+            # Run the wizard from your home directory and "~/…" and "./…" are the same
+            # directory; offering it twice means installing to it twice, and being
+            # asked to confirm an overwrite of the copy just made.
+            if str(path.resolve()) in seen:
+                continue
+            seen.add(str(path.resolve()))
+            # "current folder", not "this project": `./` is wherever the shell happens
+            # to be, which is a project directory only if you started the wizard in one.
+            short, long = (
+                ("all projects", "every project on this machine")
+                if depth == 0
+                else ("current folder", f"the current folder only — {Path.cwd()}")
+            )
+            found, sentence = _dest_state(path)
+            option = Option(
+                label=f"{label}{agent.segment}",
+                hint=" · ".join(x for x in (agent.name, short, found) if x),
+                value=path,
+                detail=f"Read by {agent.who}, for {long}. {sentence}",
+            )
+            ranked.append(((not path.is_dir(), rank, depth), option))
+    ranked.sort(key=lambda row: row[0])
+    out = [option for _key, option in ranked]
+    out.append(
+        Option(
+            label="somewhere else…",
+            hint="type a path",
+            value=CUSTOM_DEST,
+            detail="Tick this to be asked for a directory — any other place your agent reads skills from.",
+        )
+    )
     return out
 
 
-def _copy_skill(name: str, dest_root: Path) -> list[Path]:
-    """Copy one packaged skill directory to ``dest_root/<name>``, preserving
-    ``references/`` subdirectories. Returns the files written."""
-    written: list[Path] = []
+def _preselected_dests(choices: list[Option]) -> list[int]:
+    """Tick the directories that already exist, or the leading guess if none do.
 
-    def walk(src, out: Path):
-        out.mkdir(parents=True, exist_ok=True)
-        for entry in src.iterdir():
-            target = out / entry.name
-            if entry.is_dir():
-                walk(entry, target)
-            else:
-                target.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
-                written.append(target)
-
-    walk(skill_root(name), dest_root / name)
-    return written
+    Pre-ticking nothing would make "press enter through the wizard" install nothing at
+    all — and then report success, which is the one outcome a first run must not have.
+    "Somewhere else…" is never pre-ticked: the default has to be *not* adding one, or
+    entering through the wizard stops to ask for a path nobody wanted.
+    """
+    real = [(i, opt) for i, opt in enumerate(choices) if opt.value != CUSTOM_DEST]
+    existing = [i for i, opt in real if Path(str(opt.value)).is_dir()]
+    return existing or ([real[0][0]] if real else [])
 
 
-def _install_skills(skills: list[str], dests: list[Path], prompter, *, dry_run: bool) -> list[dict]:
-    """Copy each selected skill into each destination, asking before overwriting."""
-    overwrite_all = skip_all = False
-    report = []
+def _plan_installs(skills: list[str], dests: list[Path], prompter, *, unattended: bool = False) -> list[dict]:
+    """Decide what will be written where. Asks about collisions; **writes nothing**.
+
+    Split from the writing so that every question in the wizard is answered before
+    anything lands on disk — which is what makes Ctrl-C safe and "go back" safe, since
+    a step that has already written cannot be re-run.
+
+    A copy that already matches the packaged skill is neither written nor asked about.
+    That is what makes a second ``install.sh`` quiet: nothing has changed, so there is
+    nothing to decide.
+
+    ``unattended`` takes the default for the one question that survives that — an
+    edited copy is updated. Without it a CI upgrade that changed a packaged SKILL.md
+    would stop on a prompt nothing can answer, which is the rule ``--non-interactive``
+    exists to prevent.
+    """
+    overwrite_all = unattended
+    skip_all = False
+    plan = []
     for dest in dests:
-        installed, skipped = [], []
+        install, write, skipped = [], [], []
         for skill in skills:
             target = dest / skill
-            if target.exists() and not overwrite_all:
+            if target.exists():
+                if skill_is_current(dest, skill):
+                    install.append(skill)  # already the current version: leave it be
+                    continue
                 if skip_all:
                     skipped.append(skill)
                     continue
-                choice = prompter.select(
-                    f"{target} already exists",
-                    [Option("overwrite"), Option("skip"), Option("overwrite all"), Option("skip all")],
-                )
-                if choice == 2:
-                    overwrite_all = True
-                elif choice == 3:
-                    skip_all = True
-                    skipped.append(skill)
-                    continue
-                elif choice == 1:
-                    skipped.append(skill)
-                    continue
-            if not dry_run:
-                _copy_skill(skill, dest)
-            installed.append(skill)
-        report.append({"dest": str(dest), "installed": installed, "skipped": skipped})
-    return report
+                if not overwrite_all:
+                    choice = prompter.select(
+                        f"{target} differs from the packaged skill",
+                        [Option("update it"), Option("keep mine"), Option("update all"), Option("keep all mine")],
+                    )
+                    if choice == 2:
+                        overwrite_all = True
+                    elif choice == 3:
+                        skip_all = True
+                        skipped.append(skill)
+                        continue
+                    elif choice == 1:
+                        skipped.append(skill)
+                        continue
+            install.append(skill)
+            write.append(skill)
+        plan.append({"dest": str(dest), "installed": install, "written": write, "skipped": skipped})
+    return plan
+
+
+def _apply_installs(plan: list[dict], *, dry_run: bool) -> None:
+    if dry_run:
+        return
+    for entry in plan:
+        for skill in entry["written"]:
+            copy_skill(skill, Path(entry["dest"]))
+    # Record where they landed so `media-ai uninstall` can find them again —
+    # including a custom path no amount of scanning would guess.
+    record_install([Path(entry["dest"]) for entry in plan])
 
 
 # ---------------------------------------------------------------- credentials
@@ -209,21 +316,41 @@ def _collect_credentials(providers: dict[str, list[str]], prompter) -> dict[str,
     ]
     mode = prompter.select("How should keys be stored?", modes)
 
+    # Esc inside this loop steps back one *provider*, not out of the whole step: with
+    # four providers configured one after another, letting it unwind to the driver
+    # would throw away every key already typed. Going back from the first one — or
+    # from the storage question — still leaves the step, which is what the user means.
     creds: dict[str, dict] = {}
-    for provider, skills in sorted(providers.items()):
-        already = _env_already_set(provider)
-        label = f"{provider} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
-        if already and not prompter.confirm(f"{label}\n  ${already} is already set; configure anyway?", default=False):
+    order = sorted(providers)
+    i = 0
+    while i < len(order):
+        provider = order[i]
+        try:
+            entry = _ask_one_credential(provider, providers[provider], mode, prompter)
+        except GoBack:
+            if i == 0:
+                raise
+            creds.pop(order[i - 1], None)
+            i -= 1
             continue
-        if mode == 1:
-            var = _env_var_names(provider)[0]
-            chosen = prompter.text(f"{label}\n  environment variable to read", default=var)
-            creds[provider] = {"api_key": f"env://{chosen}"}
-        else:
-            key = prompter.secret(f"{label}\n  API key (input hidden)")
-            if key.strip():
-                creds[provider] = {"api_key": key.strip()}
-    return creds
+        creds.pop(provider, None)
+        if entry:
+            creds[provider] = entry
+        i += 1
+    return {name: creds[name] for name in order if name in creds}
+
+
+def _ask_one_credential(provider: str, skills: list[str], mode: int, prompter) -> dict | None:
+    already = _env_already_set(provider)
+    label = f"{provider} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
+    if already and not prompter.confirm(f"{label}\n  ${already} is already set; configure anyway?", default=False):
+        return None
+    if mode == 1:
+        var = _env_var_names(provider)[0]
+        chosen = prompter.text(f"{label}\n  environment variable to read", default=var)
+        return {"api_key": f"env://{chosen}"}
+    key = prompter.secret(f"{label}\n  API key")
+    return {"api_key": key.strip()} if key.strip() else None
 
 
 # --------------------------------------------------------------------- models
@@ -251,6 +378,14 @@ def _rank(caps) -> tuple:
     return (order.get(caps.status, 9), 0 if caps.verified else 1)
 
 
+# Groups whose models are *not* the ids `models()` enumerates. ElevenLabs runs music
+# and sound effects on their own models and declares them in dedicated capability
+# fields, while lumping every audio operation into one `AudioCaps.operations` — so
+# matching on the operation set alone would offer TTS ids as the music default, and
+# the wizard would write one into config for `music generate` to fail on.
+_MODEL_FIELDS = {"music": "music_models", "sound": "sound_models"}
+
+
 def _models_for(provider: str, group: str) -> list[Option]:
     """Candidate models for a skill group, labelled with lifecycle and provenance.
 
@@ -261,13 +396,21 @@ def _models_for(provider: str, group: str) -> list[Option]:
     try:
         prov = registry.get_provider(provider)
         wanted = {op for op in Operation if op.value.split(".", 1)[0] == group}
-        found = []
+        field_name = _MODEL_FIELDS.get(group)
+        found, declared = [], []
         for model in prov.models():
             caps = prov.capabilities(model)
             for block in (caps.image, caps.video, caps.audio):
-                if block is not None and block.operations & wanted:
-                    found.append(caps)
-                    break
+                if block is None or not block.operations & wanted:
+                    continue
+                declared += list(getattr(block, field_name, ()) or ()) if field_name else []
+                found.append(caps)
+                break
+        if field_name and declared:
+            # These ids are not in `models()`, so there is no ModelCapabilities to
+            # label them with — say where they came from instead of nothing.
+            seen = dict.fromkeys(declared)
+            return [Option(label=m, hint=f"{provider} {group} model", value=m) for m in seen]
         found.sort(key=_rank)
         return [Option(label=c.model, hint=_model_hint(c), value=c.model) for c in found]
     except Exception:  # noqa: BLE001 - discovery is best-effort; free text still works
@@ -325,8 +468,12 @@ def _configure_models(providers: list[str], groups: set[str], prompter, *, advan
             continue
         table = {}
         for group in sorted(groups):
-            for key, label in MODEL_SLOTS.get((provider, group), ()):
-                candidates = _models_for(provider, group)
+            slots = MODEL_SLOTS.get((provider, group), ())
+            # Hoisted out of the slot loop: discovery rebuilds the provider and reads
+            # every model's capabilities, and ElevenLabs' speech group alone has two
+            # slots that would each repeat all of it for the same answer.
+            candidates = _models_for(provider, group) if slots else []
+            for key, label in slots:
                 if not candidates:
                     continue
                 idx = prompter.select(f"{provider} — model for {label}", candidates)
@@ -343,132 +490,296 @@ def _groups_for(skills: list[str]) -> set[str]:
     return {op.value.split(".", 1)[0] for s in skills for op in operations_for_skill(s)}
 
 
+@dataclass
+class _Answers:
+    """Everything the questions establish, before any of it is acted on.
+
+    The wizard is two halves: fill this in, then apply it. Keeping them apart is what
+    lets a step be re-run — which is what "go back" is — and what keeps Ctrl-C from
+    leaving half a configuration behind.
+
+    **Every step clears the fields it owns before it does anything else**, including
+    on the paths where it decides it has nothing to ask. Re-running a step otherwise
+    leaves the previous run's answer behind: go back and deselect a provider, and the
+    key typed for it would still be written — or, worse, ``providers`` would name a
+    provider that ``needed`` no longer has, and the next step would die on a KeyError
+    holding every answer the user had just given.
+    """
+
+    skills: list[str] = field(default_factory=list)
+    dests: list[Path] = field(default_factory=list)
+    want_custom: bool = False
+    custom_dest: Path | None = None
+    plan: list[dict] = field(default_factory=list)
+    needed: dict[str, list[str]] = field(default_factory=dict)
+    providers: list[str] = field(default_factory=list)
+    creds: dict = field(default_factory=dict)
+    models: dict = field(default_factory=dict)
+    verify: dict[str, bool] = field(default_factory=dict)
+
+
 def _wizard(args, prompter) -> dict:
-    prompter.note("media-ai setup\n")
+    """Ask everything, then do everything, then close the run off.
+
+    Steps run through :func:`run_steps`, so Esc in any of them returns to the previous
+    question. That is only safe because none of them write: the whole point of the
+    ``_Answers`` split. Several steps also do nothing at all depending on the flags
+    (``--skills-dest``, ``--skills-only``, no provider needed) — the driver skips over
+    those on the way back, so "back" always lands on a real question.
+    """
+    prompter.intro("media-ai setup")
+    for title, message in announcements():
+        prompter.box(title, message)
     summary: dict = {
         "ok": True, "schema_version": SCHEMA_VERSION, "operation": "init",
         "wrote": [], "backed_up": [], "providers": [], "skills": [], "dry_run": bool(args.dry_run),
     }
+    answers = _Answers()
+    run_steps(
+        [
+            lambda: _ask_skills(args, prompter, answers),
+            lambda: _ask_dests(args, prompter, answers),
+            lambda: _ask_custom_dest(args, prompter, answers),
+            lambda: _ask_collisions(args, prompter, answers),
+            lambda: _ask_providers(args, prompter, answers),
+            lambda: _ask_credentials(args, prompter, answers),
+            lambda: _ask_models(args, prompter, answers),
+            lambda: _ask_verify(args, prompter, answers),
+        ],
+        prompter,
+    )
+    _apply(args, answers, summary)
+    if answers.verify and not args.dry_run:
+        # Not on a dry run: `probe` makes a real call, and for openai a *billed* one.
+        # It would also be answering the wrong question — nothing was written, so it
+        # would be reporting on whatever credentials happened to be there already.
+        summary["verified"] = _probe_keys(answers.verify, prompter)
+    _report(summary, prompter)
+    return summary
 
-    # -- skills ----------------------------------------------------------
+
+# -- the questions ---------------------------------------------------------
+
+
+def _ask_skills(args, prompter, answers: _Answers) -> None:
+    answers.skills = []
     # --non-interactive means "take the defaults, ask nothing" — it has to hold for
     # every question below, or an unattended run blocks on a prompt it cannot answer.
-    all_skills = available_skills()
     if args.non_interactive:
-        skills = all_skills
-    else:
-        picked = prompter.multiselect(
-            "Which skills should be installed?", _skill_choices(all_skills),
-            preselected=list(range(len(all_skills))),
-        )
-        skills = sorted({all_skills[i] for i in picked} | {ALWAYS_INSTALL})
+        answers.skills = available_skills()
+        return
+    # Only the *optional* skills are a real choice. The shared contract, discovery
+    # and cost accounting are assumed by everything else, and the job skill is
+    # half of what async video generation means — offering those four produces
+    # selections that half-work, not informed consent. See `_discovery.TIERS`.
+    offered = selectable_skills()
+    picked = prompter.multiselect(
+        "Which skills should be installed?", _skill_choices(offered),
+        preselected=list(range(len(offered))),
+    )
+    answers.skills, reasons = resolve_selection([offered[i] for i in picked])
+    _report_additions(reasons, prompter)
 
+
+def _ask_dests(args, prompter, answers: _Answers) -> None:
+    answers.dests, answers.want_custom = [], False
     if args.skills_dest:
-        dests = [Path(args.skills_dest).expanduser().resolve()]
-    elif args.non_interactive:
+        answers.dests = [Path(args.skills_dest).expanduser().resolve()]
+        return
+    if args.non_interactive:
         raise MediaError(
             "--non-interactive needs --skills-dest: there is no safe default for which "
             "agent directory to install into",
             category=ErrorCategory.CLI,
         )
-    else:
-        choices = _dest_choices()
-        chosen = prompter.multiselect(
-            "Where should they be installed? (space to toggle, several are fine)", choices,
-        )
-        dests = [choices[i].value for i in chosen]
-        if prompter.confirm("Add a custom path as well?", default=False):
-            raw = prompter.text("Path")
-            if raw.strip():
-                dests.append(Path(raw).expanduser().resolve())
+    choices = _dest_choices()
+    chosen = [choices[i].value for i in prompter.multiselect(
+        "Where should they be installed?", choices, preselected=_preselected_dests(choices),
+    )]
+    answers.want_custom = CUSTOM_DEST in chosen
+    answers.dests = [dest for dest in chosen if dest != CUSTOM_DEST]
 
-    if dests:
-        summary["skills"] = _install_skills(skills, dests, prompter, dry_run=args.dry_run)
 
+def _ask_custom_dest(args, prompter, answers: _Answers) -> None:
+    """The path behind the "somewhere else…" row.
+
+    Its own step so that going back from it returns to the destination list rather
+    than past it — and so that not ticking the row asks nothing at all, which is what
+    the driver then steps over on the way back.
+    """
+    answers.custom_dest = None
+    if not answers.want_custom:
+        return
+    raw = prompter.text("Path to install to")
+    if raw.strip():
+        answers.custom_dest = Path(raw).expanduser().resolve()
+
+
+def _all_dests(answers: _Answers) -> list[Path]:
+    return [*answers.dests, *([answers.custom_dest] if answers.custom_dest else [])]
+
+
+def _ask_collisions(args, prompter, answers: _Answers) -> None:
+    answers.plan = []
+    if dests := _all_dests(answers):
+        answers.plan = _plan_installs(answers.skills, dests, prompter, unattended=args.non_interactive)
+
+
+def _ask_providers(args, prompter, answers: _Answers) -> None:
+    answers.needed, answers.providers = {}, []
     if args.skills_only or args.non_interactive:
         # Credentials are never collected unattended: there is nothing sensible to
         # default a key to, and guessing one would be worse than stopping here.
-        return summary
-
-    # -- providers derived from the skills -------------------------------
-    needed = providers_for_skills(skills)
-    if not needed:
-        prompter.note("\nThe selected skills run locally — no credentials needed.")
-        return summary
-
+        return
+    answers.needed = providers_for_skills(answers.skills)
+    if not answers.needed:
+        prompter.note("The selected skills run locally — no credentials needed.")
+        return
     choices = [
         Option(p, hint=", ".join(s.removeprefix("media-ai-") for s in sk), value=p)
-        for p, sk in sorted(needed.items())
+        for p, sk in sorted(answers.needed.items())
     ]
     picked = prompter.multiselect(
         "These providers can serve the skills you picked. Configure which?",
         choices, preselected=list(range(len(choices))),
     )
-    providers = [choices[i].value for i in picked]
-    if not providers:
-        return summary
+    answers.providers = [choices[i].value for i in picked]
 
-    # -- credentials + model defaults ------------------------------------
-    creds = _collect_credentials({p: needed[p] for p in providers}, prompter)
-    models = _configure_models(providers, _groups_for(skills), prompter, advanced=args.advanced)
 
-    # -- write -----------------------------------------------------------
-    if creds:
+def _ask_credentials(args, prompter, answers: _Answers) -> None:
+    answers.creds = {}
+    if not answers.providers:
+        return
+    answers.creds = _collect_credentials({p: answers.needed[p] for p in answers.providers}, prompter)
+
+
+def _ask_models(args, prompter, answers: _Answers) -> None:
+    answers.models = {}
+    if not answers.providers:
+        return
+    answers.models = _configure_models(
+        answers.providers, _groups_for(answers.skills), prompter, advanced=args.advanced
+    )
+
+
+def _ask_verify(args, prompter, answers: _Answers) -> None:
+    """Decide *whether* to probe each key. The probing itself happens after the apply.
+
+    Asked here rather than beside the probe so the rule holds without an exception:
+    a question after the writes have happened would make "cancelled; nothing was
+    written" a lie, and an Esc there would escape the step driver entirely.
+    """
+    answers.verify = {}
+    if not args.verify:
+        return
+    for provider in sorted(answers.creds):
+        answers.verify[provider] = provider != "openai" or prompter.confirm(
+            "openai has no free probe — verifying costs one small image generation. Verify it?",
+            default=False,
+        )
+
+
+# -- and then the doing ----------------------------------------------------
+
+
+def _apply(args, answers: _Answers, summary: dict) -> None:
+    """The only part that touches the disk.
+
+    Both files are *serialized* before anything is written. ``dumps`` supports a
+    narrow subset of TOML and refuses the rest rather than mangling it, so a
+    hand-written config holding a float or an array-of-tables raises — and raising
+    after the skills and the credentials had been written is exactly the half-applied
+    state the ask-then-do split exists to avoid.
+    """
+    pending: list[tuple[Path, str, object]] = []
+    if answers.creds:
         path = credentials_path()
-        merged = _load(path) | creds
-        if not args.dry_run:
-            backup = _backup(path)
-            if backup:
-                summary["backed_up"].append(str(backup))
-            write_private(path, dumps(merged, header=CREDENTIALS_HEADER))
-        summary["wrote"].append(str(path))
-    if models:
+        pending.append((path, _render(path, _load(path) | answers.creds, CREDENTIALS_HEADER), write_private))
+    if answers.models:
         path = config_path()
         existing = _load(path)
-        existing["providers"] = (existing.get("providers") or {}) | models
-        if not args.dry_run:
-            backup = _backup(path)
-            if backup:
-                summary["backed_up"].append(str(backup))
-            write_public(path, dumps(existing, header=CONFIG_HEADER))
-        summary["wrote"].append(str(path))
+        existing["providers"] = (existing.get("providers") or {}) | answers.models
+        pending.append((path, _render(path, existing, CONFIG_HEADER), write_public))
 
-    summary["providers"] = sorted(creds)
-    if args.verify:
-        summary["verified"] = _verify(sorted(creds), prompter)
-
-    _report(summary, providers, prompter)
-    return summary
+    summary["skills"] = answers.plan
+    _apply_installs(answers.plan, dry_run=args.dry_run)
+    for path, text, writer in pending:
+        _write_merged(path, text, writer, args, summary)
+    summary["providers"] = sorted(answers.creds)
 
 
-def _verify(providers: list[str], prompter) -> dict:
-    """Probe each configured key. Off by default — one provider has no free probe."""
+def _render(path: Path, data: dict, header: str) -> str:
+    """Serialize ``data``, turning a writer refusal into an error a user can act on."""
+    from ..credentials.tomlwrite import TomlWriteError
+
+    try:
+        return dumps(data, header=header)
+    except TomlWriteError as exc:
+        raise MediaError(
+            f"{path} holds a value this writer cannot round-trip ({exc}); move it aside, "
+            "then re-run — nothing has been changed",
+            category=ErrorCategory.CLI,
+        ) from exc
+
+
+def _write_merged(path: Path, text: str, writer, args, summary: dict) -> None:
+    """Write ``text`` to ``path``, backing the old file up only if it really changes.
+
+    The "only if" matters for re-runs: without it, answering the same questions a
+    second time leaves a second ``credentials.toml.bak`` — a copy of the same keys,
+    under a name nobody will remember to delete.
+
+    The *write* still happens either way, because it is what sets the mode: the
+    resolver refuses a group- or world-readable ``credentials.toml``, and re-running
+    the wizard is the obvious way to fix one. Skipping the write for identical content
+    would leave that broken with no way back short of a manual ``chmod``. The content
+    is unchanged, so the file is not — only its permissions can be.
+    """
+    if args.dry_run:
+        summary["wrote"].append(str(path))  # nothing happened; `dry_run: true` says so
+        return
+    if not _unchanged(path, text):
+        backup = _backup(path)
+        if backup:
+            summary["backed_up"].append(str(backup))
+    writer(path, text)
+    summary["wrote"].append(str(path))
+
+
+def _unchanged(path: Path, text: str) -> bool:
+    try:
+        return path.is_file() and path.read_text(encoding="utf-8") == text
+    except OSError:
+        return False
+
+
+def _probe_keys(wanted: dict[str, bool], prompter) -> dict:
+    """Probe each key the user agreed to check. Asks nothing — that already happened."""
     from ._verify import probe
 
     out = {}
-    for provider in providers:
-        if provider == "openai" and not prompter.confirm(
-            "openai has no free probe — verifying costs one small image generation. Verify it?",
-            default=False,
-        ):
-            out[provider] = "skipped"
-            continue
-        out[provider] = probe(provider)
-        prompter.note(f"  {provider}: {out[provider]}")
+    for provider, agreed in sorted(wanted.items()):
+        out[provider] = probe(provider) if agreed else "skipped"
+        prompter.note(f"{provider}: {out[provider]}")
     return out
 
 
-def _report(summary: dict, providers: list[str], prompter) -> None:
-    prompter.note("\nDone.")
+def _report(summary: dict, prompter) -> None:
+    dry = summary["dry_run"]
+    verb = "would write" if dry else "wrote"
     for path in summary["wrote"]:
-        prompter.note(f"  wrote {path}")
+        prompter.note(f"{verb} {path}")
     for path in summary["backed_up"]:
-        prompter.note(f"  backed up {path}")
+        prompter.note(f"backed up {path}")
+    providers = summary["providers"]
     if providers:
-        prompter.note(
-            f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}"
-        )
+        prompter.note(f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}")
     prompter.note("\nTry it offline:\n  media-ai image generate --provider mock --prompt hello --output /tmp/x.png")
+    prompter.outro(
+        "Dry run — nothing was changed."
+        if dry
+        else "Done. `media-ai doctor` checks this install; `media-ai uninstall` undoes it."
+    )
 
 
 # -------------------------------------------------------------------- entry
