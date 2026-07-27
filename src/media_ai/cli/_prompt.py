@@ -24,7 +24,15 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
-__all__ = ["Option", "Cancelled", "Prompter", "TerminalPrompter", "FallbackPrompter", "get_prompter"]
+__all__ = [
+    "Option",
+    "Cancelled",
+    "Prompter",
+    "TerminalPrompter",
+    "FallbackPrompter",
+    "ScriptedPrompter",
+    "get_prompter",
+]
 
 ESC = "\x1b"
 _CTRL_C = "\x03"
@@ -315,6 +323,53 @@ class FallbackPrompter:
 
     def note(self, message: str) -> None:
         self._say(message.rstrip("\n"))
+
+
+# ------------------------------------------------------------------- scripted
+
+
+class ScriptedPrompter:
+    """Answers from a fixed script — lets a caller's *flow* be tested without a tty.
+
+    Each entry is consumed by the next question in order. Running out is an error
+    rather than a default, so a test that changes the number of questions fails
+    loudly instead of silently taking a different path.
+    """
+
+    def __init__(self, answers: Sequence[object]):
+        self._answers = list(answers)
+        self.asked: list[str] = []
+        self.notes: list[str] = []
+
+    def _next(self, question: str):
+        self.asked.append(question)
+        if not self._answers:
+            raise AssertionError(f"scripted prompter ran out of answers at: {question!r}")
+        answer = self._answers.pop(0)
+        if answer is Cancelled:
+            raise Cancelled
+        return answer
+
+    def select(self, title: str, options: Sequence[Option | str], *, default: int = 0) -> int:
+        return int(self._next(title))
+
+    def multiselect(
+        self, title: str, options: Sequence[Option | str], *, preselected: Sequence[int] = ()
+    ) -> list[int]:
+        return list(self._next(title))
+
+    def text(self, title: str, *, default: str = "") -> str:
+        value = self._next(title)
+        return default if value is None else str(value)
+
+    def secret(self, title: str) -> str:
+        return str(self._next(title))
+
+    def confirm(self, title: str, *, default: bool = True) -> bool:
+        return bool(self._next(title))
+
+    def note(self, message: str) -> None:
+        self.notes.append(message)
 
 
 # ------------------------------------------------------------------------ factory
