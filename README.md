@@ -20,6 +20,28 @@ structured errors** (JSON + category exit codes), **secret-safe credentials**
 
 ## Install
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash
+```
+
+Installs [uv](https://docs.astral.sh/uv/) if it is missing, installs the CLI, runs an
+offline self-test, then hands over to the setup wizard. Options: `--version REF`,
+`--skills-dest PATH`, `--no-init`, `--dry-run`.
+
+Already installed, or configuring a second machine:
+
+```bash
+media-ai init                 # pick skills, providers, keys, model defaults
+media-ai init --skills-only   # just install the Agent Skills
+```
+
+The wizard is skill-first — you choose what you want to do ("generate images") and it
+works out which providers that needs, then asks for one key per provider. It writes
+`~/.config/media-ai/credentials.toml` (chmod 600) and `config.toml`, merging into
+whatever is already there rather than overwriting it.
+
+### From a clone
+
 Development uses **[uv](https://docs.astral.sh/uv/)** (full guide:
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)):
 
