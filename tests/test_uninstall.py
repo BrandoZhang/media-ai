@@ -16,7 +16,7 @@ import sys
 import pytest
 
 from media_ai.cli import uninstall as uninstall_mod
-from media_ai.cli._prompt import Cancelled, ScriptedPrompter
+from media_ai.cli._prompt import Cancelled, GoBack, ScriptedPrompter
 from media_ai.cli._skillstore import copy_skill, load_receipt, receipt_path, record_install, remove_skill
 from media_ai.core.errors import ErrorCategory, MediaError
 
@@ -232,6 +232,16 @@ def test_a_deselected_destination_survives(home):
     assert (keep / "media-ai-image").is_dir()
     assert not (drop / "media-ai-image").exists()
     assert str(keep) in summary["kept"]
+
+
+def test_going_back_re_asks_the_previous_question(home):
+    """Same driver as `init`: the questions come first, so any of them can be re-run."""
+    write_config(home)
+    # config? -> credentials? (go back) -> config? -> credentials?
+    _summary, prompter = run(make_args(yes=False), [False, GoBack, True, False])
+    assert sum("config.toml" in q for q in prompter.asked) == 2
+    assert not (home / "cfg" / "config.toml").exists(), "the second answer is the one that counts"
+    assert (home / "cfg" / "credentials.toml").is_file()
 
 
 def test_cancelling_removes_nothing(home, monkeypatch):

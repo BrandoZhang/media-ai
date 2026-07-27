@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import shutil
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import __version__
@@ -41,16 +42,32 @@ __all__ = [
     "receipt_path",
     "record_install",
     "remove_skill",
+    "skill_is_current",
 ]
 
-# Agent conventions that read SKILL.md directories. Adding one is a single row; the
-# layouts are assumed identical (<root>/skills/<name>/SKILL.md) until shown otherwise.
+@dataclass(frozen=True)
+class AgentDir:
+    """One agent convention that reads ``SKILL.md`` directories.
+
+    Carries who reads it, not just where: a menu row saying only ``~/.trae/skills``
+    asks the user to already know what Trae is and which of these paths is the one
+    their agent looks at.
+    """
+
+    key: str
+    segment: str
+    name: str  #: short enough for a menu row
+    who: str  #: a sentence fragment — "read by <who>"
+
+
+# Adding a convention is one row; the layouts are assumed identical
+# (<root>/skills/<name>/SKILL.md) until shown otherwise.
 SKILL_DESTS = (
-    ("claude", ".claude/skills"),
-    ("agents", ".agents/skills"),
-    ("codex", ".codex/skills"),
-    ("trae", ".trae/skills"),
-    ("openclaw", ".openclaw/skills"),
+    AgentDir("claude", ".claude/skills", "Claude Code", "Claude Code"),
+    AgentDir("agents", ".agents/skills", "AGENTS.md", "any agent following the AGENTS.md convention"),
+    AgentDir("codex", ".codex/skills", "Codex", "Codex"),
+    AgentDir("trae", ".trae/skills", "Trae", "Trae"),
+    AgentDir("openclaw", ".openclaw/skills", "OpenClaw", "OpenClaw"),
 )
 
 RECEIPT_HEADER = (
@@ -68,9 +85,9 @@ def known_dests() -> list[Path]:
     and an empty answer here would make an uninstall silently no-op.
     """
     seen: dict[Path, None] = {}
-    for _key, segment in SKILL_DESTS:
+    for agent in SKILL_DESTS:
         for base in (Path.home(), Path.cwd()):
-            seen.setdefault(base / segment)
+            seen.setdefault(base / agent.segment)
     return list(seen)
 
 
@@ -94,6 +111,47 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
 
     walk(skill_root(name), dest_root / name)
     return written
+
+
+def _tree(root) -> dict[str, str]:
+    """``{relative path: text}`` for every file under ``root``, recursively.
+
+    Untyped on purpose: the two sides being compared are different things — the
+    packaged skill is an ``importlib.resources`` Traversable (it may live inside a
+    zip), the installed one is a real ``Path`` — and both answer the same four calls.
+    """
+    out: dict[str, str] = {}
+
+    def walk(node, prefix: str) -> None:
+        for entry in node.iterdir():
+            name = f"{prefix}{entry.name}"
+            if entry.is_dir():
+                walk(entry, f"{name}/")
+            else:
+                out[name] = entry.read_text(encoding="utf-8")
+
+    walk(root, "")
+    return out
+
+
+def skill_is_current(dest: Path, name: str) -> bool:
+    """Whether the copy in ``dest`` is byte-for-byte the packaged skill.
+
+    This is what makes re-running the installer quiet: a skill that already matches
+    is neither written nor asked about, so a second run with nothing to change asks
+    nothing and touches nothing. A symlinked install is current by construction — it
+    *is* the packaged directory.
+    """
+    target = dest / name
+    if target.is_symlink():
+        return True
+    if not target.is_dir():
+        return False
+    try:
+        return _tree(skill_root(name)) == _tree(target)
+    except (OSError, UnicodeDecodeError):
+        # Unreadable or not text: treat as drifted, so the caller offers to refresh it.
+        return False
 
 
 def installed_skills(dest: Path) -> list[str]:

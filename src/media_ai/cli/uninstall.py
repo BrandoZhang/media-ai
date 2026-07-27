@@ -25,13 +25,15 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 from ..core.result import SCHEMA_VERSION
 from ..credentials.profile import config_path
 from ..credentials.stores import credentials_path
 from . import common
-from ._prompt import Cancelled, Option, get_prompter
+from ._prompt import Cancelled, Option, get_prompter, run_steps
 from ._skillstore import (
     installed_skills,
     known_dests,
@@ -123,51 +125,92 @@ def _backups_of(path: Path) -> list[Path]:
 # ---------------------------------------------------------------- the command
 
 
+# Asked about separately: someone rotating machines wants the model defaults gone but
+# the keys kept, and a shared box is the other way round.
+CONFIG_FILES = (
+    ("config", config_path, "provider defaults, profiles, endpoint ids"),
+    ("credentials", credentials_path, "API keys — may exist nowhere else"),
+)
+
+
+@dataclass
+class _Choices:
+    """What the questions settle, before anything is deleted."""
+
+    skills: list[tuple[Path, list[str]]] = field(default_factory=list)
+    kept: list[str] = field(default_factory=list)
+    # Keyed by flag rather than accumulated into a list: a step that is re-run after
+    # the user goes back has to *replace* its previous answer, not add to it.
+    files: dict[str, bool] = field(default_factory=dict)
+
+
+def _ask_skills(args, prompter, choices: _Choices) -> None:
+    found = _candidates(args.skills_dest)
+    choices.kept = []
+    if args.keep_skills:
+        choices.kept = [str(dest) for dest, _ in found]
+        choices.skills = []
+        return
+    if not found:
+        prompter.note("No installed Agent Skills found.")
+        choices.skills = []
+        return
+    if args.yes:
+        choices.skills = found
+        return
+    options = _dest_choices(found)
+    picked = set(prompter.multiselect(
+        "Remove the media-ai skills installed here?", options, preselected=list(range(len(options))),
+    ))
+    choices.kept = [str(dest) for i, (dest, _) in enumerate(found) if i not in picked]
+    choices.skills = [entry for i, entry in enumerate(found) if i in picked]
+
+
+def _ask_file(args, prompter, choices: _Choices, flag: str, path: Path, what: str) -> None:
+    if not path.is_file():
+        choices.files[flag] = False
+        return
+    wanted = bool(getattr(args, flag) or args.purge)
+    if not wanted and not args.yes:
+        wanted = prompter.confirm(f"Also remove {path}\n  ({what})?", default=False)
+    choices.files[flag] = wanted
+
+
 def _uninstall(args, prompter) -> dict:
+    """Ask everything, then delete. Never the other way round.
+
+    Ctrl-C at any prompt leaves the install exactly as it was, and Esc steps back to
+    the previous question — both because the question half touches nothing. A
+    half-answered uninstall would be the worst of the available states.
+    """
     prompter.intro("media-ai uninstall")
     summary: dict = {
         "ok": True, "schema_version": SCHEMA_VERSION, "operation": "uninstall",
         "skills": [], "removed": [], "kept": [], "dry_run": bool(args.dry_run),
     }
-    interactive = not args.yes
-
-    # -- decide ----------------------------------------------------------
-    # Every question is asked before anything is deleted, so Ctrl-C at any prompt
-    # leaves the install exactly as it was — the same invariant `init` holds for
-    # writes. A half-answered uninstall would be the worst of both states.
-    found = _candidates(args.skills_dest)
-    if args.keep_skills:
-        summary["kept"] += [str(dest) for dest, _ in found]
-        found = []
-    elif not found:
-        prompter.note("No installed Agent Skills found.")
-    elif interactive:
-        choices = _dest_choices(found)
-        picked = set(prompter.multiselect(
-            "Remove the media-ai skills installed here?", choices, preselected=list(range(len(choices))),
-        ))
-        summary["kept"] += [str(dest) for i, (dest, _) in enumerate(found) if i not in picked]
-        found = [entry for i, entry in enumerate(found) if i in picked]
-
-    # Asked about separately: someone rotating machines wants the model defaults gone
-    # but the keys kept, and a shared box is the other way round.
-    doomed: list[Path] = []
-    for flag, path, what in (
-        ("config", config_path(), "provider defaults, profiles, endpoint ids"),
-        ("credentials", credentials_path(), "API keys — may exist nowhere else"),
-    ):
-        if not path.is_file():
-            continue
-        wanted = bool(getattr(args, flag) or args.purge)
-        if not wanted and interactive:
-            wanted = prompter.confirm(f"Also remove {path}\n  ({what})?", default=False)
-        if wanted:
-            doomed += [path, *_backups_of(path)]
-        else:
-            summary["kept"].append(str(path))
+    choices = _Choices()
+    run_steps(
+        [
+            lambda: _ask_skills(args, prompter, choices),
+            *(
+                partial(_ask_file, args, prompter, choices, flag, where(), what)
+                for flag, where, what in CONFIG_FILES
+            ),
+        ],
+        prompter,
+    )
 
     # -- execute ---------------------------------------------------------
-    _remove_skills(found, summary, dry_run=args.dry_run)
+    summary["kept"] += choices.kept
+    doomed: list[Path] = []
+    for flag, where, _what in CONFIG_FILES:
+        path = where()
+        if choices.files.get(flag):
+            doomed += [path, *_backups_of(path)]
+        elif path.is_file():
+            summary["kept"].append(str(path))
+
+    _remove_skills(choices.skills, summary, dry_run=args.dry_run)
     for path in doomed:
         _remove_file(path, summary, dry_run=args.dry_run)
     if not args.dry_run and not receipt_path().is_file():

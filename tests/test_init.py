@@ -18,7 +18,7 @@ import pytest
 
 from media_ai.cli import init as init_mod
 from media_ai.cli._discovery import core_skills, selectable_skills
-from media_ai.cli._prompt import Cancelled, ScriptedPrompter
+from media_ai.cli._prompt import Cancelled, GoBack, ScriptedPrompter
 from media_ai.core.errors import ErrorCategory, MediaError
 
 SECRET = "sk-sentinel-do-not-leak-9f3a"
@@ -234,6 +234,98 @@ class TestTheSkillMenu:
         assert "no credentials needed" in "\n".join(prompter.notes)
 
 
+class TestDestinationsExplainThemselves:
+    """`(exists)` answered the wrong question: it left the user unable to tell whether
+    the *directory* was there or whether media-ai's skills already were — and said
+    nothing at all about why there are two `.claude/skills` to choose between."""
+
+    @staticmethod
+    def by_label(home):
+        return {o.label: o for o in init_mod._dest_choices()}
+
+    def test_each_row_names_the_agent_that_reads_it(self, home):
+        for label, option in self.by_label(home).items():
+            assert option.hint, f"{label} offered with nothing identifying it"
+        assert "Claude Code" in self.by_label(home)["~/.claude/skills"].hint
+
+    def test_user_and_project_scope_are_distinguished(self, home, monkeypatch):
+        """The reason there are two `.claude/skills` rows, which the paths alone do
+        not explain."""
+        (home / "proj").mkdir()
+        monkeypatch.chdir(home / "proj")  # otherwise ~ and . are the same directory
+        rows = self.by_label(home)
+        assert "all projects" in rows["~/.claude/skills"].hint
+        assert "this project" in rows["./.claude/skills"].hint
+
+    def test_a_directory_that_does_not_exist_says_so(self, home):
+        detail = self.by_label(home)["~/.trae/skills"].detail
+        assert "Does not exist yet" in detail
+
+    def test_an_empty_directory_is_not_confused_with_an_installed_one(self, home):
+        (home / ".codex" / "skills").mkdir(parents=True)
+        option = self.by_label(home)["~/.codex/skills"]
+        assert "installed" not in option.hint
+        assert "no media-ai skills in it yet" in option.detail
+
+    def test_skills_already_there_are_counted(self, home):
+        from media_ai.cli._skillstore import copy_skill
+
+        copy_skill("media-ai-shared", home / ".codex" / "skills")
+        option = self.by_label(home)["~/.codex/skills"]
+        assert "1 installed" in option.hint
+        assert "up to date" in option.detail
+
+
+# ---------------------------------------------------------------- announcement
+
+
+def test_setup_opens_with_the_announcement(home):
+    """Setup is the one moment a user is definitely reading the terminal, so it is
+    where "do not build on this yet" has to be said."""
+    args = make_args(skills_only=True, skills_dest=str(home / "sk"))
+    _summary, prompter = run(args, [pick("media-ai-image")])
+    shown = "\n".join(prompter.notes)
+    assert "rapid development" in shown and "production" in shown
+
+
+def test_announcements_are_display_only(home):
+    """They will eventually come from a remote source; nothing about them may be
+    load-bearing, and nothing may fail an install."""
+    from media_ai.cli._announce import announcements
+
+    for title, body in announcements():
+        assert isinstance(title, str) and isinstance(body, str) and body
+
+
+# ------------------------------------------------------------------ going back
+
+
+class TestGoingBack:
+    def test_escaping_the_destination_question_re_asks_the_skills(self, home):
+        args = make_args(skills_only=True)
+        # skills -> destinations (go back) -> skills -> destinations -> no custom path
+        _summary, prompter = run(
+            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills"), False],
+        )
+        assert prompter.asked.count("Which skills should be installed?") == 2
+
+    def test_the_second_answer_is_the_one_that_counts(self, home):
+        args = make_args(skills_only=True)
+        summary, _ = run(
+            args, [pick("media-ai-image"), GoBack, pick("media-ai-video"), dests("~/.claude/skills"), False],
+        )
+        installed = summary["skills"][0]["installed"]
+        assert "media-ai-video" in installed and "media-ai-image" not in installed
+
+    def test_nothing_is_written_before_every_question_is_answered(self, home):
+        """Going back has to be safe, which means the question half cannot write —
+        the same property that makes Ctrl-C safe."""
+        args = make_args(skills_dest=str(home / "sk"))
+        with pytest.raises(Cancelled):
+            run(args, [pick("media-ai-image"), [0], 0, Cancelled])
+        assert not (home / "sk").exists(), "skills were installed before the last question"
+
+
 # --------------------------------------------------------------------- receipt
 
 
@@ -253,6 +345,73 @@ def test_dry_run_records_nothing(home):
     args = make_args(skills_only=True, skills_dest=str(home / "sk"), dry_run=True)
     run(args, [pick("media-ai-image")])
     assert not receipt_path().exists() and load_receipt() == {}
+
+
+# -------------------------------------------------------------- running it twice
+
+
+def snapshot(root) -> dict[str, str]:
+    """Every file under ``root``, by content — enough to prove a re-run changed nothing."""
+    return {str(p.relative_to(root)): p.read_text(encoding="utf-8") for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+class TestRerunIsANoOp:
+    """Installing twice is the normal case — it is how you upgrade — so the second
+    run must not accumulate anything: no rewritten skills, no second backup of the
+    same keys, no drifting receipt."""
+
+    @staticmethod
+    def flow(home):
+        return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], 0, SECRET]
+
+    def test_the_second_run_writes_no_skill_files(self, home):
+        args, answers = self.flow(home)
+        run(args, answers)
+        summary, _ = run(*self.flow(home))
+        entry = summary["skills"][0]
+        assert entry["written"] == [], "re-wrote skills that were already current"
+        assert "media-ai-image" in entry["installed"], "should still report them as installed"
+
+    def test_the_second_run_asks_nothing_extra(self, home):
+        """An unchanged copy is not a collision, so there is nothing to decide."""
+        args, answers = self.flow(home)
+        _summary, first = run(args, answers)
+        _summary, second = run(*self.flow(home))
+        assert second.asked == first.asked
+
+    def test_the_second_run_leaves_the_tree_byte_identical(self, home):
+        args, answers = self.flow(home)
+        run(args, answers)
+        before = snapshot(home)
+        run(*self.flow(home))
+        assert snapshot(home) == before
+
+    def test_identical_answers_do_not_pile_up_backups(self, home):
+        """A `.bak` per run would be a second copy of the same keys, under a name
+        nobody remembers to delete."""
+        args, answers = self.flow(home)
+        run(args, answers)
+        summary, _ = run(*self.flow(home))
+        assert summary["backed_up"] == []
+        assert not list(home.glob("credentials.toml.bak*"))
+
+    def test_a_changed_answer_still_gets_backed_up(self, home):
+        args, answers = self.flow(home)
+        run(args, answers)
+        args2, _ = self.flow(home)
+        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, "sk-a-different-key-4242"])
+        assert summary["backed_up"], "overwriting a key must keep the old file"
+
+    def test_a_locally_edited_skill_is_still_offered(self, home):
+        """Unchanged is silent; *changed* is exactly what the user should be asked about."""
+        args, answers = self.flow(home)
+        run(args, answers)
+        (home / "sk" / "media-ai-image" / "SKILL.md").write_text("my own version", encoding="utf-8")
+        args2, _ = self.flow(home)
+        summary, prompter = run(args2, [pick("media-ai-image"), 1, [0], 0, SECRET])  # 1 = keep mine
+        assert any("differs from the packaged skill" in q for q in prompter.asked)
+        assert "media-ai-image" in summary["skills"][0]["skipped"]
+        assert (home / "sk" / "media-ai-image" / "SKILL.md").read_text() == "my own version"
 
 
 # --------------------------------------------------------------- credentials

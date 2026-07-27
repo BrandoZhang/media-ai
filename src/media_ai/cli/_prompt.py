@@ -44,6 +44,7 @@ deterministic behaviour instead of hanging.
 from __future__ import annotations
 
 import os
+import select
 import shutil
 import sys
 import textwrap
@@ -54,16 +55,29 @@ from typing import Protocol, Sequence
 __all__ = [
     "Option",
     "Cancelled",
+    "GoBack",
     "Prompter",
     "TerminalPrompter",
     "FallbackPrompter",
     "ScriptedPrompter",
     "get_prompter",
+    "run_steps",
 ]
+
+# What a user types to step back where there are no keypresses to read — the numbered
+# menus, and the line prompts even on a real terminal (they run in cooked mode, so
+# there is no Esc to intercept). Deliberately not a plausible answer to any of them.
+BACK_TOKENS = ("<", "b", "back")
 
 ESC = "\x1b"
 _CTRL_C = "\x03"
 _CTRL_D = "\x04"
+
+# How long to wait for the rest of an escape sequence before calling it a bare Esc.
+# Terminals emit the whole sequence in a single write, so this only has to outlast
+# scheduling jitter — long enough not to split an arrow key, short enough that Esc
+# still feels instant.
+_ESC_TAIL_SECONDS = 0.05
 
 # Reserve rows for the step title, the rail's closing line, the key hint, and the
 # "n more" markers around a scrolled viewport.
@@ -77,7 +91,16 @@ _DIM, _CYAN, _GREEN, _RED = "2", "36", "32", "31"
 
 
 class Cancelled(Exception):
-    """The user aborted a prompt (Ctrl-C / Ctrl-D / Esc)."""
+    """The user aborted the whole run (Ctrl-C / Ctrl-D)."""
+
+
+class GoBack(Exception):
+    """The user asked to return to the previous question (Esc).
+
+    Raised *out of* a prompt, which is what makes it work: the step driver
+    (:func:`run_steps`) catches it and re-runs the previous step, so a wizard's steps
+    stay ordinary straight-line functions instead of a state machine.
+    """
 
 
 @dataclass(frozen=True)
@@ -116,10 +139,14 @@ class Glyphs:
     check_off: str
     mask: str
     ellipsis: str
+    bar_h: str  #: the box drawn by `box()` — clack's `note`
+    corner_tr: str
+    connect_left: str
+    corner_br: str
 
 
-UNICODE = Glyphs("┌", "│", "└", "◆", "◇", "■", "●", "○", "◼", "◻", "▪", "…")
-ASCII = Glyphs("T", "|", "-", "*", "o", "x", "(*)", "( )", "[+]", "[ ]", "*", "...")
+UNICODE = Glyphs("┌", "│", "└", "◆", "◇", "■", "●", "○", "◼", "◻", "▪", "…", "─", "╮", "├", "╯")
+ASCII = Glyphs("T", "|", "-", "*", "o", "x", "(*)", "( )", "[+]", "[ ]", "*", "...", "-", "+", "+", "+")
 
 
 def glyphs_for(stream) -> Glyphs:
@@ -191,8 +218,13 @@ class Prompter(Protocol):
     dumb streams, and (in tests) by a scripted fake — so a wizard's flow is testable
     without a tty."""
 
+    #: Questions asked so far. :func:`run_steps` reads it to tell a step that asked
+    #: something from one that silently did nothing, so "back" skips over the latter.
+    questions: int
+
     def intro(self, title: str) -> None: ...
     def outro(self, message: str) -> None: ...
+    def box(self, title: str, message: str) -> None: ...
     def select(self, title: str, options: Sequence[Option | str], *, default: int = 0) -> int: ...
     def multiselect(
         self, title: str, options: Sequence[Option | str], *, preselected: Sequence[int] = ()
@@ -214,6 +246,10 @@ class TerminalPrompter:
         self._out = tty_out
         self._fd = tty_in.fileno()
         self._g = glyphs_for(tty_out)
+        self.questions = 0
+        # How many rows below the start of the run the cursor sits. Kept exact so
+        # `rewind` can un-draw whole steps when the user goes back; see `mark`.
+        self._rows = 0
 
     # -- terminal plumbing ---------------------------------------------------
 
@@ -248,6 +284,12 @@ class TerminalPrompter:
         ch = os.read(self._fd, 1).decode("utf-8", "replace")
         if ch != ESC:
             return ch
+        # A bare Esc and the first byte of an arrow key are the same byte. Reading the
+        # rest unconditionally hangs on a bare Esc until the user presses something
+        # else — so wait a moment for a tail that a terminal always sends in one go,
+        # and treat silence as the key itself.
+        if not select.select([self._fd], [], [], _ESC_TAIL_SECONDS)[0]:
+            return "esc"
         seq = os.read(self._fd, 2).decode("utf-8", "replace")
         return {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq, "esc")
 
@@ -272,6 +314,11 @@ class TerminalPrompter:
         head, *rest = title.strip("\n").split("\n") or [""]
         return [self._rail(symbol, head, color=color)] + [self._rail(self._g.bar, line.strip()) for line in rest]
 
+    def _emit(self, lines: list[str]) -> None:
+        """Write rows that stay on screen, keeping the row count honest."""
+        self._write("".join(f"{line}\r\n" for line in lines))
+        self._rows += len(lines)
+
     def _flush_frame(self, lines: list[str], previous: int) -> int:
         """Redraw a frame in place and report its height.
 
@@ -282,22 +329,75 @@ class TerminalPrompter:
         if previous:
             self._write(f"{ESC}[{previous}A")
         self._write("".join(f"{ESC}[2K{line}\r\n" for line in lines) + f"{ESC}[0J")
+        self._rows += len(lines) - previous
         return len(lines)
+
+    # -- rewinding -----------------------------------------------------------
+
+    def mark(self) -> int:
+        """A position in the transcript to come back to."""
+        return self._rows
+
+    def rewind(self, mark: int) -> None:
+        """Un-draw everything written since ``mark``.
+
+        This is what "go back" looks like: the step being returned to is erased along
+        with the one being abandoned, so it can be asked again in place rather than
+        appearing a second time under its own answer.
+
+        Only what is still on screen can be erased — a run long enough to have
+        scrolled loses the top of itself. That is cosmetic, and the alternative
+        (a full-screen alternate buffer) would take the transcript with it.
+        """
+        delta = self._rows - mark
+        if delta > 0:
+            self._write(f"{ESC}[{delta}A{ESC}[0J")
+            self._rows = mark
 
     # -- lifecycle -----------------------------------------------------------
 
     def intro(self, title: str) -> None:
-        self._write(f"{self._rail(self._g.bar_start, title)}\r\n{self._rail(self._g.bar)}\r\n")
+        self._emit([self._rail(self._g.bar_start, title), self._rail(self._g.bar)])
 
     def outro(self, message: str) -> None:
         lines = message.strip("\n").split("\n") or [""]
         rendered = [self._rail(self._g.bar, line) for line in lines[:-1]]
         rendered.append(self._rail(self._g.bar_end, lines[-1]))
-        self._write("".join(f"{line}\r\n" for line in rendered))
+        self._emit(rendered)
 
     def note(self, message: str) -> None:
-        lines = message.strip("\n").split("\n")
-        self._write("".join(f"{self._rail(self._g.bar, line)}\r\n" for line in lines))
+        self._emit([self._rail(self._g.bar, line) for line in message.strip("\n").split("\n")])
+
+    def box(self, title: str, message: str) -> None:
+        """A framed aside — clack's ``note``. For things to be read, not answered.
+
+        Framed rather than dimmed because the one thing it is used for (an
+        announcement) has to survive being skimmed past on the way to the first
+        question.
+        """
+        g = self._g
+        room = max(20, self._width() - 8)
+        body = [line for para in message.strip("\n").split("\n") for line in _detail_lines(para, room, limit=99)]
+        inner = min(max([_display_width(title) + 2, *(_display_width(line) for line in body)]) + 2, room + 2)
+
+        def row(content: str = "") -> str:
+            """Pad to the box width. Built by hand, not through ``_rail``: the closing
+            bar is a coloured suffix, and truncating a string with escapes in it both
+            corrupts the sequence and miscounts the width."""
+            filled = content + " " * max(0, inner - _display_width(content) - 1)
+            return f"{_paint(g.bar, _DIM)}  {filled}{_paint(g.bar, _DIM)}"
+
+        dashes = g.bar_h * max(1, inner - _display_width(title) - 2)
+        lines = [
+            f"{_paint(g.step_submit, _CYAN)}  {title} {_paint(dashes + g.corner_tr, _DIM)}",
+            row(),
+            *(row(line) for line in body),
+            row(),
+            # inner + 1: the body rows carry two leading spaces and one leading rail,
+            # so the closing edge sits one column further right than `inner` alone.
+            _paint(g.connect_left + g.bar_h * (inner + 1) + g.corner_br, _DIM),
+        ]
+        self._emit(lines)
 
     def _submitted(self, title: str, value: str, previous: int) -> None:
         """Replace a finished step with its answered form: ``◇  title`` + the value."""
@@ -373,18 +473,25 @@ class TerminalPrompter:
                 lines.append(
                     self._rail(self._g.bar, f"{self._g.ellipsis} {len(options) - end} more below", body_color=_DIM)
                 )
-            keys = "↑↓ move · space toggle · a all · enter confirm" if multi else "↑↓ move · enter select"
-            lines.append(self._rail(self._g.bar, keys, body_color=_DIM))
+            keys = "↑↓ move · space toggle · a all" if multi else "↑↓ move"
+            lines.append(self._rail(self._g.bar, f"{keys} · enter confirm · esc back", body_color=_DIM))
             lines.append(self._rail(self._g.bar_end))
             drawn = self._flush_frame(lines, drawn)
 
+        self.questions += 1
         with self._raw():
             draw()
             while True:
                 key = self._read_key()
-                if key in (_CTRL_C, _CTRL_D, "esc"):
+                if key in (_CTRL_C, _CTRL_D):
                     self._cancelled(title, drawn)
                     raise Cancelled
+                if key == "esc":
+                    # Esc steps back rather than aborting: Ctrl-C is the abort every
+                    # terminal user already reaches for, and a wizard that cannot undo
+                    # a mistyped answer makes people restart the whole run. The frame
+                    # is left for `rewind` to erase along with the step being returned to.
+                    raise GoBack
                 if key in ("\r", "\n"):
                     picked = sorted(chosen) if multi else [cursor]
                     self._submitted(title, self._answer(options, picked, multi), drawn)
@@ -427,15 +534,20 @@ class TerminalPrompter:
         The tty is in cooked mode for this, so the user's own echo lands on the
         ``│  `` line we leave the cursor on — which is exactly where clack puts it.
         """
+        self.questions += 1
         lines = self._step(self._g.step_active, title, _CYAN)
         if hint:
             lines[0] += _paint(f"  {hint}", _DIM)
-        self._write("".join(f"{line}\r\n" for line in lines))
+        self._emit(lines)
         self._write(f"{_paint(self._g.bar, _DIM)}  ")
+        self._rows += 1  # the input row the terminal is about to echo onto
         return read(), len(lines) + 1
 
     def text(self, title: str, *, default: str = "") -> str:
-        value, height = self._ask_line(title, f"[{default}]" if default else "", self._readline)
+        hint = f"[{default}]" if default else ""
+        value, height = self._ask_line(title, f"{hint}  (< to go back)".strip(), self._readline)
+        if value in BACK_TOKENS:
+            raise GoBack
         answer = value or default
         # Redrawing over typed input is only safe while it fits on one line; a wrapped
         # entry occupies rows this has not counted, and rewriting would eat the wrong ones.
@@ -444,6 +556,7 @@ class TerminalPrompter:
         return answer
 
     def _readline(self) -> str:
+        # Cooked mode here, so there is no Esc to intercept — a typed token stands in.
         line = self._in.readline()
         if not line:
             raise Cancelled
@@ -458,7 +571,9 @@ class TerminalPrompter:
             except (EOFError, KeyboardInterrupt) as exc:
                 raise Cancelled from exc
 
-        value, height = self._ask_line(title, "input hidden", read)
+        value, height = self._ask_line(title, "input hidden, < to go back", read)
+        if value in BACK_TOKENS:
+            raise GoBack
         # Never echo the value, not even its length: a fixed-width mask.
         self._submitted(title, self._g.mask * 8 if value.strip() else "(empty)", height)
         return value
@@ -475,16 +590,20 @@ class TerminalPrompter:
             no = f"{_paint(off, _DIM)} {_paint('No', _DIM)}" if answer else f"{_paint(on, _GREEN)} No"
             lines = self._step(self._g.step_active, title, _CYAN)
             lines.append(f"{_paint(self._g.bar, _DIM)}  {yes} / {no}")
+            lines.append(self._rail(self._g.bar, "←→ y/n switch · enter confirm · esc back", body_color=_DIM))
             lines.append(self._rail(self._g.bar_end))
             drawn = self._flush_frame(lines, drawn)
 
+        self.questions += 1
         with self._raw():
             draw()
             while True:
                 key = self._read_key()
-                if key in (_CTRL_C, _CTRL_D, "esc"):
+                if key in (_CTRL_C, _CTRL_D):
                     self._cancelled(title, drawn)
                     raise Cancelled
+                if key == "esc":
+                    raise GoBack
                 if key in ("\r", "\n"):
                     self._submitted(title, "Yes" if answer else "No", drawn)
                     return answer
@@ -511,6 +630,7 @@ class FallbackPrompter:
     def __init__(self, stream_in=None, stream_out=None):
         self._in = stream_in or sys.stdin
         self._out = stream_out or sys.stderr
+        self.questions = 0
 
     def _say(self, text: str) -> None:
         print(text, file=self._out, flush=True)
@@ -520,6 +640,19 @@ class FallbackPrompter:
         if not line:
             raise Cancelled
         return line.strip()
+
+    def _answer(self) -> str:
+        """A line of input, with the typed back-token turned into :class:`GoBack`."""
+        raw = self._readline()
+        if raw.lower() in BACK_TOKENS:
+            raise GoBack
+        return raw
+
+    def mark(self) -> int:
+        return 0
+
+    def rewind(self, mark: int) -> None:
+        """Nothing to un-draw: this stream is a transcript, not a canvas."""
 
     def _list(self, title: str, opts: list[Option]) -> None:
         self._say(title)
@@ -536,14 +669,20 @@ class FallbackPrompter:
     def outro(self, message: str) -> None:
         self._say(message.rstrip("\n"))
 
+    def box(self, title: str, message: str) -> None:
+        self._say(f"{title}:")
+        for line in message.strip("\n").split("\n"):
+            self._say(f"  {line}")
+
     def select(self, title: str, options: Sequence[Option | str], *, default: int = 0) -> int:
         opts = _coerce(options)
         if not opts:
             raise ValueError("select() needs at least one option")
+        self.questions += 1
         self._list(title, opts)
         while True:
-            self._say(f"Enter a number [1-{len(opts)}, default {default + 1}]:")
-            raw = self._readline()
+            self._say(f"Enter a number [1-{len(opts)}, default {default + 1}], or 'b' to go back:")
+            raw = self._answer()
             if not raw:
                 return default
             if raw.isdigit() and 1 <= int(raw) <= len(opts):
@@ -556,12 +695,13 @@ class FallbackPrompter:
         opts = _coerce(options)
         if not opts:
             return []
+        self.questions += 1
         self._list(title, opts)
         default = sorted(preselected)
         shown = ",".join(str(i + 1) for i in default) or "none"
         while True:
-            self._say(f"Comma-separated numbers, 'all', or blank for [{shown}]:")
-            raw = self._readline()
+            self._say(f"Comma-separated numbers, 'all', 'b' to go back, or blank for [{shown}]:")
+            raw = self._answer()
             if not raw:
                 return default
             if raw.lower() == "all":
@@ -572,16 +712,21 @@ class FallbackPrompter:
             self._say("  not a valid selection")
 
     def text(self, title: str, *, default: str = "") -> str:
+        self.questions += 1
         self._say(f"{title}{f' [{default}]' if default else ''}:")
-        return self._readline() or default
+        return self._answer() or default
 
     def secret(self, title: str) -> str:
         import getpass
 
+        self.questions += 1
         try:
-            return getpass.getpass(f"{title}: ", stream=self._out)
+            value = getpass.getpass(f"{title}: ", stream=self._out)
         except (EOFError, KeyboardInterrupt) as exc:
             raise Cancelled from exc
+        if value.strip().lower() in BACK_TOKENS:
+            raise GoBack
+        return value
 
     def confirm(self, title: str, *, default: bool = True) -> bool:
         answer = self.text(f"{title} {'[Y/n]' if default else '[y/N]'}").lower()
@@ -608,20 +753,37 @@ class ScriptedPrompter:
         self.notes: list[str] = []
         self.offered: list[list[Option]] = []  #: the menus shown, in order
 
+    @property
+    def questions(self) -> int:
+        return len(self.asked)
+
     def _next(self, question: str):
         self.asked.append(question)
         if not self._answers:
             raise AssertionError(f"scripted prompter ran out of answers at: {question!r}")
         answer = self._answers.pop(0)
+        # Scripting an exception *class* as an answer is how a test drives the two
+        # control-flow outcomes: `Cancelled` aborts, `GoBack` steps back.
         if answer is Cancelled:
             raise Cancelled
+        if answer is GoBack:
+            raise GoBack
         return answer
+
+    def mark(self) -> int:
+        return 0
+
+    def rewind(self, mark: int) -> None:
+        """No canvas to un-draw."""
 
     def intro(self, title: str) -> None:
         self.notes.append(title)
 
     def outro(self, message: str) -> None:
         self.notes.append(message)
+
+    def box(self, title: str, message: str) -> None:
+        self.notes.append(f"{title}: {message}")
 
     def select(self, title: str, options: Sequence[Option | str], *, default: int = 0) -> int:
         self.offered.append(_coerce(options))
@@ -645,6 +807,51 @@ class ScriptedPrompter:
 
     def note(self, message: str) -> None:
         self.notes.append(message)
+
+
+# --------------------------------------------------------------------- step driver
+
+
+def run_steps(steps: Sequence, prompter) -> None:
+    """Run a wizard's steps in order, letting the user walk back through them.
+
+    Each step is a zero-argument callable that asks its questions and records the
+    answers wherever the caller wants them. Raising :class:`GoBack` from *any* prompt
+    inside a step abandons it and re-runs the previous one — so the steps stay
+    ordinary top-to-bottom functions, and only this loop knows about history.
+
+    Two details make it behave the way people expect:
+
+    - **Steps that asked nothing are skipped on the way back.** A step may decide it
+      has nothing to do (``--skills-dest`` was passed, no provider needs a key).
+      Stopping on one of those would look like "back" doing nothing, so the counter of
+      questions asked is what decides, not the step list.
+    - **Going back un-draws.** The transcript is rewound to where the target step
+      began, so it is asked again in place instead of appearing a second time
+      underneath its own answer.
+
+    A step must therefore be safe to run more than once — which for a question step
+    means it may not write anything. That is the same constraint that already keeps
+    Ctrl-C from leaving a half-applied config, so the two hold each other up.
+    """
+    steps = list(steps)
+    marks = [0] * len(steps)
+    asked = [False] * len(steps)
+    i = 0
+    while i < len(steps):
+        marks[i] = prompter.mark()
+        before = prompter.questions
+        try:
+            steps[i]()
+        except GoBack:
+            target = next((j for j in range(i - 1, -1, -1) if asked[j]), None)
+            if target is None:
+                target = i  # nothing behind this step: re-ask it rather than exiting
+            prompter.rewind(marks[target])
+            i = target
+            continue
+        asked[i] = prompter.questions > before
+        i += 1
 
 
 # ------------------------------------------------------------------------ factory

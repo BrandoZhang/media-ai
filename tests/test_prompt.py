@@ -23,13 +23,16 @@ from media_ai.cli._prompt import (
     UNICODE,
     Cancelled,
     FallbackPrompter,
+    GoBack,
     Option,
+    ScriptedPrompter,
     TerminalPrompter,
     _detail_lines,
     _display_width,
     _truncate,
     get_prompter,
     glyphs_for,
+    run_steps,
 )
 
 UP, DOWN, LEFT, RIGHT = b"\x1b[A", b"\x1b[B", b"\x1b[D", b"\x1b[C"
@@ -190,12 +193,103 @@ class TestGlyphFallbacks:
     def test_ascii_and_unicode_sets_cover_the_same_glyphs(self):
         assert set(vars(ASCII)) == set(vars(UNICODE))
 
+    def test_box_frames_its_message(self):
+        p, out = drawing()
+        p.box("Heads up", "read this")
+        lines = plain(out.getvalue()).splitlines()
+        assert lines[0].startswith("◇  Heads up ") and lines[0].endswith("╮")
+        assert any("read this" in line for line in lines)
+        assert lines[-1].startswith("├") and lines[-1].endswith("╯")
+
+    def test_box_rows_are_all_the_same_width(self):
+        """A ragged right edge is the tell that the padding maths went wrong."""
+        p, out = drawing()
+        p.box("Heads up", "one short line\nand a considerably longer second line to wrap the box")
+        widths = {_display_width(line) for line in plain(out.getvalue()).splitlines()}
+        assert len(widths) == 1
+
     def test_no_color_is_honoured(self, monkeypatch):
         """https://no-color.org — and it keeps a piped transcript readable."""
         monkeypatch.setenv("NO_COLOR", "1")
         p, out = drawing()
         p.intro("setup")
         assert "\x1b" not in out.getvalue()
+
+
+# ---------------------------------------------------------------- going back
+
+
+class Recorder(ScriptedPrompter):
+    """A scripted prompter that also remembers the rewinds asked of it."""
+
+    def __init__(self, answers):
+        super().__init__(answers)
+        self._row = 0
+        self.rewound: list[int] = []
+
+    def mark(self) -> int:
+        self._row += 10  # each step "draws" something, so marks differ
+        return self._row
+
+    def rewind(self, mark: int) -> None:
+        self.rewound.append(mark)
+
+
+class TestRunSteps:
+    """`run_steps` is what turns one exception into "go back a question"."""
+
+    @staticmethod
+    def asking(name, calls, prompter):
+        def step():
+            calls.append(name)
+            prompter.select(name, ["x"])
+
+        return step
+
+    def test_back_returns_to_the_previous_question(self):
+        p = ScriptedPrompter([0, GoBack, 1, 2])
+        calls = []
+        run_steps([self.asking("a", calls, p), self.asking("b", calls, p)], p)
+        assert calls == ["a", "b", "a", "b"]
+
+    def test_a_step_that_asked_nothing_is_skipped_on_the_way_back(self):
+        """Landing on a step that has nothing to ask would look like "back" doing
+        nothing — which is how flag-driven steps (`--skills-dest`) behave."""
+        p = ScriptedPrompter([0, GoBack, 1, 2])
+        calls = []
+        steps = [
+            self.asking("a", calls, p),
+            lambda: calls.append("silent"),
+            self.asking("c", calls, p),
+        ]
+        run_steps(steps, p)
+        assert calls == ["a", "silent", "c", "a", "silent", "c"]
+
+    def test_back_at_the_first_question_re_asks_it(self):
+        """There is nothing behind it, and exiting the wizard is what Ctrl-C is for."""
+        p = ScriptedPrompter([GoBack, 0])
+        calls = []
+        run_steps([self.asking("a", calls, p)], p)
+        assert calls == ["a", "a"]
+
+    def test_the_transcript_is_rewound_to_the_step_returned_to(self):
+        """Without this the re-asked question appears a second time, underneath the
+        answer it is supposed to be replacing."""
+        p = Recorder([0, GoBack, 1, 2])
+        calls = []
+        run_steps([self.asking("a", calls, p), self.asking("b", calls, p)], p)
+        assert p.rewound == [10], "should rewind to where step 'a' began"
+
+    def test_a_cancel_is_not_caught(self):
+        p = ScriptedPrompter([Cancelled])
+        with pytest.raises(Cancelled):
+            run_steps([self.asking("a", [], p)], p)
+
+    def test_steps_that_never_go_back_run_once_each(self):
+        p = ScriptedPrompter([0, 0, 0])
+        calls = []
+        run_steps([self.asking(n, calls, p) for n in "abc"], p)
+        assert calls == ["a", "b", "c"]
 
 
 # ------------------------------------------------------------------- fallback
@@ -249,6 +343,24 @@ def test_fallback_eof_cancels():
     """A closed stream must raise, not spin forever."""
     with pytest.raises(Cancelled):
         fallback("").select("pick", ["a", "b"])
+
+
+@pytest.mark.parametrize("typed", ["b", "back", "<", "B"])
+def test_fallback_back_token(typed):
+    """No keypresses to intercept here, so going back is a word you can type."""
+    with pytest.raises(GoBack):
+        fallback(f"{typed}\n").select("pick", ["a", "b"])
+
+
+def test_fallback_back_token_in_a_multiselect():
+    with pytest.raises(GoBack):
+        fallback("b\n").multiselect("pick", ["a", "b"])
+
+
+def test_fallback_offers_the_back_token():
+    out = io.StringIO()
+    FallbackPrompter(io.StringIO("1\n"), out).select("pick", ["a"])
+    assert "go back" in out.getvalue()
 
 
 def test_fallback_shows_hints():
@@ -384,6 +496,61 @@ def test_pty_ui_never_writes_to_stdout():
     out = run_in_pty(MULTI_BODY, [DOWN, SPACE, ENTER])
     assert "\x1b" not in out, f"escape sequences leaked to stdout: {out!r}"
     assert out.strip().startswith("RESULT=")
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+def test_pty_escape_goes_back_without_waiting_for_more_input():
+    """Esc and the first byte of an arrow key are the same byte.
+
+    Reading the rest of the sequence unconditionally makes a bare Esc hang until the
+    user happens to press something else — so this asserts it comes back on its own.
+    """
+    body = """
+        from media_ai.cli._prompt import get_prompter, GoBack
+        p = get_prompter()
+        try:
+            p.select("pick", ["alpha", "beta"])
+            print("RESULT=no-back")
+        except GoBack:
+            print("RESULT=back")
+    """
+    assert "RESULT=back" in run_in_pty(body, [b"\x1b"])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+def test_pty_arrow_keys_still_arrive_whole():
+    """The other half of that bargain: the Esc-tail wait must not split an arrow key."""
+    assert "RESULT=1" in run_in_pty(SELECT_BODY, [DOWN, ENTER])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+def test_pty_escape_goes_back_from_a_confirm():
+    body = """
+        from media_ai.cli._prompt import get_prompter, GoBack
+        p = get_prompter()
+        try:
+            p.confirm("sure?")
+            print("RESULT=no-back")
+        except GoBack:
+            print("RESULT=back")
+    """
+    assert "RESULT=back" in run_in_pty(body, [b"\x1b"])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+def test_pty_ctrl_c_still_cancels_rather_than_going_back():
+    body = """
+        from media_ai.cli._prompt import get_prompter, Cancelled, GoBack
+        p = get_prompter()
+        try:
+            p.select("pick", ["a", "b"])
+            print("RESULT=none")
+        except GoBack:
+            print("RESULT=back")
+        except Cancelled:
+            print("RESULT=cancelled")
+    """
+    assert "RESULT=cancelled" in run_in_pty(body, [CTRL_C])
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")

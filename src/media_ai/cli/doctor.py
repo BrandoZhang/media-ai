@@ -33,8 +33,8 @@ from ..credentials.profile import config_path
 from ..credentials.resolver import default_chain
 from ..credentials.stores import credentials_path
 from . import common
-from ._discovery import available_skills, skill_root
-from ._skillstore import installed_skills, known_dests, load_receipt
+from ._discovery import available_skills
+from ._skillstore import installed_skills, known_dests, load_receipt, skill_is_current
 
 __all__ = ["main"]
 
@@ -156,21 +156,13 @@ def _check_skills() -> list[dict]:
 
 
 def _differs(dest: Path, skill: str) -> bool:
-    """Whether an installed SKILL.md still matches the packaged one.
+    """Whether an installed skill still matches the packaged one.
 
-    Only the top-level SKILL.md is compared: it carries the version and the command
-    guidance, so a mismatch there is the signal, and reading every reference file of
-    every skill would turn a diagnostic into a scan. A symlinked install can never
-    drift, so it is never reported.
+    Same comparison the installer uses to decide whether a copy needs refreshing, so
+    the two can never disagree about what "up to date" means. A skill this version
+    does not ship is not drift — it is reported separately.
     """
-    target = dest / skill
-    if target.is_symlink() or skill not in available_skills():
-        return False
-    try:
-        packaged = (skill_root(skill) / "SKILL.md").read_text(encoding="utf-8")
-        return (target / "SKILL.md").read_text(encoding="utf-8") != packaged
-    except OSError:
-        return False
+    return skill in available_skills() and not skill_is_current(dest, skill)
 
 
 # -------------------------------------------------------------------- report
