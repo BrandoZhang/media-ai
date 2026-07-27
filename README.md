@@ -85,19 +85,20 @@ leaves the filesystem byte-identical.
 ### Checking and removing
 
 ```bash
-media-ai doctor               # offline check: PATH, ffmpeg, file modes, which keys resolve, skill drift
-media-ai uninstall            # remove the installed skills; keeps config unless you say otherwise
-media-ai uninstall --purge    # …and delete config.toml + credentials.toml
+media-ai doctor                        # offline check: PATH, ffmpeg, file modes, which keys resolve, skill drift
+media-ai uninstall                     # remove the skills and the configuration
+media-ai uninstall --keep-credentials  # …but hold on to the API keys
 media-ai --version
 ```
 
 `uninstall` finds the skills it installed (including custom paths, via a receipt at
 `~/.config/media-ai/installed-skills.toml`) and asks before it removes anything.
-**Configuration is kept by default** — `config.toml` holds endpoint ids you typed in
-and `credentials.toml` holds keys that may exist nowhere else. Add `--config`,
-`--credentials`, or `--purge` to remove them, `--dry-run` to see what would go, and
-`--yes` to skip the questions. It leaves the CLI itself in place (it is what is
-running) and prints the one command that removes it; to do the whole lot in one step:
+**Uninstalling leaves nothing behind**: skills, `config.toml` and `credentials.toml`
+all go, so a later install is a fresh start rather than something that has to migrate
+whatever an older version left behind. Hold a file back with `--keep-config`,
+`--keep-credentials`, or `--keep-skills`; `--dry-run` shows what would go and `--yes`
+skips the questions. It leaves the CLI itself in place (it is what is running) and
+prints the one command that removes it; to do the whole lot in one step:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash -s -- --uninstall
@@ -139,7 +140,7 @@ media-ai capabilities   [--provider P] [--model M]
 media-ai usage
 media-ai init           [--skills-only] [--advanced] [--verify]
 media-ai doctor
-media-ai uninstall      [--config] [--credentials] [--purge] [--yes] [--dry-run]
+media-ai uninstall      [--keep-skills] [--keep-config] [--keep-credentials] [--yes] [--dry-run]
 ```
 
 Speech works on `gemini` (Gemini 2.5/3.1 TTS — style directed in the prompt text, 30

@@ -1,9 +1,9 @@
 """``media-ai uninstall`` — the other half of the install lifecycle.
 
-The invariants worth protecting are about *restraint*: configuration survives unless
-it was asked for by name, only recognisable skill directories are deleted, and a
-cancelled run changes nothing. Answers come from a ScriptedPrompter, so the flow is
-exercised without a terminal.
+The invariants worth protecting: uninstalling leaves nothing behind unless a
+``--keep-*`` flag says otherwise, only recognisable skill directories are ever
+deleted, and a cancelled run changes nothing. Answers come from a ScriptedPrompter,
+so the flow is exercised without a terminal.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ def home(tmp_path, monkeypatch):
 
 
 def make_args(**over):
-    base = dict(skills_dest=None, keep_skills=False, config=False, credentials=False,
-                purge=False, yes=True, dry_run=False, pretty=False, log_level=None, metadata_out=None)
+    base = dict(skills_dest=None, keep_skills=False, keep_config=False, keep_credentials=False,
+                yes=True, dry_run=False, pretty=False, log_level=None, metadata_out=None)
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -162,62 +162,72 @@ def test_nothing_installed_is_not_an_error(home):
 # --------------------------------------------------------------- configuration
 
 
-def test_configuration_is_kept_by_default(home):
+def test_configuration_goes_by_default(home):
+    """Keeping it would commit the project to migrating a file written by any past
+    version, from the first release onward — a reinstall would always find one."""
     install(home / "sk")
     cfg = write_config(home)
     summary, _ = run(make_args())
-    assert (cfg / "credentials.toml").is_file() and (cfg / "config.toml").is_file()
-    assert str(cfg / "credentials.toml") in summary["kept"]
-
-
-def test_purge_removes_both_files(home):
-    install(home / "sk")
-    cfg = write_config(home)
-    run(make_args(purge=True))
     assert not (cfg / "credentials.toml").exists() and not (cfg / "config.toml").exists()
+    assert str(cfg / "credentials.toml") in summary["removed"]
 
 
-def test_purge_also_removes_credential_backups(home):
+def test_credential_backups_go_with_the_credentials(home):
     """`init` copies the file aside before rewriting it; the copy holds the same key."""
     cfg = write_config(home, backup=True)
-    run(make_args(purge=True))
+    run(make_args())
     assert not (cfg / "credentials.toml.bak").exists()
 
 
-def test_config_flag_does_not_take_the_keys_with_it(home):
+def test_keep_config_holds_back_only_the_config(home):
     cfg = write_config(home)
-    run(make_args(config=True))
-    assert not (cfg / "config.toml").exists()
-    assert (cfg / "credentials.toml").is_file()
-
-
-def test_credentials_flag_does_not_take_the_config_with_it(home):
-    cfg = write_config(home)
-    run(make_args(credentials=True))
-    assert not (cfg / "credentials.toml").exists()
+    run(make_args(keep_config=True))
     assert (cfg / "config.toml").is_file()
+    assert not (cfg / "credentials.toml").exists()
+
+
+def test_keep_credentials_holds_back_only_the_keys(home):
+    cfg = write_config(home)
+    run(make_args(keep_credentials=True))
+    assert (cfg / "credentials.toml").is_file()
+    assert not (cfg / "config.toml").exists()
+
+
+def test_keeping_a_file_reports_it_as_kept(home):
+    cfg = write_config(home)
+    summary, _ = run(make_args(keep_credentials=True))
+    assert str(cfg / "credentials.toml") in summary["kept"]
+    assert str(cfg / "credentials.toml") not in summary["removed"]
 
 
 def test_an_emptied_config_directory_is_cleaned_up(home):
     cfg = write_config(home)
-    run(make_args(purge=True))
+    run(make_args())
     assert not cfg.exists()
+
+
+def test_a_kept_file_keeps_its_directory(home):
+    cfg = write_config(home)
+    run(make_args(keep_credentials=True))
+    assert cfg.is_dir()
 
 
 # ---------------------------------------------------------------- interactive
 
 
-def test_interactive_asks_before_removing_configuration(home):
+def test_interactive_still_asks_before_removing_configuration(home):
+    """The default is yes, but a credentials file is often the only copy of a key —
+    so the path and what is in it go in front of the user before it does."""
     install(home / "sk")
     cfg = write_config(home)
     # skills: keep the one destination selected; then decline both files.
     summary, prompter = run(make_args(yes=False), [[0], False, False])
-    assert (cfg / "credentials.toml").is_file()
+    assert (cfg / "credentials.toml").is_file() and (cfg / "config.toml").is_file()
     assert len(summary["kept"]) == 2
     assert any("credentials.toml" in q for q in prompter.asked)
 
 
-def test_interactive_can_say_yes_to_the_config_file(home):
+def test_interactive_can_hold_back_one_file(home):
     cfg = write_config(home)
     run(make_args(yes=False), [True, False])  # no skills found, so the menu is skipped
     assert not (cfg / "config.toml").exists()
@@ -262,7 +272,7 @@ def test_cancelling_removes_nothing(home, monkeypatch):
 def test_dry_run_changes_nothing(home):
     dest = install(home / "sk")
     cfg = write_config(home)
-    summary, _ = run(make_args(purge=True, dry_run=True))
+    summary, _ = run(make_args(dry_run=True))
     assert (dest / "media-ai-image").is_dir()
     assert (cfg / "credentials.toml").is_file()
     assert summary["dry_run"] is True
@@ -271,7 +281,7 @@ def test_dry_run_changes_nothing(home):
 def test_dry_run_still_reports_what_would_go(home):
     install(home / "sk")
     write_config(home)
-    summary, _ = run(make_args(purge=True, dry_run=True))
+    summary, _ = run(make_args(dry_run=True))
     assert summary["skills"][0]["removed"]
     assert any("credentials.toml" in path for path in summary["removed"])
 

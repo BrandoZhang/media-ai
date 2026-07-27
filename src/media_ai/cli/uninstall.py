@@ -6,11 +6,14 @@ this command the only way back is to remember all of that and delete it by hand.
 
 Two rules shape it:
 
-- **Configuration is kept unless asked for.** Skills are copies of packaged files and
-  cost nothing to restore; ``credentials.toml`` holds keys that may exist nowhere else
-  and ``config.toml`` holds endpoint ids that were typed in by hand. So the default is
-  skills-only, and removing either file takes an explicit flag or an explicit "yes" —
-  never a default, never a bundled ``--all``.
+- **Uninstalling leaves nothing behind.** Skills, ``config.toml`` and
+  ``credentials.toml`` all go unless a ``--keep-*`` flag says otherwise. The
+  alternative — keeping configuration by default — quietly commits the project to
+  *migration*: a file written by any past version would have to stay readable by every
+  future one, from the first release onward, because a reinstall would always find one
+  waiting. Removing it is what makes an install a fresh start. (Migration is still
+  worth having, and is tracked separately; ``--keep-config`` is the escape hatch until
+  then, and the confirmation is asked with the paths spelled out.)
 - **Nothing is removed that was not recognisably installed.** Every deletion goes
   through :mod:`media_ai.cli._skillstore`, which touches only ``media-ai-*``
   directories carrying a ``SKILL.md``, and unlinks symlinks rather than following
@@ -123,7 +126,7 @@ def _backups_of(path: Path) -> list[Path]:
 # the keys kept, and a shared box is the other way round.
 CONFIG_FILES = (
     ("config", config_path, "provider defaults, profiles, endpoint ids"),
-    ("credentials", credentials_path, "API keys — may exist nowhere else"),
+    ("credentials", credentials_path, "API keys — this may be the only copy"),
 )
 
 
@@ -162,13 +165,16 @@ def _ask_skills(args, prompter, choices: _Choices) -> None:
 
 
 def _ask_file(args, prompter, choices: _Choices, flag: str, path: Path, what: str) -> None:
-    if not path.is_file():
-        choices.files[flag] = False
+    """Whether one configuration file goes. It does, unless told otherwise.
+
+    Still *asked* rather than assumed on an interactive run: the default is yes, but a
+    credentials file is often the only copy of a key, so the path and what is in it are
+    put in front of the user before it goes.
+    """
+    choices.files[flag] = False
+    if not path.is_file() or getattr(args, f"keep_{flag}"):
         return
-    wanted = bool(getattr(args, flag) or args.purge)
-    if not wanted and not args.yes:
-        wanted = prompter.confirm(f"Also remove {path}\n  ({what})?", default=False)
-    choices.files[flag] = wanted
+    choices.files[flag] = True if args.yes else prompter.confirm(f"Remove {path}\n  ({what})?", default=True)
 
 
 def _uninstall(args, prompter) -> dict:
@@ -249,15 +255,14 @@ def _report(summary: dict, prompter) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="media-ai uninstall",
-        description="Remove installed Agent Skills, and optionally the configuration files.",
+        description="Remove installed Agent Skills and the configuration files, so a later install starts fresh.",
     )
     ap.add_argument("--skills-dest", action="append", default=None,
                     help="only look here (repeatable); default: the install receipt + the usual agent directories")
     ap.add_argument("--keep-skills", action="store_true", help="leave installed Agent Skills in place")
-    ap.add_argument("--config", action="store_true", help="also remove config.toml (kept by default)")
-    ap.add_argument("--credentials", action="store_true", help="also remove credentials.toml (kept by default)")
-    ap.add_argument("--purge", action="store_true", help="remove skills, config.toml and credentials.toml")
-    ap.add_argument("--yes", "-y", action="store_true", help="don't ask; remove skills, keep config unless flagged")
+    ap.add_argument("--keep-config", action="store_true", help="leave config.toml (model defaults, profiles)")
+    ap.add_argument("--keep-credentials", action="store_true", help="leave credentials.toml (API keys)")
+    ap.add_argument("--yes", "-y", action="store_true", help="don't ask; remove everything not kept by a flag")
     ap.add_argument("--dry-run", action="store_true", help="report what would be removed without removing it")
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("--log-level", default=None)

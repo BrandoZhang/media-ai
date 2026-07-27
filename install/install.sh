@@ -17,7 +17,8 @@ REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.2.0}"
 
 main() {
-  local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 purge=0 assume_yes=0
+  local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
+  local keep_flags=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,7 +31,9 @@ main() {
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
       --no-init)      do_init=0; shift ;;
       --uninstall)    do_uninstall=1; shift ;;
-      --purge)        purge=1; shift ;;
+      --keep-config)  keep_flags+=(--keep-config); shift ;;
+      --keep-credentials) keep_flags+=(--keep-credentials); shift ;;
+      --keep-skills)  keep_flags+=(--keep-skills); shift ;;
       -y|--yes)       assume_yes=1; shift ;;
       --dry-run)      dry_run=1; shift ;;
       -h|--help)      usage; return 0 ;;
@@ -41,7 +44,7 @@ main() {
   # Before ensure_uv: installing uv in order to uninstall would be absurd, and the
   # CLI may well have been installed some other way.
   if [ "$do_uninstall" -eq 1 ]; then
-    run_uninstall "$purge" "$assume_yes" "$dry_run"
+    run_uninstall "$assume_yes" "$dry_run" "${keep_flags[@]+"${keep_flags[@]}"}"
     return $?
   fi
 
@@ -75,8 +78,10 @@ usage: install.sh [options]
 
 uninstalling:
 
-  --uninstall        remove the installed Agent Skills, then the CLI itself
-  --purge            with --uninstall: also delete config.toml and credentials.toml
+  --uninstall        remove the skills, the configuration, then the CLI itself
+  --keep-config      with --uninstall: leave config.toml (model defaults, profiles)
+  --keep-credentials with --uninstall: leave credentials.toml (API keys)
+  --keep-skills      with --uninstall: leave the installed Agent Skills
   -y, --yes          with --uninstall: don't ask, take the defaults
 USAGE
 }
@@ -211,19 +216,19 @@ run_uninstall() {
   # Two halves, in this order: the CLI removes what it wrote (skills, and — only if
   # asked — the config files), then this removes the CLI. It cannot be done the other
   # way round, because the first half runs the CLI.
-  local purge="$1" assume_yes="$2" dry_run="$3"
-  local flags=() have_tty=1
+  local assume_yes="$1" dry_run="$2"
+  shift 2
+  local flags=("$@") have_tty=1
 
-  if [ "$purge" -eq 1 ]; then flags+=(--purge); fi
   if [ "$dry_run" -eq 1 ]; then flags+=(--dry-run); fi
   # Same /dev/tty test as run_init: under `curl … | bash` the pipe owns stdin, and
   # with no terminal at all the wizard must not wait for an answer that cannot come.
-  # Without one, --yes is implied: skills go, configuration stays unless --purge.
+  # Without one, --yes is implied: everything goes except what a --keep-* flag holds back.
   : 2>/dev/null < /dev/tty || have_tty=0
   if [ "$assume_yes" -eq 1 ] || [ "$have_tty" -eq 0 ]; then flags+=(--yes); fi
 
   if command -v media-ai >/dev/null 2>&1; then
-    say "removing installed Agent Skills…"
+    say "removing installed Agent Skills and configuration…"
     if [ "$have_tty" -eq 1 ]; then
       media-ai uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
     else
