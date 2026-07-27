@@ -66,10 +66,16 @@ TIERS = ("core", "optional", "dependency")
 DEFAULT_TIER = "optional"
 
 
-def available_skills() -> list[str]:
-    """Skill directory names shipped inside the package, sorted."""
+@lru_cache(maxsize=None)
+def available_skills() -> tuple[str, ...]:
+    """Skill directory names shipped inside the package, sorted.
+
+    Cached: the answer cannot change within a process, and it is asked once per
+    `needs` edge during resolution and once per scanned root in `doctor` — each time
+    an `iterdir()` of a resource directory that may live inside a zip.
+    """
     root = files("media_ai") / "skills"
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and p.name.startswith(SKILL_PREFIX))
+    return tuple(sorted(p.name for p in root.iterdir() if p.is_dir() and p.name.startswith(SKILL_PREFIX)))
 
 
 def skill_root(skill: str):
@@ -183,11 +189,12 @@ def resolve_selection(picked: list[str]) -> tuple[list[str], dict[str, str]]:
 
     # Breadth-first over `needs`, and only ever *adding*: a cycle or a self-reference
     # terminates because a skill already in `chosen` is never queued again.
+    shipped = set(available_skills())
     queue = list(chosen)
     while queue:
         skill = queue.pop()
         for need in skill_info(skill).needs:
-            if need in chosen or need not in available_skills():
+            if need in chosen or need not in shipped:
                 continue
             chosen.add(need)
             reasons[need] = f"needed by {skill}"

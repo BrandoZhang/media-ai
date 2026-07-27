@@ -8,6 +8,7 @@ implementation is exercised over plain streams.
 from __future__ import annotations
 
 import io
+import json
 import os
 import pty
 import sys
@@ -177,6 +178,90 @@ class TestControlsLookDifferent:
         inactive = p._option_row(Option("thing"), active=False, selected=False, multi=True)
         assert "\x1b[36m" in active  # cyan: this is where you are
         assert "\x1b[36m" not in inactive
+
+
+class TestEverythingDrawnFitsTheTerminalsEncoding:
+    """The glyph fallback is only worth having if *every* row goes through it.
+
+    A terminal that cannot encode `◆` cannot encode `↑↓`, `·` or `…` either, and a
+    single hard-coded one of those raises on write — taking down the wizard the
+    fallback exists to keep running.
+    """
+
+    @staticmethod
+    def ascii_prompter(monkeypatch):
+        monkeypatch.setenv("MEDIA_ASCII", "1")
+        out = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+        return TerminalPrompter(open(os.devnull, "rb", buffering=0), out), out
+
+    def encodes(self, out) -> str:
+        out.flush()
+        return out.buffer.getvalue().decode("ascii")  # raises if anything slipped through
+
+    def test_the_menu_frame_is_encodable(self, monkeypatch):
+        p, out = self.ascii_prompter(monkeypatch)
+        p._emit([p._rail(p._g.bar, p._keys("move · space toggle · a all"))])
+        assert "esc" in self.encodes(out)
+
+    def test_the_confirm_frame_is_encodable(self, monkeypatch):
+        p, out = self.ascii_prompter(monkeypatch)
+        p._emit([p._rail(p._g.bar, p._keys("y/n switch", arrows="left/right"))])
+        assert "left/right" in self.encodes(out)
+
+    def test_truncation_uses_an_encodable_ellipsis(self, monkeypatch):
+        p, out = self.ascii_prompter(monkeypatch)
+        p._emit([p._rail(p._g.bar, "x" * 200)])
+        assert self.encodes(out).rstrip().endswith("...")
+
+    def test_an_option_row_is_encodable(self, monkeypatch):
+        p, out = self.ascii_prompter(monkeypatch)
+        # An em dash in the detail is guaranteed: the packaged skill summaries use them.
+        p._emit([p._option_row(Option("skill", hint="h", detail="a — b" * 40), active=True, selected=True, multi=True)])
+        assert self.encodes(out)
+
+    def test_the_box_is_encodable(self, monkeypatch):
+        p, out = self.ascii_prompter(monkeypatch)
+        p.box("Heads up", "media-ai is under rapid development — pin a version " * 4)
+        assert self.encodes(out)
+
+
+def test_the_escape_delay_survives_a_junk_env_var(monkeypatch):
+    """Parsed per call, never at import: `__main__` imports this module for `init`, so
+    a bad value evaluated at import time takes down every command with a traceback and
+    nothing on stdout — breaking the machine contract for the groups that never prompt."""
+    from media_ai.cli._prompt import _ESC_TAIL_DEFAULT, _esc_tail_seconds
+
+    monkeypatch.setenv("MEDIA_ESC_DELAY", "not-a-number")
+    assert _esc_tail_seconds() == _ESC_TAIL_DEFAULT
+    monkeypatch.setenv("MEDIA_ESC_DELAY", "0.4")
+    assert _esc_tail_seconds() == 0.4
+
+
+def test_a_junk_escape_delay_does_not_break_an_unrelated_command(monkeypatch, tmp_path):
+    import subprocess
+
+    res = subprocess.run(
+        [sys.executable, "-m", "media_ai", "image", "generate", "--provider", "mock",
+         "--prompt", "hi", "--output", str(tmp_path / "x.png")],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "MEDIA_ESC_DELAY": "abc", "MEDIA_USAGE_LOG": str(tmp_path / "u.jsonl")},
+    )
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout)["ok"] is True
+
+
+def test_the_terminal_size_comes_from_the_tty_not_stdout(monkeypatch):
+    """`install.sh` redirects stdout to /dev/null; measuring it there silently gives
+    80x24, and every row is then built for the wrong width and wraps."""
+    p, _out = drawing()
+    monkeypatch.setattr(os, "get_terminal_size", lambda fd: os.terminal_size((37, 11)))
+    assert p._width() == 37
+
+
+def test_a_pty_with_no_size_falls_back_instead_of_truncating_everything(monkeypatch):
+    p, _out = drawing()
+    monkeypatch.setattr(os, "get_terminal_size", lambda fd: os.terminal_size((0, 0)))
+    assert p._width() >= 20
 
 
 class TestGlyphFallbacks:

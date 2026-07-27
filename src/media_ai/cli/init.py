@@ -37,7 +37,7 @@ from ._discovery import (
     selectable_skills,
     skill_info,
 )
-from ._prompt import Cancelled, Option, get_prompter, run_steps
+from ._prompt import Cancelled, GoBack, Option, get_prompter, run_steps
 from ._skillstore import SKILL_DESTS, copy_skill, installed_skills, record_install, skill_is_current
 
 # Which config keys hold a provider's default model, per skill group. These are
@@ -316,21 +316,41 @@ def _collect_credentials(providers: dict[str, list[str]], prompter) -> dict[str,
     ]
     mode = prompter.select("How should keys be stored?", modes)
 
+    # Esc inside this loop steps back one *provider*, not out of the whole step: with
+    # four providers configured one after another, letting it unwind to the driver
+    # would throw away every key already typed. Going back from the first one — or
+    # from the storage question — still leaves the step, which is what the user means.
     creds: dict[str, dict] = {}
-    for provider, skills in sorted(providers.items()):
-        already = _env_already_set(provider)
-        label = f"{provider} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
-        if already and not prompter.confirm(f"{label}\n  ${already} is already set; configure anyway?", default=False):
+    order = sorted(providers)
+    i = 0
+    while i < len(order):
+        provider = order[i]
+        try:
+            entry = _ask_one_credential(provider, providers[provider], mode, prompter)
+        except GoBack:
+            if i == 0:
+                raise
+            creds.pop(order[i - 1], None)
+            i -= 1
             continue
-        if mode == 1:
-            var = _env_var_names(provider)[0]
-            chosen = prompter.text(f"{label}\n  environment variable to read", default=var)
-            creds[provider] = {"api_key": f"env://{chosen}"}
-        else:
-            key = prompter.secret(f"{label}\n  API key (input hidden)")
-            if key.strip():
-                creds[provider] = {"api_key": key.strip()}
-    return creds
+        creds.pop(provider, None)
+        if entry:
+            creds[provider] = entry
+        i += 1
+    return {name: creds[name] for name in order if name in creds}
+
+
+def _ask_one_credential(provider: str, skills: list[str], mode: int, prompter) -> dict | None:
+    already = _env_already_set(provider)
+    label = f"{provider} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
+    if already and not prompter.confirm(f"{label}\n  ${already} is already set; configure anyway?", default=False):
+        return None
+    if mode == 1:
+        var = _env_var_names(provider)[0]
+        chosen = prompter.text(f"{label}\n  environment variable to read", default=var)
+        return {"api_key": f"env://{chosen}"}
+    key = prompter.secret(f"{label}\n  API key")
+    return {"api_key": key.strip()} if key.strip() else None
 
 
 # --------------------------------------------------------------------- models
@@ -448,8 +468,12 @@ def _configure_models(providers: list[str], groups: set[str], prompter, *, advan
             continue
         table = {}
         for group in sorted(groups):
-            for key, label in MODEL_SLOTS.get((provider, group), ()):
-                candidates = _models_for(provider, group)
+            slots = MODEL_SLOTS.get((provider, group), ())
+            # Hoisted out of the slot loop: discovery rebuilds the provider and reads
+            # every model's capabilities, and ElevenLabs' speech group alone has two
+            # slots that would each repeat all of it for the same answer.
+            candidates = _models_for(provider, group) if slots else []
+            for key, label in slots:
                 if not candidates:
                     continue
                 idx = prompter.select(f"{provider} — model for {label}", candidates)
@@ -525,7 +549,10 @@ def _wizard(args, prompter) -> dict:
         prompter,
     )
     _apply(args, answers, summary)
-    if answers.verify:
+    if answers.verify and not args.dry_run:
+        # Not on a dry run: `probe` makes a real call, and for openai a *billed* one.
+        # It would also be answering the wrong question — nothing was written, so it
+        # would be reporting on whatever credentials happened to be there already.
         summary["verified"] = _probe_keys(answers.verify, prompter)
     _report(summary, prompter)
     return summary
@@ -656,22 +683,47 @@ def _ask_verify(args, prompter, answers: _Answers) -> None:
 
 
 def _apply(args, answers: _Answers, summary: dict) -> None:
-    """The only part that touches the disk."""
-    summary["skills"] = answers.plan
-    _apply_installs(answers.plan, dry_run=args.dry_run)
+    """The only part that touches the disk.
+
+    Both files are *serialized* before anything is written. ``dumps`` supports a
+    narrow subset of TOML and refuses the rest rather than mangling it, so a
+    hand-written config holding a float or an array-of-tables raises — and raising
+    after the skills and the credentials had been written is exactly the half-applied
+    state the ask-then-do split exists to avoid.
+    """
+    pending: list[tuple[Path, str, object]] = []
     if answers.creds:
         path = credentials_path()
-        _merge_write(path, _load(path) | answers.creds, write_private, CREDENTIALS_HEADER, args, summary)
+        pending.append((path, _render(path, _load(path) | answers.creds, CREDENTIALS_HEADER), write_private))
     if answers.models:
         path = config_path()
         existing = _load(path)
         existing["providers"] = (existing.get("providers") or {}) | answers.models
-        _merge_write(path, existing, write_public, CONFIG_HEADER, args, summary)
+        pending.append((path, _render(path, existing, CONFIG_HEADER), write_public))
+
+    summary["skills"] = answers.plan
+    _apply_installs(answers.plan, dry_run=args.dry_run)
+    for path, text, writer in pending:
+        _write_merged(path, text, writer, args, summary)
     summary["providers"] = sorted(answers.creds)
 
 
-def _merge_write(path: Path, data: dict, writer, header: str, args, summary: dict) -> None:
-    """Write ``data`` to ``path``, backing the old file up only if it really changes.
+def _render(path: Path, data: dict, header: str) -> str:
+    """Serialize ``data``, turning a writer refusal into an error a user can act on."""
+    from ..credentials.tomlwrite import TomlWriteError
+
+    try:
+        return dumps(data, header=header)
+    except TomlWriteError as exc:
+        raise MediaError(
+            f"{path} holds a value this writer cannot round-trip ({exc}); move it aside, "
+            "then re-run — nothing has been changed",
+            category=ErrorCategory.CLI,
+        ) from exc
+
+
+def _write_merged(path: Path, text: str, writer, args, summary: dict) -> None:
+    """Write ``text`` to ``path``, backing the old file up only if it really changes.
 
     The "only if" matters for re-runs: without it, answering the same questions a
     second time leaves a second ``credentials.toml.bak`` — a copy of the same keys,
@@ -683,7 +735,6 @@ def _merge_write(path: Path, data: dict, writer, header: str, args, summary: dic
     would leave that broken with no way back short of a manual ``chmod``. The content
     is unchanged, so the file is not — only its permissions can be.
     """
-    text = dumps(data, header=header)
     if args.dry_run:
         summary["wrote"].append(str(path))  # nothing happened; `dry_run: true` says so
         return
@@ -714,15 +765,21 @@ def _probe_keys(wanted: dict[str, bool], prompter) -> dict:
 
 
 def _report(summary: dict, prompter) -> None:
+    dry = summary["dry_run"]
+    verb = "would write" if dry else "wrote"
     for path in summary["wrote"]:
-        prompter.note(f"wrote {path}")
+        prompter.note(f"{verb} {path}")
     for path in summary["backed_up"]:
         prompter.note(f"backed up {path}")
     providers = summary["providers"]
     if providers:
         prompter.note(f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}")
     prompter.note("\nTry it offline:\n  media-ai image generate --provider mock --prompt hello --output /tmp/x.png")
-    prompter.outro("Done. `media-ai doctor` checks this install; `media-ai uninstall` undoes it.")
+    prompter.outro(
+        "Dry run — nothing was changed."
+        if dry
+        else "Done. `media-ai doctor` checks this install; `media-ai uninstall` undoes it."
+    )
 
 
 # -------------------------------------------------------------------- entry

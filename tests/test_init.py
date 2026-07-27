@@ -371,6 +371,28 @@ class TestGoingBack:
             run(args, [pick("media-ai-image"), [0], 0, Cancelled])
         assert not (home / "sk").exists(), "skills were installed before the last question"
 
+    def test_back_inside_the_credentials_step_re_asks_one_provider(self, home):
+        """`run_steps` rewinds a *step*, but this step asks one question per provider —
+        unwinding all of them would throw away keys already typed."""
+        args = make_args(skills_dest=str(home / "sk"))
+        # volc is left out: its model step asks unconditional questions of its own.
+        needed = sorted(init_mod.providers_for_skills(["media-ai-image"]))
+        two = [p for p in needed if p != "volc"][:2]
+        picked = [needed.index(p) for p in two]
+        # skills -> two providers -> mode -> key, key, (back at the 2nd) -> key
+        _summary, prompter = run(
+            args,
+            [pick("media-ai-image"), picked, 0, f"sk-{two[0]}", GoBack, f"sk-{two[0]}-again", "sk-second-try"],
+        )
+        assert prompter.asked.count("How should keys be stored?") == 1, "the whole step restarted"
+        assert creds(home)[two[0]]["api_key"] == f"sk-{two[0]}-again"
+        assert creds(home)[two[1]]["api_key"] == "sk-second-try"
+
+    def test_back_at_the_first_provider_leaves_the_step(self, home):
+        args = make_args(skills_dest=str(home / "sk"))
+        _summary, prompter = run(args, [pick("media-ai-image"), [0], 0, GoBack, []])
+        assert prompter.asked.count("These providers can serve the skills you picked. Configure which?") == 2
+
     def test_a_deselected_provider_takes_its_key_with_it(self, home):
         """Go back and untick the provider: the key typed for it was already in hand,
         and writing it anyway would store a credential the user's final answer said
@@ -422,6 +444,16 @@ class TestVerifyIsAskedBeforeAnythingIsWritten:
             [pick("media-ai-image"), provider_index("openai"), 0, SECRET, GoBack, 0, SECRET, True],
         )
         assert summary["ok"] is True and summary["verified"] == {"openai": "ok"}
+
+    def test_a_dry_run_never_probes(self, home, monkeypatch):
+        """`probe` makes a real call — a *billed* one for openai — and a dry run is
+        documented as reporting what would be written without writing it."""
+        import media_ai.cli._verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} on a dry run"))
+        args = make_args(skills_dest=str(home / "sk"), verify=True, dry_run=True)
+        summary, _ = run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, True])
+        assert "verified" not in summary
 
     def test_declining_the_paid_probe_is_recorded_not_run(self, home, monkeypatch):
         import media_ai.cli._verify as verify_mod

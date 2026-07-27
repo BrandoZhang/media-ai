@@ -36,7 +36,7 @@ from ..credentials.stores import credentials_path
 from . import common
 from ._discovery import available_skills
 from ._prompt import UNICODE, glyphs_for
-from ._skillstore import installed_skills, known_dests, load_receipt, skill_is_current
+from ._skillstore import install_roots, installed_skills, skill_is_current
 
 __all__ = ["main"]
 
@@ -82,26 +82,34 @@ def _check_media() -> list[dict]:
 
 
 def _check_files() -> list[dict]:
-    out = []
-    config = config_path()
-    out.append(
-        _check("config", "ok", f"{config}")
-        if config.is_file()
-        else _check("config", "ok", f"{config} (absent — built-in defaults apply)")
-    )
-    creds = credentials_path()
+    """One entry per file, never two.
+
+    `status` is what a script is told to branch on, so a second entry under the same
+    name — an `ok` line followed by a `fail` line for the same path — makes the
+    obvious `{c["check"]: c for c in checks}` lookup contradict the report it came
+    from. A file's worst finding is its finding.
+    """
+    config, creds = config_path(), credentials_path()
+    out = [_config_check(config)]
     if not creds.is_file():
         out.append(_check("credentials-file", "ok", f"{creds} (absent — keys come from the environment)"))
     elif creds.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         # The resolver refuses this file rather than trusting it, so a loose mode is
         # not a style note: every key in it is already unreadable.
         out.append(_check("credentials-file", "fail", f"{creds} is group/world accessible; run: chmod 600 {creds}"))
+    elif bad := _unparseable(creds):
+        out.append(_check("credentials-file", "fail", bad))
     else:
         out.append(_check("credentials-file", "ok", f"{creds} (0600)"))
-    for name, path in (("config", config), ("credentials-file", creds)):
-        if path.is_file() and (bad := _unparseable(path)):
-            out.append(_check(name, "fail", bad))
     return out
+
+
+def _config_check(config: Path) -> dict:
+    if not config.is_file():
+        return _check("config", "ok", f"{config} (absent — built-in defaults apply)")
+    if bad := _unparseable(config):
+        return _check("config", "fail", bad)
+    return _check("config", "ok", str(config))
 
 
 def _unparseable(path: Path) -> str:
@@ -158,18 +166,12 @@ def _check_skills() -> list[dict]:
     in the agent's directory — telling it about flags this version may have changed.
     Nothing else reports that.
     """
-    roots = [Path(p).expanduser() for p in load_receipt()] + known_dests()
-    seen: set[str] = set()
+    shipped = set(available_skills())
     out = []
-    for root in roots:
-        key = str(root.resolve())
-        if key in seen:
-            continue
-        seen.add(key)
+    for root in install_roots():
         skills = installed_skills(root)
         if not skills:
             continue
-        shipped = set(available_skills())
         stale = [s for s in skills if s in shipped and not skill_is_current(root, s)]
         unknown = [s for s in skills if s not in shipped]
         detail = f"{len(skills)} skill(s) in {root}"
@@ -210,10 +212,13 @@ def _print(checks: list[dict], status: str) -> None:
     mark = {"ok": "✓", "warn": "!", "fail": "✗"} if unicode_ok else {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
     for c in checks:
         print(f"  {mark[c['status']]} {c['check']:<22} {c['detail']}", file=sys.stderr)
+    # The verdict names the mark it just printed, and stays inside the same encoding:
+    # a hard-coded ✗ here would both point at a glyph that was never drawn and raise
+    # on the stderr that made us degrade — on exactly the runs that found a problem.
     verdict = {
         "ok": "\nEverything checks out.",
         "warn": "\nUsable, with the warnings above.",
-        "fail": "\nSomething is broken — see the ✗ lines above.",
+        "fail": f"\nSomething is broken - see the {mark['fail'].strip()} lines above.",
     }[status]
     print(verdict, file=sys.stderr)
 

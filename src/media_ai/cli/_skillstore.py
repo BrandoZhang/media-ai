@@ -41,6 +41,7 @@ __all__ = [
     "known_dests",
     "load_receipt",
     "receipt_path",
+    "install_roots",
     "record_install",
     "remove_skill",
     "skill_is_current",
@@ -93,6 +94,21 @@ def known_dests() -> list[Path]:
     return list(seen)
 
 
+def install_roots() -> list[Path]:
+    """Every directory that might hold installed skills, deduplicated, receipt first.
+
+    One implementation because two commands have to agree on it: `doctor` blessing an
+    install `uninstall` cannot find is exactly what a second copy of this loop drifts
+    into. The receipt leads because it knows about custom paths; the conventional
+    locations follow so a hand-copied install is still found.
+    """
+    roots = [Path(p).expanduser() for p in load_receipt()] + known_dests()
+    seen: dict[str, Path] = {}
+    for root in roots:
+        seen.setdefault(str(root.resolve()), root)
+    return list(seen.values())
+
+
 # ------------------------------------------------------------------------ install
 
 
@@ -111,10 +127,15 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
     # than written through — and a *dangling* one has to go before mkdir, which does
     # not treat a broken link as an existing directory and would raise FileExistsError
     # halfway through the apply phase.
-    if target_root.is_symlink():
+    if target_root.is_symlink() or (target_root.exists() and not target_root.is_dir()):
         target_root.unlink()
 
     def walk(src, out: Path):
+        # A plain file where a packaged directory belongs: mkdir(exist_ok=True) raises
+        # on it, mid-apply, after earlier skills were already written. The file branch
+        # below handles the mirror case, so this is the same rule in both directions.
+        if out.is_symlink() or (out.exists() and not out.is_dir()):
+            out.unlink()
         out.mkdir(parents=True, exist_ok=True)
         packaged = set()
         for entry in src.iterdir():

@@ -42,7 +42,7 @@ def test_available_skills_finds_packaged_skills():
 
 def test_available_skills_is_sorted_and_unique():
     skills = available_skills()
-    assert skills == sorted(skills)
+    assert list(skills) == sorted(skills)
     assert len(skills) == len(set(skills))
 
 

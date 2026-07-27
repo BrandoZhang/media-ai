@@ -10,22 +10,31 @@ from __future__ import annotations
 
 import sys
 
-from .cli import capabilities, concat, doctor, image, init, job, music, sound, speech, uninstall, usage, video
+from importlib import import_module
 
+# Group -> the `cli` module implementing it, imported on dispatch rather than up front.
+# `init` alone pulls in the terminal UI, skill discovery, the frontmatter parser and
+# the install store; a generation command can reach none of that and should not pay
+# for importing it.
 _GROUPS = {
-    "init": init.main,
-    "doctor": doctor.main,
-    "uninstall": uninstall.main,
-    "image": image.main,
-    "video": video.main,
-    "speech": speech.main,
-    "music": music.main,
-    "sound": sound.main,
-    "concat": concat.main,
-    "job": job.main,
-    "capabilities": capabilities.main,
-    "usage": usage.main,
+    "init": "init",
+    "doctor": "doctor",
+    "uninstall": "uninstall",
+    "image": "image",
+    "video": "video",
+    "speech": "speech",
+    "music": "music",
+    "sound": "sound",
+    "concat": "concat",
+    "job": "job",
+    "capabilities": "capabilities",
+    "usage": "usage",
 }
+
+
+def group_main(group: str):
+    """The entry point for one group, imported now."""
+    return import_module(f".cli.{_GROUPS[group]}", __package__).main
 
 
 def _usage(stream) -> None:
@@ -82,7 +91,7 @@ def main() -> int:
     if group not in _GROUPS:
         return _usage_error(f"unknown group {group!r}; expected one of: {', '.join(_GROUPS)}")
     sys.argv = [f"media-ai {group}", *rest]
-    return _GROUPS[group]()
+    return group_main(group)()
 
 
 if __name__ == "__main__":

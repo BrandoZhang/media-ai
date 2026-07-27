@@ -130,6 +130,26 @@ class TestABrokenFileDoesNotTakeDownTheDiagnosis:
         (home / "cfg" / "config.toml").write_text("[broken\n", encoding="utf-8")
         assert any("not valid TOML" in c["detail"] for c in diagnose()["checks"])
 
+    def test_a_file_gets_one_entry_not_two(self, home):
+        """`status` is what a script branches on, so an `ok` line followed by a `fail`
+        line for the same path makes the obvious lookup contradict the report."""
+        (home / "cfg" / "config.toml").write_text("[broken\n", encoding="utf-8")
+        names = [c["check"] for c in diagnose()["checks"]]
+        assert len(names) == len(set(names))
+        assert checks(diagnose())["config"]["status"] == "fail"
+
+
+def test_the_fail_verdict_stays_inside_the_encoding_it_chose(home, monkeypatch, capsys):
+    """It names the mark it just printed; a hard-coded ✗ would both point at a glyph
+    that was never drawn and raise on the stderr that made us degrade."""
+    monkeypatch.setenv("MEDIA_ASCII", "1")
+    path = home / "cfg" / "credentials.toml"
+    path.write_text('[openai]\napi_key = "x"\n', encoding="utf-8")
+    path.chmod(0o644)
+    assert diagnose()["status"] == "fail"
+    err = capsys.readouterr().err
+    assert "✗" not in err and "FAIL lines above" in err
+
 
 def test_marks_degrade_on_a_terminal_that_cannot_encode_them(home, monkeypatch, capsys):
     """`doctor` is most useful on a constrained box — which is exactly where stderr

@@ -35,9 +35,8 @@ from ..credentials.stores import credentials_path
 from . import common
 from ._prompt import Cancelled, Option, get_prompter, run_steps
 from ._skillstore import (
+    install_roots,
     installed_skills,
-    known_dests,
-    load_receipt,
     prune_empty,
     receipt_path,
     record_install,
@@ -58,11 +57,7 @@ def _candidates(explicit: list[str] | None) -> list[tuple[Path, list[str]]]:
     anything predating the receipt). Order is receipt-first so the paths a user chose
     lead the list.
     """
-    roots = (
-        [Path(p).expanduser() for p in explicit]
-        if explicit
-        else [Path(p).expanduser() for p in load_receipt()] + known_dests()
-    )
+    roots = [Path(p).expanduser() for p in explicit] if explicit else install_roots()
     out: list[tuple[Path, list[str]]] = []
     seen: set[str] = set()
     for root in roots:
@@ -70,8 +65,7 @@ def _candidates(explicit: list[str] | None) -> list[tuple[Path, list[str]]]:
         if key in seen:
             continue
         seen.add(key)
-        skills = installed_skills(root)
-        if skills:
+        if skills := installed_skills(root):
             out.append((root, skills))
     return out
 
@@ -145,15 +139,16 @@ class _Choices:
 
 
 def _ask_skills(args, prompter, choices: _Choices) -> None:
+    # Cleared before the discovery that can fail: a step that aborts part-way must not
+    # leave the previous run's answer behind, and this is the one that decides what
+    # gets deleted. Same rule every step in `init` follows.
+    choices.skills, choices.kept = [], []
     found = _candidates(args.skills_dest)
-    choices.kept = []
     if args.keep_skills:
         choices.kept = [str(dest) for dest, _ in found]
-        choices.skills = []
         return
     if not found:
         prompter.note("No installed Agent Skills found.")
-        choices.skills = []
         return
     if args.yes:
         choices.skills = found

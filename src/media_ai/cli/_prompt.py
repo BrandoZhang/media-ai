@@ -86,12 +86,26 @@ ESC = "\x1b"
 _CTRL_C = "\x03"
 _CTRL_D = "\x04"
 
-# How long to wait for the rest of an escape sequence before calling it a bare Esc.
-# A terminal emits the whole sequence in one write, so locally this only has to outlast
-# scheduling jitter; over ssh or a loaded multiplexer the tail can arrive later, and an
-# arrow key that misses the deadline reads as Esc. Hence a value well above local
-# jitter, and an escape hatch for links slow enough to need more.
-_ESC_TAIL_SECONDS = float(os.getenv("MEDIA_ESC_DELAY", "0.15"))
+_ESC_TAIL_DEFAULT = 0.15
+
+
+def _esc_tail_seconds() -> float:
+    """How long to wait for the rest of an escape sequence before calling it a bare Esc.
+
+    A terminal emits the whole sequence in one write, so locally this only has to
+    outlast scheduling jitter; over ssh or a loaded multiplexer the tail can arrive
+    later, and an arrow key that misses the deadline reads as Esc. Hence a value well
+    above local jitter, and an escape hatch for links slow enough to need more.
+
+    Read per call and never at import: a junk ``MEDIA_ESC_DELAY`` evaluated at import
+    time takes down *every* command — `__main__` imports this module for `init` — with
+    a bare traceback and nothing on stdout, breaking the machine contract for the
+    twelve groups that never open a prompt. A bad value is ignored instead.
+    """
+    try:
+        return max(0.0, float(os.environ["MEDIA_ESC_DELAY"]))
+    except (KeyError, ValueError):
+        return _ESC_TAIL_DEFAULT
 
 # Reserve rows for the step title, the rail's closing line, the key hint, and the
 # "n more" markers around a scrolled viewport.
@@ -198,22 +212,29 @@ def _display_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
 
 
-def _truncate(text: str, limit: int) -> str:
+def _truncate(text: str, limit: int, ellipsis: str = "…") -> str:
+    """Cut ``text`` to ``limit`` columns.
+
+    ``ellipsis`` is a parameter because this is the one place every rendered row
+    passes through: hard-coding ``…`` here would put a character an ASCII terminal
+    cannot encode into rows the glyph fallback had already made safe.
+    """
     if limit <= 0:
         return ""
     if _display_width(text) <= limit:
         return text
+    room = limit - _display_width(ellipsis)
     out, width = [], 0
     for ch in text:
         w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if width + w > limit - 1:
+        if width + w > room:
             break
         out.append(ch)
         width += w
-    return "".join(out) + "…"
+    return "".join(out) + ellipsis
 
 
-def _detail_lines(text: str, width: int, limit: int = _DETAIL_ROWS, indent: str = "") -> list[str]:
+def _detail_lines(text: str, width: int, limit: int = _DETAIL_ROWS, indent: str = "", ellipsis: str = "…") -> list[str]:
     """Wrap an option's description into rows, ellipsing what does not fit.
 
     Bounded on purpose: the row count is reserved before the menu is drawn, so a
@@ -221,9 +242,9 @@ def _detail_lines(text: str, width: int, limit: int = _DETAIL_ROWS, indent: str 
     """
     room = max(20, width - len(indent))
     wrapped = textwrap.wrap(" ".join(text.split()), room) or [""]
-    lines = [_truncate(line, room) for line in wrapped[:limit]]
+    lines = [_truncate(line, room, ellipsis) for line in wrapped[:limit]]
     if len(wrapped) > limit:
-        lines[-1] = _truncate(lines[-1] + " …", room)
+        lines[-1] = _truncate(f"{lines[-1]} {ellipsis}", room, ellipsis)
     return [indent + line for line in lines]
 
 
@@ -295,7 +316,15 @@ class TerminalPrompter:
         return _ctx()
 
     def _write(self, text: str) -> None:
-        self._out.write(text)
+        try:
+            self._out.write(text)
+        except UnicodeEncodeError:
+            # The glyph set covers the decoration this module draws; the *content* is
+            # not ours — skill summaries, announcements, paths, provider errors — and
+            # one em dash in it must not take the wizard down. TextIOWrapper encodes
+            # the whole string before emitting any of it, so nothing was half-written.
+            encoding = getattr(self._out, "encoding", None) or "ascii"
+            self._out.write(text.encode(encoding, "replace").decode(encoding, "replace"))
         self._out.flush()
 
     def _read_key(self) -> str:
@@ -310,10 +339,19 @@ class TerminalPrompter:
         else — so wait for a tail that a terminal sends in one go, and treat silence
         as the key itself.
         """
-        if not select.select([self._fd], [], [], _ESC_TAIL_SECONDS)[0]:
+        deadline = _esc_tail_seconds()
+        if not select.select([self._fd], [], [], deadline)[0]:
             return "esc"
-        seq = os.read(self._fd, 2).decode("utf-8", "replace")
-        key = {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq)
+        # The tail is two bytes, but nothing guarantees they arrive in one read — over
+        # a slow link `[` lands first and `A` a moment later. Reading once would call
+        # that "unknown" and then hand the `A` back as a literal keypress.
+        seq = b""
+        while len(seq) < 2 and select.select([self._fd], [], [], deadline)[0]:
+            chunk = os.read(self._fd, 2 - len(seq))
+            if not chunk:
+                break
+            seq += chunk
+        key = {b"[A": "up", b"[B": "down", b"[C": "right", b"[D": "left"}.get(seq)
         if key:
             return key
         # Something longer or unrecognised: Home, PageUp, F-keys, Alt-chords, an arrow
@@ -330,10 +368,44 @@ class TerminalPrompter:
             if not os.read(self._fd, 32):
                 return
 
+    def _size(self) -> os.terminal_size:
+        """The size of the terminal being *drawn on*.
+
+        `shutil.get_terminal_size()` measures stdout, which the UI never writes to —
+        and which `install.sh` redirects to /dev/null. Measuring it there silently
+        falls back to 80x24, so on any other size every row is built for the wrong
+        width, wraps, and throws off the cursor arithmetic the redraw depends on.
+        """
+        try:
+            size = os.get_terminal_size(self._out.fileno())
+            # A pty whose size was never set answers 0x0 rather than raising, and a
+            # zero width truncates every row to an ellipsis. `shutil` guards the same
+            # case for stdout; this is that guard for the tty.
+            if size.columns > 0 and size.lines > 0:
+                return size
+        except (OSError, ValueError, AttributeError):
+            pass
+        return shutil.get_terminal_size((80, 24))
+
     def _width(self) -> int:
-        return shutil.get_terminal_size((80, 24)).columns
+        return self._size().columns
 
     # -- the rail ------------------------------------------------------------
+
+    def _fit(self, text: str, limit: int) -> str:
+        """Truncate with an ellipsis this terminal can encode."""
+        return _truncate(text, limit, self._g.ellipsis)
+
+    def _keys(self, actions: str, *, arrows: str = "up/down") -> str:
+        """The key hint, in glyphs the terminal can render.
+
+        The arrows and the separator are as much a Unicode hazard as ``◆`` is: an
+        ASCII terminal that got the fallback symbol set still died on this line.
+        """
+        if self._g is ASCII:
+            return f"[{arrows}] {actions.replace(' · ', ', ')}, [enter] confirm, [esc] back"
+        glyph = "↑↓" if arrows == "up/down" else "←→"
+        return f"{glyph} {actions} · enter confirm · esc back"
 
     def _rail(self, symbol: str, text: str = "", *, color: str = _DIM, body_color: str = "") -> str:
         """One rendered row: a coloured rail glyph, two spaces, then text.
@@ -342,7 +414,7 @@ class TerminalPrompter:
         leaks control bytes into the frame and, worse, is invisible to a width
         calculation, so the next redraw walks the cursor up by the wrong count.
         """
-        body = _truncate(text, max(1, self._width() - _display_width(symbol) - 2))
+        body = self._fit(text, max(1, self._width() - _display_width(symbol) - 2))
         painted = _paint(body, body_color) if body_color else body
         return f"{_paint(symbol, color)}  {painted}" if body else _paint(symbol, color)
 
@@ -418,8 +490,12 @@ class TerminalPrompter:
         # row onto two physical lines while `_emit` counted one, and every later
         # `rewind` would then erase the wrong rows.
         room = max(16, self._width() - 4) - 3
-        body = [line for para in message.strip("\n").split("\n") for line in _detail_lines(para, room, limit=99)]
-        title = _truncate(title, room)
+        body = [
+            line
+            for para in message.strip("\n").split("\n")
+            for line in _detail_lines(para, room, limit=99, ellipsis=self._g.ellipsis)
+        ]
+        title = self._fit(title, room)
         inner = min(max([_display_width(title) + 2, *(_display_width(line) for line in body)]) + 2, room + 1)
 
         def row(content: str = "") -> str:
@@ -427,7 +503,7 @@ class TerminalPrompter:
             not through ``_rail``: the closing bar is a coloured suffix, and
             truncating a string with escapes in it both corrupts the sequence and
             miscounts the width."""
-            fitted = _truncate(content, inner - 1)
+            fitted = self._fit(content, inner - 1)
             return f"{_paint(g.bar, _DIM)}  {fitted}{' ' * (inner - _display_width(fitted) - 1)}{_paint(g.bar, _DIM)}"
 
         dashes = g.bar_h * max(1, inner - _display_width(title) - 2)
@@ -478,12 +554,12 @@ class TerminalPrompter:
         raw = self._g.check_off if multi else self._g.radio_off
         body = opt.label + (f"  ({opt.hint})" if opt.hint else "")
         room = max(1, self._width() - 3 - _display_width(raw) - 1)
-        painted = _paint(_truncate(body, room), label_color) if label_color else _truncate(body, room)
+        painted = _paint(self._fit(body, room), label_color) if label_color else self._fit(body, room)
         return f"{_paint(self._g.bar, _DIM)}  {glyph} {painted}"
 
     def _viewport(self, count: int, cursor: int, *, chrome: int = _CHROME_ROWS) -> tuple[int, int]:
         """Which slice of a long option list to show, keeping the cursor visible."""
-        rows = max(3, shutil.get_terminal_size((80, 24)).lines - chrome)
+        rows = max(3, self._size().lines - chrome)
         if count <= rows:
             return 0, count
         start = max(0, min(cursor - rows // 2, count - rows))
@@ -510,14 +586,14 @@ class TerminalPrompter:
                 if i == cursor and opt.detail:
                     lines += [
                         self._rail(self._g.bar, f"  {line}", body_color=_DIM)
-                        for line in _detail_lines(opt.detail, self._width() - 5, detail_rows)
+                        for line in _detail_lines(opt.detail, self._width() - 5, detail_rows, ellipsis=self._g.ellipsis)
                     ]
             if end < len(options):
                 lines.append(
                     self._rail(self._g.bar, f"{self._g.ellipsis} {len(options) - end} more below", body_color=_DIM)
                 )
-            keys = "↑↓ move · space toggle · a all" if multi else "↑↓ move"
-            lines.append(self._rail(self._g.bar, f"{keys} · enter confirm · esc back", body_color=_DIM))
+            keys = self._keys("move · space toggle · a all" if multi else "move")
+            lines.append(self._rail(self._g.bar, keys, body_color=_DIM))
             lines.append(self._rail(self._g.bar_end))
             drawn = self._flush_frame(lines, drawn)
 
@@ -612,8 +688,16 @@ class TerminalPrompter:
         # The typed value is echoed as it is typed but never *recorded*: the finished
         # step shows a fixed-width mask, so the transcript left on screen (and in any
         # scrollback) says nothing about the key, not even how long it is.
-        self._submitted(title, self._g.mask * 8 if value.strip() else "(empty)", height)
+        #
+        # Same wrap guard as `text()`: an OpenAI project key is ~160 characters, whose
+        # mask row wraps on any normal terminal. `_ask_line` counted one row for it, so
+        # rewinding over it would walk the cursor into the rows above.
+        if self._masked_width(value) + 3 < self._width():
+            self._submitted(title, self._g.mask * 8 if value.strip() else "(empty)", height)
         return value
+
+    def _masked_width(self, value: str) -> int:
+        return len(value) * _display_width(self._g.mask)
 
     def _read_masked(self) -> str:
         """Read a line, echoing one mask glyph per character.
@@ -630,27 +714,31 @@ class TerminalPrompter:
             shown = self._g.mask * len(data.decode("utf-8", "ignore"))
             self._write(f"\r{ESC}[2K{_paint(self._g.bar, _DIM)}  {shown}")
 
-        with self._raw():
-            self._write(f"{ESC}[?25h")  # a cursor to type at; _raw hides it by default
-            while True:
-                byte = os.read(self._fd, 1)
-                if not byte or byte in (b"\x03", b"\x04"):
-                    raise Cancelled
-                if byte == b"\x1b":
-                    if self._escape() == "esc":
-                        raise GoBack
-                    continue  # arrows and friends have no meaning in a password field
-                if byte in (b"\r", b"\n"):
-                    break
-                if byte in (b"\x7f", b"\x08"):  # backspace: drop a whole character,
-                    text = data.decode("utf-8", "ignore")  # not one byte of one
-                    data = bytearray(text[:-1].encode("utf-8"))
-                elif byte[0] >= 0x20:  # printable, or a byte of a multi-byte character
-                    data += byte
-                redraw()
-        # Raw mode echoes nothing, so the newline the caller's line arithmetic expects
-        # has to be written here.
-        self._write("\r\n")
+        try:
+            with self._raw():
+                self._write(f"{ESC}[?25h")  # a cursor to type at; _raw hides it by default
+                while True:
+                    byte = os.read(self._fd, 1)
+                    if not byte or byte in (b"\x03", b"\x04"):
+                        raise Cancelled
+                    if byte == b"\x1b":
+                        if self._escape() == "esc":
+                            raise GoBack
+                        continue  # arrows and friends have no meaning in a password field
+                    if byte in (b"\r", b"\n"):
+                        break
+                    if byte in (b"\x7f", b"\x08"):  # backspace: drop a whole character,
+                        text = data.decode("utf-8", "ignore")  # not one byte of one
+                        data = bytearray(text[:-1].encode("utf-8"))
+                    elif byte[0] >= 0x20:  # printable, or a byte of a multi-byte character
+                        data += byte
+                    redraw()
+        finally:
+            # Raw mode echoes nothing, so the newline `_ask_line` already counted has to
+            # be written here — on *every* exit. Skipping it when the user pressed Esc
+            # left `_rows` permanently one too high, and the next rewind then erased a
+            # row of the step it was returning to.
+            self._write("\r\n")
         return data.decode("utf-8", "replace")
 
     def confirm(self, title: str, *, default: bool = True) -> bool:
@@ -665,7 +753,7 @@ class TerminalPrompter:
             no = f"{_paint(off, _DIM)} {_paint('No', _DIM)}" if answer else f"{_paint(on, _GREEN)} No"
             lines = self._step(self._g.step_active, title, _CYAN)
             lines.append(f"{_paint(self._g.bar, _DIM)}  {yes} / {no}")
-            lines.append(self._rail(self._g.bar, "←→ y/n switch · enter confirm · esc back", body_color=_DIM))
+            lines.append(self._rail(self._g.bar, self._keys("y/n switch", arrows="left/right"), body_color=_DIM))
             lines.append(self._rail(self._g.bar_end))
             drawn = self._flush_frame(lines, drawn)
 
@@ -944,10 +1032,16 @@ def get_prompter(*, force_fallback: bool = False) -> Prompter:
         import termios  # noqa: F401 - POSIX check; absent on Windows
     except ModuleNotFoundError:
         return FallbackPrompter()
+    tty_in = tty_out = None
     try:
         tty_in = open("/dev/tty", "rb", buffering=0)
         tty_out = open("/dev/tty", "w")
         os.tcgetpgrp(tty_in.fileno())  # raises if it is not a controlling terminal
     except (OSError, ValueError):
+        # With no controlling terminal both opens can still succeed and the check
+        # still fail; leaving the handles behind leaks two descriptors per call.
+        for handle in (tty_in, tty_out):
+            if handle is not None:
+                handle.close()
         return FallbackPrompter()
     return TerminalPrompter(tty_in, tty_out)

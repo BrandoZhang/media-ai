@@ -321,3 +321,26 @@ def test_uninstall_is_a_registered_group():
     from media_ai.__main__ import _GROUPS
 
     assert "uninstall" in _GROUPS
+
+
+def test_the_same_discovery_as_doctor(home):
+    """`doctor` blessing an install `uninstall` cannot find is what a second copy of
+    this scan drifts into, so both go through one helper."""
+    import inspect
+
+    from media_ai.cli import doctor as doctor_mod
+
+    assert "install_roots" in inspect.getsource(doctor_mod._check_skills)
+    assert "install_roots" in inspect.getsource(uninstall_mod._candidates)
+
+
+def test_a_step_clears_its_answer_before_it_can_fail(home, monkeypatch):
+    """The step that decides what gets deleted must not keep a previous run's answer
+    when the discovery under it raises."""
+    dest = install(home / "sk")
+    choices = uninstall_mod._Choices()
+    choices.skills = [(dest, ["media-ai-image"])]
+    monkeypatch.setattr(uninstall_mod, "_candidates", lambda _e: (_ for _ in ()).throw(OSError("unreadable")))
+    with pytest.raises(OSError):
+        uninstall_mod._ask_skills(make_args(), ScriptedPrompter([]), choices)
+    assert choices.skills == []

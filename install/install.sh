@@ -85,9 +85,11 @@ say() { printf '\033[1m==>\033[0m %s\n' "$*" >&2; }
 err() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
 
 # Refuse a flag whose value is missing, with a message. Called as `need_value "$@"`,
-# so $1 is the flag and $2 is the value that has to be there.
+# so $1 is the flag and $2 is the value that has to be there. A value starting with
+# `-` counts as missing: `--version --dry-run` would otherwise install a git ref
+# literally named "--dry-run" and silently drop the flag it swallowed.
 need_value() {
-  if [ $# -lt 2 ]; then
+  if [ $# -lt 2 ] || case "$2" in -*) true ;; *) false ;; esac; then
     err "$1 needs a value (e.g. $1 v0.2.0)"
     usage
     exit 2
