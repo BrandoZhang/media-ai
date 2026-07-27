@@ -89,14 +89,30 @@ ensure_uv() {
 }
 
 resolve_version() {
+  # Lists releases rather than asking for /releases/latest, because that endpoint
+  # skips pre-releases — and a 0.x line published as pre-release would leave it
+  # answering 404 forever, silently pinning every user to DEFAULT_VERSION while
+  # looking like it resolved something. The list is newest-first and includes them.
+  #
   # Unauthenticated GitHub API allows ~60 requests/hour/IP, which CI hits easily, so a
   # failure here degrades to DEFAULT_VERSION rather than aborting the install.
+  #
+  # grep -o then head, rather than one sed: the API answers with compact single-line
+  # JSON, and a greedy `.*"tag_name"` would match the *last* occurrence on that line —
+  # i.e. the oldest release in the page — instead of the newest.
   local tag=""
   if command -v curl >/dev/null 2>&1; then
-    tag="$(curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-           | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+    tag="$(curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=1" 2>/dev/null \
+           | parse_tag || true)"
   fi
   printf '%s' "${tag:-$DEFAULT_VERSION}"
+}
+
+# Split out so install/test_parse.sh can exercise it against real payload shapes.
+parse_tag() {
+  grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | head -n1 \
+    | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
 check_path() {
