@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
+# >=62.3 for recursive `**` globs in package-data (used to ship skills/).
+requires = ["setuptools>=62.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -28,6 +29,12 @@ dev = ["pytest>=7", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Agent Skills ship *inside* the package so `uv tool install git+https://…` carries
+# them; `media-ai init` copies them out to the user's agent directory. Without this
+# they'd be repo-only files and an installed CLI could not offer skill installation.
+[tool.setuptools.package-data]
+media_ai = ["skills/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

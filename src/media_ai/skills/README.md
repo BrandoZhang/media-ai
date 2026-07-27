@@ -38,24 +38,28 @@ real providers (`volc`, `openai`, `gemini`, `elevenlabs`).
   [`media-ai-shared/references/credentials.md`](media-ai-shared/references/credentials.md).
   No keys are needed to try the offline `mock` default.
 
-## Activating in Claude Code
+## Installing
 
-This folder is the **distribution** home. To make a skill available to Claude Code,
-copy or symlink it into a discovered skills directory (project-level
-`.claude/skills/` or user-level `~/.claude/skills/`):
+These ship inside the installed package, so the CLI can copy them out for you:
+
+```bash
+media-ai init                 # full wizard: pick which skills, pick where
+media-ai init --skills-only   # just the skills step
+```
+
+The wizard offers the conventions agents actually read — `.claude/skills`,
+`.agents/skills`, `.codex/skills`, `.trae/skills`, `.openclaw/skills` — each at
+user level (`~/`) or project level (`./`), plus a custom path. You can install to
+several at once.
+
+To do it by hand instead, copy or symlink the skill directories out of this folder
+into whichever of those directories your agent reads. Working from a git checkout:
 
 ```bash
 mkdir -p .claude/skills
-ln -s "$(pwd)/skills/media-ai-shared"       .claude/skills/media-ai-shared
-ln -s "$(pwd)/skills/media-ai-image"        .claude/skills/media-ai-image
-ln -s "$(pwd)/skills/media-ai-video"        .claude/skills/media-ai-video
-ln -s "$(pwd)/skills/media-ai-speech"       .claude/skills/media-ai-speech
-ln -s "$(pwd)/skills/media-ai-music"        .claude/skills/media-ai-music
-ln -s "$(pwd)/skills/media-ai-sound"        .claude/skills/media-ai-sound
-ln -s "$(pwd)/skills/media-ai-job"          .claude/skills/media-ai-job
-ln -s "$(pwd)/skills/media-ai-concat"       .claude/skills/media-ai-concat
-ln -s "$(pwd)/skills/media-ai-capabilities" .claude/skills/media-ai-capabilities
-ln -s "$(pwd)/skills/media-ai-usage"        .claude/skills/media-ai-usage
+for s in src/media_ai/skills/media-ai-*; do
+  ln -s "$(pwd)/$s" ".claude/skills/$(basename "$s")"
+done
 ```
 
-Skills are also portable to any agent runtime that reads the `SKILL.md` format.
+Skills are portable to any agent runtime that reads the `SKILL.md` format.

@@ -56,10 +56,10 @@ media-ai/
 │       ├── core/           # provider-agnostic core (never imports providers/)
 │       ├── credentials/    # secret resolution + redaction
 │       ├── media/          # local ffmpeg / Pillow helpers
-│       └── providers/      # per-provider adapters
+│       ├── providers/       # per-provider adapters
+│       └── skills/          # agent skills (shipped as package data)
 ├── tests/                  # offline test suite
-├── docs/                   # this guide + architecture/credentials/…
-└── skills/                 # agent skills
+└── docs/                   # this guide + architecture/credentials/…
 ```
 
 Because it's a src layout, the package must be **installed** to import it (there is
