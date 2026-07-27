@@ -79,8 +79,19 @@ GEMINI = Catalog(
             caps={"tier": "legacy", "aspect_ratios": _STD_RATIOS, "named_sizes": ("1K",),
                   "max_references": 3, "options": ()},
         ),
-        # Any other gemini-*-image id: treat as the current flash tier rather than
-        # guessing. Declared last so the specific ids above win.
+        # Unrecognised TTS ids must be claimed BEFORE the generic gemini- fallback:
+        # Google's are `gemini-2.5-flash-preview-tts`, so `tts` is a substring rather
+        # than a prefix, and a prefix-only image fallback would swallow all of them.
+        ModelSpec(
+            id="gemini-tts-unknown",
+            synthetic=True,
+            contains=("tts",),
+            discoverable=False,
+            notes=("unrecognised Gemini TTS model — described as the current TTS tier",),
+            caps={"kind": "tts"},
+        ),
+        # Any other gemini-* id: treat as the current flash image tier rather than
+        # guessing. Declared after the narrower fallbacks so they win.
         ModelSpec(
             id="gemini-image-unknown",
             synthetic=True,
@@ -162,13 +173,6 @@ GEMINI = Catalog(
         ModelSpec(
             id="gemini-3.1-flash-tts-preview",
             status=ModelStatus.PREVIEW,
-            caps={"kind": "tts"},
-        ),
-        ModelSpec(
-            id="gemini-tts-unknown",
-            synthetic=True,
-            matches=("gemini-tts",),
-            discoverable=False,
             caps={"kind": "tts"},
         ),
 

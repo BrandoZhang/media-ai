@@ -36,7 +36,7 @@ durations, option names. Everything shared stays in the adapter, which assembles
 | `ga` | yes | yes | yes |
 | `preview` | yes | yes (`experimental: true`) | yes |
 | `deprecated` | `discoverable` decides — some are still listed | **yes** | yes |
-| `removed` | no | no — raises, naming the replacement | no |
+| `removed` | no | raises when named; a stub in `--all-models` | no |
 
 Deprecated deliberately still describes itself: planning a migration off a model means
 inspecting it. Removed refuses, in both `capabilities()` and the generate path, so
@@ -89,8 +89,13 @@ media-ai capabilities --provider gemini --all-models     # + deprecated and remo
 ```
 
 Each model carries `status`, `replacement`, and `verified`. `--all-models` includes
-retired entries; a removed one is reported as the retired entry it is rather than
-dropped, because knowing a model is gone — and what replaced it — is the reason to ask.
+retired entries as stubs with the same key set as a live entry — agents parse
+`providers[].models[]` as one uniform shape, and knowing a model is gone (and what
+replaced it) is the reason to ask.
+
+Naming one directly is different: `--provider openai --model dall-e-3` is **exit 3**,
+not a stub. The caller asked about something they cannot use, and answering `ok:true`
+would hide that.
 
 ## Unknown ids
 
@@ -98,6 +103,12 @@ An id nothing claims resolves through an explicitly-declared fallback spec marke
 `synthetic=True`, not by falling off the end of an if-chain. Synthetic specs are kept
 out of every listing: they answer "what happens to an id I don't recognise", which is a
 resolution rule, not a model anyone can call.
+
+Specs claim ids by `matches` (prefix) or `contains` (substring), scanned in catalogue
+order, so **declare narrow specs before broad ones**. Both exist because a vendor
+family is not always a prefix: Google's TTS ids are `gemini-2.5-flash-preview-tts`,
+where the only reliable marker is `tts` in the middle — a prefix-only scheme sends
+every unrecognised one to whichever spec claims `gemini-`.
 
 Volcengine Ark has **no** fallback, on purpose. An Ark id is usually a custom endpoint
 (`ep-…`) naming a *deployment* rather than a model, and guessing what it serves is

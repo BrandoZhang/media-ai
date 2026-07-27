@@ -92,9 +92,16 @@ class Provider:
 
         ``models()`` answers "what should I use?"; this answers "what do you know
         about?" — the question you need to plan a migration off something retired.
-        Falls back to ``models()`` for adapters with no catalogue.
+        Always a superset of ``models()``. That is not automatic: Volc's discovery
+        comes from config/env (an ``ep-…`` endpoint the user enabled), not from the
+        catalogue, so returning catalogue ids alone would *drop* the very models that
+        account can actually call and list two it never enabled.
         """
-        return self.catalog.real_ids() if self.catalog is not None else self.models()
+        listed = self.models()
+        if self.catalog is None:
+            return listed
+        known = self.catalog.real_ids()
+        return listed + [m for m in known if m not in listed]
 
     def default_model(self, modality: Modality) -> str | None:  # pragma: no cover
         raise NotImplementedError

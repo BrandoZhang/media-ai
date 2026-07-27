@@ -167,3 +167,36 @@ def test_endpoints_load_from_the_config_file(tmp_path, monkeypatch):
     prov = registry.get_provider("volc")
     assert prov.image_model == "ep-my-img"
     assert ops(prov.capabilities("ep-my-img", modality=Modality.VIDEO)) == {"image.generate", "image.edit"}
+
+
+# --------------------------------------------------- lifecycle through a mapping
+
+
+def test_notes_are_not_duplicated():
+    """The adapter hard-coded notes the catalogue spec also carries, printing each twice."""
+    caps = registry.get_provider("volc", config={}).capabilities(IMG)
+    assert len(caps.notes) == len(set(caps.notes))
+
+
+def test_mapped_endpoint_inherits_the_backing_model_verification():
+    """Mapping hides the real model behind an opaque id; its provenance must survive."""
+    prov = registry.get_provider("volc", config=MAPPED)
+    direct = prov.capabilities(IMG)
+    mapped = prov.capabilities("ep-my-img")
+    assert mapped.status == direct.status
+    assert mapped.verified == direct.verified
+
+
+def test_mapped_endpoint_carries_the_backing_model_notes():
+    caps = registry.get_provider("volc", config=MAPPED).capabilities("ep-my-img")
+    assert any("2K" in n for n in caps.notes), caps.notes
+    assert any(IMG in n for n in caps.notes)
+
+
+def test_configured_video_model_outside_the_catalogue_is_still_video():
+    """Both branches of _is_video_model must agree; only one used to check video_model."""
+    from media_ai.core.types import Modality
+
+    cfg = {"endpoints": {"ep-v": "house-video-model"}, "video_model": "house-video-model"}
+    caps = registry.get_provider("volc", config=cfg).capabilities("ep-v", modality=Modality.IMAGE)
+    assert caps.video is not None and caps.image is None

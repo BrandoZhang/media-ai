@@ -52,7 +52,6 @@ _OPTIONS = _VOICE_SETTINGS + _BODY_OPTIONS + _QUERY_OPTIONS
 # codec prefix -> mime, for when the file extension doesn't match --output-format.
 _CODEC_MIME = {"mp3": "audio/mpeg", "wav": "audio/wav", "pcm": "audio/L16",
                "opus": "audio/opus", "ulaw": "audio/basic", "alaw": "audio/basic"}
-_TTS_MODELS = ("eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3")
 
 # Music (compose) — models, output formats (incl. "auto"), and --option knobs.
 _MUSIC_MODELS = ("music_v1", "music_v2")

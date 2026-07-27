@@ -39,12 +39,9 @@ from . import _gemini_files
 from ._base import HttpProvider
 from ._catalog import GEMINI
 
-# The 10 aspect ratios every Nano Banana model shares. Gemini 3.1 Flash Image adds
-# the four extreme banner ratios; Pro / Lite / 2.5 stay on the standard set.
-
-# Gemini 2.5/3.1 text-to-speech models and the 30 prebuilt voices (style/tone/pace
-# are directed via the prompt text / --instruction, not a parameter).
-_TTS_MODELS = ("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview")
+# The 30 prebuilt TTS voices (style/tone/pace are directed via the prompt text /
+# --instruction, not a parameter). Which models exist, and their aspect-ratio sets,
+# live in the catalogue — see providers/_catalog.py.
 _GEMINI_VOICES = (
     "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
     "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",

@@ -60,11 +60,15 @@ class ModelSpec:
     """Other ids that resolve to exactly this spec (dated snapshots, vendor synonyms)."""
 
     matches: tuple[str, ...] = ()
-    """Id prefixes this spec claims when nothing matches exactly.
+    """Id *prefixes* this spec claims when nothing matches exactly."""
 
-    Checked in catalogue order, so put more specific prefixes first. This is what
-    keeps an unreleased ``veo-3.1-…`` variant resolving sensibly instead of landing on
-    an unrelated default.
+    contains: tuple[str, ...] = ()
+    """Id *substrings* this spec claims. Needed because a vendor family is not always
+    a prefix: Google's TTS ids are ``gemini-2.5-flash-preview-tts``, where the only
+    reliable marker is ``tts`` in the middle. A prefix-only scheme sends every
+    unrecognised one to whichever spec claims ``gemini-``.
+
+    Both are checked in catalogue order, so declare narrow specs before broad ones.
     """
 
     replacement: str | None = None
@@ -139,8 +143,10 @@ class Catalog:
     # -- lookup ------------------------------------------------------------
 
     def get(self, model: str) -> ModelSpec | None:
-        """Resolve exactly, then by declared prefix, then to the fallback. ``None`` if
-        nothing claims it and no fallback is declared."""
+        """Resolve exactly, then by declared prefix or substring, then to the fallback.
+
+        ``None`` when nothing claims it and no fallback is declared.
+        """
         if not model:
             return self.default_spec()
         key = model.lower()
@@ -148,7 +154,9 @@ class Catalog:
         if exact is not None:
             return exact
         for spec in self.specs:
-            if any(key.startswith(prefix.lower()) for prefix in spec.matches):
+            if any(key.startswith(p.lower()) for p in spec.matches):
+                return spec
+            if any(c.lower() in key for c in spec.contains):
                 return spec
         return self.default_spec()
 

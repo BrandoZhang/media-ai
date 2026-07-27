@@ -246,3 +246,130 @@ def test_verification_state_is_reported_not_assumed():
         for spec in cat.specs:
             assert spec.verified is None or len(spec.verified) == 10, \
                 f"{name}:{spec.id} has a malformed verified date {spec.verified!r}"
+
+
+# ------------------------------------------------- substring family matching
+
+
+def test_contains_claims_a_mid_id_marker():
+    """A vendor family is not always a prefix — Google's TTS ids end in `-tts`."""
+    c = Catalog(
+        "g",
+        (ModelSpec(id="tts-fallback", synthetic=True, contains=("tts",), discoverable=False),
+         ModelSpec(id="image-fallback", synthetic=True, matches=("g-",), discoverable=False)),
+        fallback="image-fallback",
+    )
+    assert c.get("g-2.5-flash-preview-tts").id == "tts-fallback"
+    assert c.get("g-4-image").id == "image-fallback"
+
+
+def test_narrower_spec_declared_first_wins():
+    c = Catalog(
+        "g",
+        (ModelSpec(id="narrow", contains=("tts",)), ModelSpec(id="broad", matches=("g-",))),
+    )
+    assert c.get("g-x-tts").id == "narrow"
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["gemini-3.1-flash-tts", "gemini-9-ultra-tts-preview", "gemini-4-flash-tts-preview"],
+)
+def test_unrecognised_gemini_tts_ids_resolve_as_speech(model):
+    """Regression: a prefix-only `gemini-` image fallback swallowed every one of these,
+    so `speech generate` on an unreleased TTS id failed with 'does not support speech'."""
+    from media_ai.providers._catalog import GEMINI
+
+    assert GEMINI.get(model).caps.get("kind") == "tts"
+
+
+def test_unrecognised_gemini_image_ids_still_resolve_as_images():
+    from media_ai.providers._catalog import GEMINI
+
+    assert GEMINI.get("gemini-9-flash-image").caps.get("kind") is None
+
+
+def test_unknown_tts_model_reports_speech_operations():
+    from media_ai.core.types import Operation as Op
+
+    caps = registry.get_provider("gemini").capabilities("gemini-9-ultra-tts-preview")
+    assert caps.audio is not None
+    assert Op.SPEECH_GENERATE in caps.audio.operations
+
+
+# ------------------------------------------------------ all_models superset
+
+
+@pytest.mark.parametrize("name", list(CATALOGS))
+def test_all_models_is_a_superset_even_when_discovery_is_configured(name, monkeypatch):
+    """Volc discovers from config/env, not the catalogue; returning catalogue ids alone
+    would drop the endpoints the account can actually call."""
+    monkeypatch.setenv("ARK_IMAGE_MODEL", "ep-configured-image")
+    monkeypatch.setenv("ARK_VIDEO_MODEL", "ep-configured-video")
+    prov = registry.get_provider(name)
+    assert set(prov.models()) <= set(prov.all_models())
+
+
+def test_configured_volc_endpoints_appear_in_all_models(monkeypatch):
+    monkeypatch.setenv("ARK_IMAGE_MODEL", "ep-configured-image")
+    listed = registry.get_provider("volc").all_models()
+    assert "ep-configured-image" in listed
+
+
+def test_all_models_has_no_duplicates():
+    for name in CATALOGS:
+        ids = registry.get_provider(name).all_models()
+        assert len(ids) == len(set(ids))
+
+
+# ------------------------------------------------- capabilities CLI surface
+
+
+def _run_cli(*argv):
+    import subprocess
+    import sys
+
+    res = subprocess.run([sys.executable, "-m", "media_ai", "capabilities", *argv],
+                         capture_output=True, text=True, timeout=60)
+    return res.returncode, json.loads(res.stdout)
+
+
+def test_naming_a_removed_model_is_an_error_not_a_stub():
+    """Asking about one model by name and getting a retired one must stay exit 3 —
+    turning it into ok:true would hide that the caller named something unusable."""
+    code, out = _run_cli("--provider", "openai", "--model", "dall-e-3")
+    assert code == 3 and out["ok"] is False
+    assert out["error"]["category"] == "unsupported"
+
+
+def test_naming_a_live_model_still_succeeds():
+    code, out = _run_cli("--provider", "openai", "--model", "gpt-image-2")
+    assert code == 0 and out["ok"] is True
+
+
+def test_listing_all_models_includes_retired_entries():
+    code, out = _run_cli("--provider", "openai", "--all-models")
+    assert code == 0
+    retired = [m for m in out["providers"][0]["models"] if m["status"] == "removed"]
+    assert {m["model"] for m in retired} == {"dall-e-3", "sora"}
+
+
+def test_retired_listing_entries_have_the_same_shape_as_live_ones():
+    """Agents parse providers[].models[] as one uniform shape; a short dict would make
+    a retired model look like a malformed one."""
+    _, out = _run_cli("--provider", "openai", "--all-models")
+    models = out["providers"][0]["models"]
+    live = next(m for m in models if m["status"] == "ga")
+    gone = next(m for m in models if m["status"] == "removed")
+    assert set(gone) == set(live)
+
+
+def test_retired_listing_entry_names_its_replacement():
+    _, out = _run_cli("--provider", "openai", "--all-models")
+    gone = next(m for m in out["providers"][0]["models"] if m["model"] == "dall-e-3")
+    assert gone["replacement"] == "gpt-image-2"
+
+
+def test_default_listing_omits_retired_models():
+    _, out = _run_cli("--provider", "openai")
+    assert all(m["status"] != "removed" for m in out["providers"][0]["models"])
