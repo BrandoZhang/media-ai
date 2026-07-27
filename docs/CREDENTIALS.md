@@ -39,6 +39,23 @@ only in the `chmod 600` `credentials.toml`; the shareable `config.toml` holds
 references and routing, never a raw key. This is what lets one provider hold several
 keys (per account / per model) and a profile pick — or fall back across — them.
 
+**Per-modality defaults live in `[providers.<name>]`.** A profile pins a single
+`model`, which can't express "images use one model and video another" on the same
+provider — and those really are different models (Gemini's image, Veo, and TTS
+families are disjoint; ElevenLabs splits further by operation). So `config.toml`
+also takes a non-secret per-provider table:
+
+```toml
+[providers.gemini]
+image_model = "gemini-3-pro-image"
+video_model = "veo-3.1-fast-generate-preview"
+```
+
+Model resolution, most specific first: `--model` → the active profile's `model` →
+`[providers.<name>]` → the provider's env var (`GEMINI_IMAGE_MODEL`, …) → the
+adapter's built-in default. Unknown keys are ignored, so a newer config stays
+readable by an older CLI.
+
 **Precedence when the same provider is set in more than one place:** broker →
 secret-manager reference → OS keychain → **`credentials.toml`** → **`.env`/env** (see
 the chain below). So if a key is in *both* `credentials.toml` and `.env`,

@@ -42,8 +42,8 @@ class VolcProvider(HttpProvider):
         # secret, which GitHub materializes as "") falls back to the default.
         self.base_url = (self.config.get("base_url") or os.getenv("ARK_BASE_URL")
                          or "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
-        self.image_model = os.getenv("ARK_IMAGE_MODEL") or "doubao-seedream-4-5-251128"
-        self.video_model = os.getenv("ARK_VIDEO_MODEL") or "doubao-seedance-2-0-260128"
+        self.image_model = self.config.get("image_model") or os.getenv("ARK_IMAGE_MODEL") or "doubao-seedream-4-5-251128"
+        self.video_model = self.config.get("video_model") or os.getenv("ARK_VIDEO_MODEL") or "doubao-seedance-2-0-260128"
         self.poll_interval = float(os.getenv("ARK_POLL_INTERVAL", "5") or 5)
         self.poll_timeout = float(os.getenv("ARK_POLL_TIMEOUT", "900") or 900)
 

@@ -74,7 +74,7 @@ class OpenAIProvider(HttpProvider):
     def __init__(self, *, credentials=None, config=None) -> None:
         super().__init__(credentials=credentials, config=config)
         self.base_url = (self.config.get("base_url") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-        self.image_model = os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
+        self.image_model = self.config.get("image_model") or os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
 
     def _auth(self, cred):
         base, headers = super()._auth(cred)

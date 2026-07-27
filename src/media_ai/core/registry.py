@@ -202,12 +202,23 @@ def _profile_credentials(profile: Profile | None, credentials: CredentialProvide
     return ProfileCredentialProvider(profile, default_chain())
 
 
-def _profile_config(profile: Profile | None, config: dict | None) -> dict | None:
-    if profile is None or not profile.base_url:
-        return config
+def _profile_config(profile: Profile | None, config: dict | None, name: str | None = None) -> dict | None:
+    """Merge the config an adapter sees, most-specific first.
+
+    Explicit ``config=`` beats a profile's ``base_url``, which beats the file-level
+    ``[providers.<name>]`` defaults. Adapters then prefer what they get here over their
+    environment variables, so precedence end-to-end is:
+    explicit → profile → ``[providers.<name>]`` → env var → built-in default.
+    """
     cfg = dict(config or {})
-    cfg.setdefault("base_url", profile.base_url)
-    return cfg
+    if profile is not None and profile.base_url:
+        cfg.setdefault("base_url", profile.base_url)
+    if name:
+        from ..credentials.profile import provider_defaults
+
+        for key, value in provider_defaults(name).items():
+            cfg.setdefault(key, value)
+    return cfg or None
 
 
 def _construct(name: str, credentials: CredentialProvider | None, config: dict | None) -> Provider:
@@ -240,7 +251,7 @@ def build(
     """
     prof = _resolve_profile(profile)
     name = (provider or (prof.provider if prof else None) or provider_for_model(model) or default_provider_name()).lower()
-    inst = _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config))
+    inst = _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config, name))
     resolved = model or (prof.model if prof else None) or (inst.default_model(modality) if modality else None)
     return inst, resolved
 
@@ -253,5 +264,5 @@ def get_provider(
     config: dict | None = None,
 ) -> Provider:
     prof = _resolve_profile(profile)
-    name = name or (prof.provider if prof else None) or default_provider_name()
-    return _construct(name.lower(), _profile_credentials(prof, credentials), _profile_config(prof, config))
+    name = (name or (prof.provider if prof else None) or default_provider_name()).lower()
+    return _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config, name))

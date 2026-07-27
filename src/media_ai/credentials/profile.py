@@ -104,6 +104,40 @@ def load_profile(name: str) -> Profile:
     )
 
 
+def provider_defaults(name: str) -> dict:
+    """``[providers.<name>]`` from the config file — non-secret per-provider defaults.
+
+    A profile pins a single ``model``, which cannot express "images use one model and
+    video another" on the same provider. Those defaults genuinely differ per modality
+    (Gemini's image, Veo, and TTS model families are disjoint) and per *operation* for
+    ElevenLabs, so they live here instead:
+
+    .. code-block:: toml
+
+        [providers.gemini]
+        image_model = "gemini-3-pro-image"
+        video_model = "veo-3.1-fast-generate-preview"
+
+    Adapters read these ahead of their environment variables, matching how ``base_url``
+    already resolves. Unknown keys are passed through untouched — an adapter ignores what
+    it does not recognise, so a newer config stays readable by an older CLI.
+
+    Never put a secret here: this file is the shareable one. Credentials belong in the
+    chmod-600 ``credentials.toml``.
+    """
+    path = config_path()
+    if not path.is_file():
+        return {}
+    import tomllib  # py311+
+
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise MediaError(f"could not parse {path}: {exc}", category=ErrorCategory.CLI) from exc
+    section = (data.get("providers") or {}).get(name.lower())
+    return dict(section) if isinstance(section, dict) else {}
+
+
 class ProfileCredentialProvider(CredentialProvider):
     """Resolve a profile's credential reference(s); delegate to a fallback chain when
     the profile declares no credential of its own (so `credential`-less profiles
