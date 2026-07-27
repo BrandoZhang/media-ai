@@ -19,6 +19,8 @@ jobs:
       - name: Test (offline — no creds, no network)
         run: uv run pytest -q -m "not live"
       - name: Lint the installer
-        run: shellcheck install/install.sh
+        run: shellcheck install/install.sh install/test_parse.sh
+      - name: Installer unit tests
+        run: bash install/test_parse.sh
       - name: Installer smoke test (no network, no install)
         run: bash install/install.sh --dry-run --version main
