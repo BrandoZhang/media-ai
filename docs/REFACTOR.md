@@ -49,13 +49,12 @@ D2 有一个直接推论，写在这里免得被当成独立设计：**凭据解
 ```
 image.text_to_image        仅 prompt
 image.image_to_image       prompt + 参考图（编辑 / 合成 / 风格迁移）
-image.inpaint              prompt + 参考图 + mask
 
 video.text_to_video        仅 prompt
 video.image_to_video       + first_frame
 video.keyframe_to_video    + first_frame + last_frame
-video.reference_to_video   + reference_images / videos / audios
-video.video_to_video       + 源视频（延长 / 重绘）
+video.reference_to_video   + reference_images / videos / audios（把素材当参考）
+video.extend               + continue_from（从一段已有视频的结尾继续生成）
 
 speech.text_to_speech      单音色
 speech.dialogue            多音色对话
@@ -67,9 +66,25 @@ music.plan                 prompt → composition plan（免费）
 sound.text_to_sound        prompt → 音效
 ```
 
-**Scene 由 CLI 从「哪些输入存在」推导**，不新增 CLI 参数：`video generate --first-frame a.png`
-→ `video.image_to_video`。推导出的 scene 与 binding 声明的 `scenes` 比对，不支持就在联网前
-报错。CLI 命令面（`media-ai <group> <op>`）与 stdout 机器契约**保持不变**。
+**Scene 由 CLI 从「哪些输入存在」推导**：`video generate --first-frame a.png` →
+`video.image_to_video`。推导出的 scene 与 binding 声明的 `scenes` 比对，不支持就在联网前报错。
+CLI 命令面（`media-ai <group> <op>`）与 stdout 机器契约**保持不变**，成功结果的 `meta` 里带上
+推导出的 `scene`，便于 Agent 复盘与日志排查。
+
+**Scene 由输入的「语义角色」决定，不由文件类型决定。** 这条规则暴露了现有 CLI 的一处歧义：
+`--reference-video` 今天有两个互不相干的含义——传给 Volc 是「把这段视频当参考素材」，传给
+Gemini 是「从这段 Veo 产物的结尾继续生成」（且必须是 URI，本地文件被 API 拒绝）。靠 provider
+不同来隐式区分，正是 scene 拆分该消掉的那类歧义。拆成两个参数：
+
+| 参数 | 语义 | scene |
+|---|---|---|
+| `--reference-video a.mp4` | 把这段视频当参考素材 | `video.reference_to_video` |
+| `--continue-from <uri>` | 从这段视频的结尾继续 | `video.extend` |
+
+**不设 `image.inpaint`。** 局部重绘（原图 + 蒙版，只重画蒙版区域）目前只有 gpt-image 支持，且
+无实际需求；现有的 `--mask` / `ImageRequest.mask` / `ImageCaps.supports_mask` / OpenAI
+`images/edits` 的 multipart 蒙版路径一并删除（见 §10）。要加回来是一个 scene + adapter 一段
+代码的事。
 
 > **Scene 不强制拆成 adapter 方法。** wire 层面很多 scene 共用一个端点（Volc 视频的 t2v/i2v/
 > ref2v 都是同一个 create-task，只是 content 数组不同）。Scene 的价值在**声明、校验、skill
@@ -374,11 +389,14 @@ media-ai video generate --prompt "…" --output c.mp4                           
 ```json
 {"ok": false, "error": {
   "category": "unsupported", "code": "scene_not_supported",
-  "message": "binding 'openai/gpt-image-2' does not support scene 'image.inpaint'",
-  "binding": "openai/gpt-image-2", "scene": "image.inpaint",
-  "supported_scenes": ["image.text_to_image", "image.image_to_image"],
-  "alternatives": ["volc-ark/seedream-4.5"]}}
+  "message": "binding 'gemini/veo-3.1-lite' does not support scene 'video.reference_to_video'",
+  "binding": "gemini/veo-3.1-lite", "scene": "video.reference_to_video",
+  "supported_scenes": ["video.text_to_video", "video.image_to_video", "video.keyframe_to_video"],
+  "alternatives": ["volc-ark/seedance-2.0"]}}
 ```
+
+`alternatives` 只从**已配置**的 binding 里筛，所以对 Agent 是可直接行动的信息——CLI 不替它
+换（D2），但把换的依据给足（D7）。
 
 新增 `error.code`（稳定的机器可读标识）与 `hint`（可直接执行的命令）——现有的
 category → exit code 映射不变。
@@ -445,6 +463,11 @@ media-ai-video/
 `[providers.<name>]` 表、隐式凭据链、`$MEDIA_PROVIDER` 默认 mock、`ModelSpec`/`Catalog`
 的 synthetic fallback。
 
+**删功能**：局部重绘（inpaint）—— `--mask` 参数、`ImageRequest.mask`、
+`ImageCaps.supports_mask`、OpenAI `images/edits` 的 multipart 蒙版路径及其测试。今天这条路径是
+能跑的（只有 gpt-image 支持），但没有实际需求，留着就要一直维护它在每个新 image binding 上的
+「支持/不支持」判断。见 §3。
+
 ## 11. 第一批 binding 清单
 
 | Binding | model_id | 场景 | `verified` |
@@ -453,9 +476,9 @@ media-ai-video/
 | `volc-ark/seedream-5` | **待补** | **待补** | 空 |
 | `volc-ark/seedance-2.0` | `doubao-seedance-2-0-260128` | video.{text,image,keyframe,reference}_to_video | 空 |
 | `gemini/nano-banana-2` | `gemini-3.1-flash-image` | image.text_to_image, image_to_image | 2026-07-12 |
-| `gemini/veo-3.1` | `veo-3.1-generate-preview` | video.{text,image,keyframe,reference,video}_to_video | 空 |
+| `gemini/veo-3.1` | `veo-3.1-generate-preview` | video.{text,image,keyframe,reference}_to_video, video.extend | 空 |
 | `gemini/gemini-tts` | `gemini-2.5-flash-preview-tts` | speech.text_to_speech, speech.dialogue | 2026-07-12 |
-| `openai/gpt-image-2` | `gpt-image-2` | image.text_to_image, image_to_image, inpaint | 2026-07-12 |
+| `openai/gpt-image-2` | `gpt-image-2` | image.text_to_image, image.image_to_image | 2026-07-12 |
 | `elevenlabs/eleven-multilingual-v2` | `eleven_multilingual_v2` | speech.text_to_speech | 2026-07-12 |
 | `elevenlabs/eleven-v3` | `eleven_v3` | speech.dialogue | 空 |
 | `elevenlabs/music-v2` | `music_v2` | music.{text,plan}_to_music, music.plan | 空 |
