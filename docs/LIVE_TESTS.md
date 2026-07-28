@@ -143,8 +143,8 @@ Smoke-tested 2026-07-12 against `api.openai.com/v1`.
   `background: "opaque"`, `created` — and `usage` carried
   `{input_tokens, output_tokens, total_tokens, *_tokens_details}` (token-billed).
 
-**Not yet exercised live:** `image edit` (multipart references + `--mask`), the fixed-size
-`gpt-image-1.x` tiers, moderation/safety error mapping.
+**Not yet exercised live:** `image edit` (multipart references), moderation/safety
+error mapping.
 
 ---
 

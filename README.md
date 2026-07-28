@@ -150,7 +150,7 @@ media-ai speech dialogue --speaker Joe=<voiceA> --speaker Jane=<voiceB> --turn J
 media-ai music generate --prompt "upbeat lofi hip hop" --output song.mp3
 media-ai sound generate --text "a spacious cinematic braam" --output sfx.mp3
 media-ai video generate --continue-from <uri> --prompt "she keeps walking" --output next.mp4
-media-ai concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
+media-ai video concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
 media-ai job    query   --binding <id> --id <op> --output clip.mp4
 media-ai bindings       list | available | add <id> --credential env://VAR
 media-ai config         show | set-default <scene|group> <binding>
@@ -201,6 +201,10 @@ environment. Two bindings on one provider can differ.
   binding ran and what scene it was asked for**. Failure is `{"ok": false, "error":
   {"category", "code", "hint", "details", …}}`, where `hint` is usually a command to
   run verbatim.
+- **Every produced file is an entry in `artifacts[]`**, each with its `path`, `kind`,
+  `mime`, `bytes` and `role`. There is no flatter alias beside it: one call can produce
+  several files (`--count 3`, a timestamps sidecar, a returned last frame), and a short
+  path exposing only the first is how the rest get dropped without anyone noticing.
 - **stderr** is redacted human logs only (never part of the contract).
 - **Exit codes** map to the error category so a Skill can branch on `$?` alone:
   `0` ok · `2` CLI misuse · `3` validation/unsupported · `4` auth · `5`
@@ -228,9 +232,11 @@ a broker injects the key at egress, so the CLI holds only a session token. See
 ## Usage ledger
 
 Every generation appends a line to `$MEDIA_USAGE_LOG` (default
-`./media_usage.jsonl`). `media-ai usage` aggregates token/artifact cost. Point
-`MEDIA_USAGE_LOG` and each `--output` at a per-task directory to isolate
-concurrent runs on a shared filesystem.
+`./media_usage.jsonl`). `media-ai usage` aggregates token/artifact cost **per binding
+and per scene** — not per provider, because two models behind one provider cost
+different amounts and a provider total cannot tell you which to stop calling. Point
+`MEDIA_USAGE_LOG` and each `--output` at a per-task directory to isolate concurrent
+runs on a shared filesystem.
 
 ## Example
 
@@ -240,13 +246,13 @@ media-ai image generate --prompt "silver astronaut on a red dune" --output /tmp/
 media-ai video generate --first-frame /tmp/run/ref.png --prompt "he turns to camera" \
     --output /tmp/run/s1.mp4 --duration 3 --resolution 480p
 media-ai video generate --prompt "twin suns setting" --output /tmp/run/s2.mp4 --duration 3 --resolution 480p
-media-ai concat --inputs '["/tmp/run/s1.mp4","/tmp/run/s2.mp4"]' --output /tmp/run/final.mp4
+media-ai video concat --inputs '["/tmp/run/s1.mp4","/tmp/run/s2.mp4"]' --output /tmp/run/final.mp4
 media-ai usage
 ```
 
 ## Docs
 
-- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per capability area (image, video, speech, music, sound, job, capabilities, usage) plus the shared contract
+- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per command group (image, video, speech, music, sound, job, capabilities, usage) plus the shared contract
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
 - [docs/BINDINGS.md](docs/BINDINGS.md) — what a binding is, configuring one, `extends`, per-binding options

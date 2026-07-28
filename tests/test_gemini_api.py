@@ -408,7 +408,7 @@ def test_tts_single_speaker_body_and_wav(fake_provider, tmp_path):
     assert gc["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Kore"
     assert call["body"]["contents"][0]["parts"][0]["text"].startswith("Say cheerfully")
     assert _valid_wav(res.primary().path) and res.primary().mime == "audio/wav"
-    assert res.modality == "audio" and res.operation == "speech.generate"
+    assert res.modality == "audio"
 
 
 def test_tts_pcm_rate_parsed_from_mime(fake_provider, tmp_path):
@@ -432,7 +432,7 @@ def test_tts_multi_speaker_body_and_prompt(fake_provider, tmp_path):
                     {"speaker": "Jane", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Puck"}}}]
     prompt = body["contents"][0]["parts"][0]["text"]
     assert prompt == "TTS this conversation:\n\nJoe: How's it going?\nJane: Not bad!"
-    assert _valid_wav(res.primary().path) and res.operation == "speech.dialogue"
+    assert _valid_wav(res.primary().path)
 
 
 def test_tts_200_but_no_audio_is_safety(fake_provider, tmp_path):

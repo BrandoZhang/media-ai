@@ -1,11 +1,13 @@
 """Scenes — the fine-grained kind of generation a request represents.
 
-:class:`~media_ai.core.types.Operation` answers "which command is this" and stops
-there: ``video.generate`` covers text→video, image→video, first+last frame,
-multimodal references, and extension all at once. Those five differ *per model* —
-Veo 3.1 Lite takes a first frame but no reference images and cannot extend — so
-collapsing them into one value pushes the difference into a scatter of
-``supports_*`` booleans that can be read but not enumerated.
+This is the *only* taxonomy of "what kind of generation is this". There used to be a
+second one — an ``Operation`` naming the command (``video.generate``) — and it could
+not carry the distinction that matters: one ``video.generate`` covered text→video,
+image→video, first+last frame, multimodal references and extension at once, while
+those five differ *per model* (Veo 3.1 Lite takes a first frame but no reference
+images and cannot extend). Collapsing them scattered the difference into ``supports_*``
+booleans that could be read but not enumerated, so nothing could answer "which of my
+bindings can do this?" before spending a call.
 
 A :class:`Scene` is that difference made into a value. Bindings declare the scenes
 they serve (see :mod:`media_ai.core.binding`), the CLI derives the scene from the

@@ -1,7 +1,7 @@
 name: live
 # Real-API regression tests. Runs **manually only** (Actions → live → Run workflow).
-# If no provider secrets are configured the job is a green no-op (all live steps are
-# skipped), so forks / unconfigured repos never fail here.
+# If no provider secrets are configured the job is a green no-op (every live test
+# skips), so forks / unconfigured repos never fail here.
 #
 # To also run automatically on merge to main later, add back:
 #   push:
@@ -15,37 +15,36 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MEDIA_LIVE_TESTS: "1"
-      # Provider credentials + optional overrides (add these in repo Settings → Secrets).
-      # Absent secrets resolve to "" and the matching provider's test simply skips.
+      # Keep the config out of the runner's real home, so a failed run leaves nothing.
+      MEDIA_CONFIG_FILE: ${{ github.workspace }}/.live/config.toml
+      # Provider credentials (add these in repo Settings → Secrets). An absent secret
+      # resolves to "" and the binding that wanted it is never configured, so the tests
+      # needing it skip. There is no per-provider list below on purpose: the bindings
+      # step reads which variable each binding wants from its own manifest.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
       ARK_API_KEY: ${{ secrets.ARK_API_KEY }}
-      ARK_BASE_URL: ${{ secrets.ARK_BASE_URL }}
-      ARK_IMAGE_MODEL: ${{ secrets.ARK_IMAGE_MODEL }}
-      ARK_VIDEO_MODEL: ${{ secrets.ARK_VIDEO_MODEL }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       # Set repo variable MEDIA_LIVE_VIDEO=1 to also run the (slow, costly) video smoke.
       MEDIA_LIVE_VIDEO: ${{ vars.MEDIA_LIVE_VIDEO }}
     steps:
       - uses: actions/checkout@v4
-      - name: Detect provider secrets
-        id: keys
-        run: |
-          if [ -n "$OPENAI_API_KEY" ] || [ -n "$GEMINI_API_KEY" ] || [ -n "$ARK_API_KEY" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=live tests skipped::No provider secrets configured (OPENAI_API_KEY / GEMINI_API_KEY / ARK_API_KEY). Add them in Settings → Secrets to enable live regression tests."
-          fi
       - name: Install uv
-        if: steps.keys.outputs.present == 'true'
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
       - name: Sync
-        if: steps.keys.outputs.present == 'true'
         run: uv sync
+      - name: Configure the bindings whose keys are present
+        run: |
+          # `bindings available` reports, per binding, the conventional env vars its
+          # manifest declares. Configure a binding only when one of them actually holds
+          # a value — so this workflow needs no edit when a binding is added, and it
+          # configures nothing it cannot use.
+          uv run media-ai bindings available > available.json
+          uv run python .github/scripts/configure_live_bindings.py available.json
       - name: Live regression tests
-        if: steps.keys.outputs.present == 'true'
         run: uv run pytest -m live -v
+      - name: Remove the scratch config
+        if: always()
+        run: rm -rf "${{ github.workspace }}/.live"

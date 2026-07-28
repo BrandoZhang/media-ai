@@ -1,12 +1,13 @@
 ---
 name: media-ai-capabilities
 description: >-
-  Discover what the media-ai CLI's providers and models support — operations,
-  geometry modes, allowed sizes/aspect-ratios/resolutions, durations, provider
-  options, and async behavior — as machine-readable JSON, BEFORE requesting a
-  generation. Use when asked which media-ai models/providers exist or what a model
-  supports, or (always) to pick a valid request and avoid unsupported-option errors.
-version: 1.0.0
+  Discover what the media-ai CLI can actually do on this machine — which bindings
+  exist, which are reachable right now, which scenes each serves, and the geometry,
+  durations, formats and provider options each accepts — as machine-readable JSON,
+  BEFORE requesting a generation. Use when asked which media-ai models or providers
+  are available or what one supports, or (always) to build a request that will be
+  accepted instead of rejected after a billed call.
+version: 2.0.0
 metadata:
   requires:
     bins: ["media-ai"]
@@ -14,9 +15,9 @@ metadata:
   install:
     tier: core
     summary: >-
-      Ask the CLI what a provider or model actually supports — sizes, ratios,
-      durations, options — before generating, so a request fails at the keyboard
-      instead of after a billed call.
+      Ask the CLI what each configured binding actually supports — scenes, sizes,
+      ratios, durations, options — before generating, so a request fails at the
+      keyboard instead of after a billed call.
 ---
 
 # media-ai-capabilities — discover before you generate
@@ -24,72 +25,88 @@ metadata:
 > Read `../media-ai-shared/SKILL.md` for the machine contract. This is the
 > **discovery entry point** every generation skill should call first.
 
-`media-ai capabilities` reports exactly what each provider/model supports, so you can
-build a valid request instead of guessing. Requesting an unsupported operation,
-geometry, or option otherwise fails with **exit 3** *before any network call*.
+`media-ai capabilities` prints the binding manifests. Discovery and pre-flight
+validation read the *same* declaration, so "what does this support?" cannot drift
+from what actually gets enforced — an unsupported scene, geometry or option fails
+with **exit 3 before any network call**.
 
 ## Command
 
 ```bash
-media-ai capabilities                                   # every registered provider/model
-media-ai capabilities --binding openai/gpt-image-2 --pretty        # one provider
-media-ai capabilities --binding gemini/veo-3.1-generate-preview --pretty   # one model
-media-ai capabilities --binding elevenlabs/eleven-multilingual-v2 --pretty    # audio (speech/music/sound)
+media-ai capabilities --pretty                        # every binding this package knows
+media-ai capabilities --configured                    # only the ones reachable right now
+media-ai capabilities --scene video.image_to_video    # only the ones serving this scene
+media-ai capabilities --binding <provider>/<model> --pretty     # one, in full
 ```
 
 | flag | notes |
 |---|---|
-| `--provider <p>` | limit to one provider |
-| `--model <m>` | limit to one model |
+| `--scene <group>.<what>` | only bindings serving that scene (an unknown name lists the valid ones) |
+| `--configured` | drop bindings with no credential configured — what you can call *now* |
+| `--binding` / `--provider` / `--model` | narrow to one binding, one provider's, or one model's |
 | `--pretty` | indent the JSON |
 | `--metadata-out PATH` | also write the JSON to a file |
 
 ## Output shape
 
 ```json
-{"ok": true, "schema_version": 1,
- "providers": [
-   {"provider": "openai",
-    "models": [
-      {"provider": "openai", "model": "gpt-image-2", "modalities": ["image"],
-       "image": {"operations": ["image.generate","image.edit"], "geometry_mode": "pixels",
-                 "pixel_sizes": [...], "max_count": 10, "output_formats": ["png","jpeg","webp"],
-                 "supports_seed": false, "supports_mask": true, "max_references": 16,
-                 "options": ["moderation","output_compression"]},
-       "video": null, "audio": null, "notes": [...], "experimental": false, "aliases": [...]}
-    ]}
- ]}
+{"ok": true, "schema_version": 2,
+ "bindings": [
+   {"binding": "<provider>/<model>", "provider": "…", "model": "…", "model_id": "<wire id>",
+    "title": "…", "lifecycle": "ga", "replacement": null, "verified": "2026-05-14",
+    "scenes": ["image.text_to_image", "image.image_to_image"],
+    "constraints": {
+      "supports": {"seed": false, "negative_prompt": false, "transparency": true},
+      "options": ["moderation", "output_compression"],
+      "geometry": {"mode": "pixels", "pixel_sizes": ["1024x1024"], "pixel_multiple": 16},
+      "output": {"formats": ["png", "jpeg", "webp"], "max_count": 10},
+      "references": {"max": 16},
+      "video": {"is_async": true},
+      "audio": {"formats": ["mp3_44100_128"]}},
+    "notes": ["…"],
+    "transport": "http", "needs_credential": true,
+    "available": true, "configured": true}],
+ "defaults": {"image.text_to_image": "<provider>/<model>"}}
 ```
 
-Each model carries an `image` / `video` / `audio` block (the others are `null`);
-`modalities[]` lists which apply. Audio models (`elevenlabs`, Gemini TTS) fill the
-`audio` block instead.
+## The fields that decide a request
 
-## Fields that decide a valid request
+- **`scenes[]`** — what this binding serves. The CLI derives the scene from your
+  inputs (see `../media-ai-shared/SKILL.md`); a binding that does not declare it is
+  refused before the call, naming alternatives you have configured.
+- **`available` / `configured`** — `available` means this machine can call it (its
+  credential resolves, or it needs none); `configured` means the config names it
+  explicitly. **Filter on `available` before choosing** — a binding that exists in the
+  package but has no key is not a place you can send work.
+- **`constraints.geometry`** — `mode` is `pixels`, `aspect_ratio`, `both` or `none`,
+  plus whichever of `pixel_sizes` / `aspect_ratios` / `named_sizes` / `pixel_min` /
+  `pixel_max` / `pixel_multiple` / `ratio_range` that binding actually declares.
+- **`constraints.supports`** — booleans for the cross-provider knobs (`seed`,
+  `negative_prompt`, `transparency`, `quality`, `first_frame`, `last_frame`,
+  `reference_images` / `_videos` / `_audios`, `audio`, `watermark_control`,
+  `return_last_frame`, `cancel`, `dialogue`, `composition_plan`, `timestamps`, …).
+- **`constraints.options[]`** — the `--option key=value` keys this binding accepts.
+  Any other key is exit 3.
+- **`constraints.output` / `.references` / `.video` / `.audio`** — formats, `max_count`,
+  reference limits, `is_async`, durations, character caps.
+- **`defaults`** — which binding a request with no `--binding`/`--provider`/`--model`
+  will use, per scene.
 
-- **image**: `operations`, `geometry_mode` (`pixels|aspect_ratio|both|none`),
-  `pixel_sizes` / `aspect_ratios` / `named_sizes`, `pixel_min` / `pixel_max` /
-  `pixel_multiple`, `max_count`, `output_formats`, `supports_seed` /
-  `supports_negative_prompt` / `supports_transparency` / `supports_quality` /
-  `supports_mask`, `max_references`, `options`.
-- **video**: `operations`, `is_async`, `aspect_ratios`, `resolutions`, `durations`,
-  `supports_first_frame` / `supports_last_frame`, `supports_reference_images/videos/audios`,
-  `supports_seed` / `supports_negative_prompt` / `supports_audio` / `audio_default`,
-  `supports_watermark_control`, `supports_return_last_frame`, `supports_cancel`, `options`.
-- **audio** (speech / music / sound — see `media-ai-speech` / `-music` / `-sound`):
-  `operations` (e.g. `speech.generate`, `speech.dialogue`, `music.generate`,
-  `music.plan`, `sound.generate`), `output_formats`, `default_voice`, `supports_seed` /
-  `supports_language_code` / `supports_timestamps`; dialogue: `supports_dialogue` /
-  `max_dialogue_voices` / `supports_instruction`; `max_characters`, `options`; music:
-  `supports_music` / `supports_composition_plan` / `music_models` /
-  `music_output_formats` / `music_min_ms` / `music_max_ms` / `music_options`; sound:
-  `supports_sound` / `sound_output_formats` / `sound_min_seconds` / `sound_max_seconds` /
-  `sound_options`.
+> **An absent field means "not declared", never "zero" or "unlimited".** If
+> `max_count` is missing, the limit is unknown — do not read it as 0 and do not
+> invent one. Nothing here is filled with a placeholder, which is what lets you trust
+> the values that *are* present.
+
+## `lifecycle` and `verified`
+
+`lifecycle` is `ga` / `preview` / `deprecated`; a deprecated binding names its
+`replacement`. `verified` is the date someone ran this declaration against the live
+API — **absent means unverified, not broken**, and it is never invented.
 
 ## How this pairs with `--on-unsupported`
 
-Capabilities is the same source of truth used for pre-flight validation. If you
-already know a field is unsupported but want best-effort anyway, pass
-`--on-unsupported warn` (log and proceed) or `ignore` (drop silently) on the
-generation command; the default `error` turns any mismatch into exit 3 with
-`error.details.unsupported[]` naming each rejected field.
+Capabilities is the same source of truth as pre-flight validation. If you already
+know a field is unsupported but want best-effort anyway, pass `--on-unsupported warn`
+(log and proceed) or `ignore` (drop silently) on the generation command; the default
+`error` turns any mismatch into exit 3 with `error.details.unsupported[]` naming
+each rejected field.

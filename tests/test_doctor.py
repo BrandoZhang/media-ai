@@ -77,7 +77,7 @@ def test_exit_code_is_zero_even_when_checks_warn(home):
     )
     assert res.returncode == 0
     parsed = json.loads(res.stdout)
-    assert parsed["operation"] == "doctor" and parsed["status"] == "warn"
+    assert parsed["command"] == "doctor" and parsed["status"] == "warn"
     assert len(res.stdout.strip().splitlines()) == 1
 
 

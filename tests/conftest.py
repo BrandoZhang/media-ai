@@ -107,8 +107,8 @@ def _ledger(tmp_path, monkeypatch, request):
     if request.node.get_closest_marker("live"):
         return tmp_path / "usage.jsonl"
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-                "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL", "MEDIA_PROVIDER",
-                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
+                "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL",
+                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
     # A test that never writes a config still gets an empty one, so nothing reads the
     # developer's real ~/.config/media-ai while the suite runs.

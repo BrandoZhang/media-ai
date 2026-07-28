@@ -27,7 +27,7 @@ def test_mock_speech_generate_writes_wav(tmp_path):
     out = tmp_path / "s.wav"
     res = adapter_for("mock/mock").generate_speech(SpeechRequest(text="Hello there, world.", output=out))
     assert out.is_file() and _is_valid_wav(out)
-    assert res.modality == "audio" and res.operation == "speech.generate"
+    assert res.modality == "audio"
     assert res.primary().kind == "audio" and res.primary().bytes > 0
     assert res.usage["characters"] == len("Hello there, world.")
 
@@ -49,7 +49,7 @@ def test_mock_dialogue_writes_wav_and_voice_segments(tmp_path):
     res = adapter_for("mock/mock").generate_dialogue(
         DialogueRequest(turns=turns, cast=cast, instruction="a cheerful skit", output=out, timestamps=True))
     assert _is_valid_wav(out)
-    assert res.operation == "speech.dialogue" and res.meta["voices"] == ["mock-voice-a", "mock-voice-b"]
+    assert res.meta["voices"] == ["mock-voice-a", "mock-voice-b"]
     assert res.meta["instruction"] == "a cheerful skit"
     segs = json.loads((tmp_path / "d.wav.timestamps.json").read_text())["voice_segments"]
     assert [s["voice_id"] for s in segs] == ["mock-voice-a", "mock-voice-b"]
@@ -59,7 +59,7 @@ def test_mock_dialogue_writes_wav_and_voice_segments(tmp_path):
 def test_mock_music_from_prompt(tmp_path):
     out = tmp_path / "song.wav"
     res = adapter_for("mock/mock").generate_music(MusicRequest(output=out, prompt="lofi beat", duration_ms=6000))
-    assert _is_valid_wav(out) and res.operation == "music.generate"
+    assert _is_valid_wav(out)
     assert res.meta["from_plan"] is False
 
 
@@ -94,7 +94,7 @@ def test_mock_music_plan_and_reuse(tmp_path):
 def test_mock_sound_effect(tmp_path):
     out = tmp_path / "sfx.wav"
     res = adapter_for("mock/mock").generate_sound(SoundEffectRequest(text="whoosh", output=out, duration_seconds=1.5))
-    assert _is_valid_wav(out) and res.operation == "sound.generate"
+    assert _is_valid_wav(out)
     assert res.usage["characters"] == len("whoosh")
 
 

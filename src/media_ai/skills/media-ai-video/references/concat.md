@@ -1,12 +1,12 @@
 # Joining clips into one film
 
-`media-ai concat` runs the bundled ffmpeg on this machine: **free, offline, no
+`media-ai video concat` runs the bundled ffmpeg on this machine: **free, offline, no
 credential, no cost**. It is the last step of a video run, which is why it lives with
 the video skill rather than in one of its own.
 
 ```bash
-media-ai concat --inputs '["s1.mp4","s2.mp4","s3.mp4"]' --output film.mp4
-media-ai concat --inputs a.mp4 b.mp4 --output film.mp4 --width 1280 --height 720
+media-ai video concat --inputs '["s1.mp4","s2.mp4","s3.mp4"]' --output film.mp4
+media-ai video concat --inputs a.mp4 b.mp4 --output film.mp4 --width 1280 --height 720
 ```
 
 | flag | default | notes |

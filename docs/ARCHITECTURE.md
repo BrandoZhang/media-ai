@@ -42,7 +42,7 @@ parameter tables from it.
 ```mermaid
 flowchart TB
     subgraph CLI["cli/ — thin front end (argparse + machine contract)"]
-        C1["image · video · speech · music · sound · concat · job"]
+        C1["image · video · speech · music · sound · job"]
         C2["bindings · config · capabilities · init · doctor · usage"]
         C3["common.py: bind() · run() · one JSON line + exit code"]
     end

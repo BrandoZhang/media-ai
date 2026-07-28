@@ -27,10 +27,9 @@ from urllib.parse import urlencode
 
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import guess_mime
-from ..core.scene import Scene
+from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult
 from ..core.types import DialogueRequest, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
-from ..core.usage import record_usage
 from ._base import HttpAdapter
 
 # Output formats accepted by the API (codec_samplerate[_bitrate]).
@@ -120,9 +119,8 @@ class ElevenLabsAdapter(HttpAdapter):
         else:
             audio = client.request_bytes("POST", f"/text-to-speech/{voice}{qs}", body=body, headers=headers)
             artifacts = [self._write_audio(audio, out, req.output_format)]
-        record_usage({"tool": "speech.generate", "operation": "speech.generate", "provider": self.name,
-                      "model": model, "kind": "audio", "characters": len(req.text)})
-        return GenerationResult(modality="audio", operation="speech.generate", provider=self.name, model=model,
+        self.record(Scene.SPEECH_TEXT_TO_SPEECH, model=model, kind="audio", characters=len(req.text))
+        return GenerationResult(modality="audio", provider=self.name, model=model,
                                 artifacts=artifacts, usage={"characters": len(req.text)},
                                 meta={"voice": voice, "output_format": req.output_format, "timestamps": req.timestamps})
 
@@ -154,9 +152,8 @@ class ElevenLabsAdapter(HttpAdapter):
             audio = client.request_bytes("POST", f"/text-to-dialogue{qs}", body=body, headers=headers)
             artifacts = [self._write_audio(audio, out, req.output_format)]
         chars = sum(len(t.text) for t in req.turns)
-        record_usage({"tool": "speech.dialogue", "operation": "speech.dialogue", "provider": self.name,
-                      "model": model, "kind": "audio", "characters": chars})
-        return GenerationResult(modality="audio", operation="speech.dialogue", provider=self.name, model=model,
+        self.record(Scene.SPEECH_DIALOGUE, model=model, kind="audio", characters=chars)
+        return GenerationResult(modality="audio", provider=self.name, model=model,
                                 artifacts=artifacts, usage={"characters": chars},
                                 meta={"voices": req.voices(), "output_format": req.output_format, "timestamps": req.timestamps})
 
@@ -200,9 +197,8 @@ class ElevenLabsAdapter(HttpAdapter):
         else:
             audio = client.request_bytes("POST", f"/music{qs}", body=body, headers=headers)
             artifacts = [self._write_audio(audio, out, req.output_format)]
-        record_usage({"tool": "music.generate", "operation": "music.generate", "provider": self.name,
-                      "model": model, "kind": "audio"})
-        return GenerationResult(modality="audio", operation="music.generate", provider=self.name, model=model,
+        self.record(derive_scene(req), model=model, kind="audio")
+        return GenerationResult(modality="audio", provider=self.name, model=model,
                                 artifacts=artifacts, usage={},
                                 meta={"prompt": req.prompt, "from_plan": req.composition_plan is not None,
                                       "output_format": req.output_format, "detailed": req.detailed})
@@ -219,9 +215,8 @@ class ElevenLabsAdapter(HttpAdapter):
         out = Path(req.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        record_usage({"tool": "music.plan", "operation": "music.plan", "provider": self.name,
-                      "model": model, "kind": "plan"})
-        return GenerationResult(modality="audio", operation="music.plan", provider=self.name, model=model,
+        self.record(Scene.MUSIC_PLAN, model=model, kind="plan")
+        return GenerationResult(modality="audio", provider=self.name, model=model,
                                 artifacts=[Artifact.from_path(out, "plan", mime="application/json")],
                                 usage={}, meta={"prompt": req.prompt, "free": True})
 
@@ -239,9 +234,8 @@ class ElevenLabsAdapter(HttpAdapter):
         out = Path(req.output)
         audio = client.request_bytes("POST", f"/sound-generation{qs}", body=body, headers=headers)
         artifacts = [self._write_audio(audio, out, req.output_format)]
-        record_usage({"tool": "sound.generate", "operation": "sound.generate", "provider": self.name,
-                      "model": model, "kind": "audio", "characters": len(req.text)})
-        return GenerationResult(modality="audio", operation="sound.generate", provider=self.name, model=model,
+        self.record(Scene.SOUND_TEXT_TO_SOUND, model=model, kind="audio", characters=len(req.text))
+        return GenerationResult(modality="audio", provider=self.name, model=model,
                                 artifacts=artifacts, usage={"characters": len(req.text)},
                                 meta={"text": req.text, "output_format": req.output_format})
 

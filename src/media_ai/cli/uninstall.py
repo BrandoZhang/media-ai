@@ -186,7 +186,7 @@ def _uninstall(args, prompter) -> dict:
     """
     prompter.intro("media-ai uninstall")
     summary: dict = {
-        "ok": True, "schema_version": SCHEMA_VERSION, "operation": "uninstall",
+        "ok": True, "schema_version": SCHEMA_VERSION, "command": "uninstall",
         "skills": [], "removed": [], "kept": [], "dry_run": bool(args.dry_run),
     }
     choices = _Choices()

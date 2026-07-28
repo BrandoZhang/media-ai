@@ -469,7 +469,7 @@ def _wizard(args, prompter) -> dict:
     for title, message in announcements():
         prompter.box(title, message)
     summary: dict = {
-        "ok": True, "schema_version": SCHEMA_VERSION, "operation": "init",
+        "ok": True, "schema_version": SCHEMA_VERSION, "command": "init",
         "wrote": [], "backed_up": [], "bindings": [], "skills": [], "dry_run": bool(args.dry_run),
     }
     answers = _Answers()

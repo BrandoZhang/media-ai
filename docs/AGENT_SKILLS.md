@@ -29,12 +29,16 @@ contract below is deterministic so a Skill can act on results without heuristics
 Success shape:
 
 ```json
-{"ok": true, "schema_version": 2, "modality": "image", "operation": "image.generate",
+{"ok": true, "schema_version": 2, "modality": "image",
  "provider": "openai", "model": "gpt-image-2",
  "artifacts": [{"path": "out.png", "kind": "image", "mime": "image/png", "bytes": 12345, "role": null}],
  "usage": {"total_tokens": 1290},
  "meta": {"prompt": "…", "binding": "openai/gpt-image-2", "scene": "image.text_to_image"}}
 ```
+
+**Every produced file is in `artifacts[]`** — there is no flat `path` beside it. Read
+`artifacts[0].path` for the primary one and iterate for the rest; `--count 3`, a
+timestamps sidecar and a returned last frame all arrive there, each with a `role`.
 
 `meta.binding` and `meta.scene` record **what actually ran and what it was asked
 for** — keep them, and "what produced this file?" stays answerable later. They matter

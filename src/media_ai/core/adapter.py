@@ -103,6 +103,28 @@ class Adapter:
         """Resolve this binding's credential, per call, so rotation needs no restart."""
         return self.binding.credentials().resolve()
 
+    # ---- accounting ------------------------------------------------------
+
+    def record(self, scene: Scene | str | None, **fields) -> None:
+        """Append one usage line for a call through this binding.
+
+        The binding id, provider and wire model are filled in here rather than at each
+        call site, so no adapter can write a ledger line that fails to say which
+        configured binding was billed — the question the ledger exists to answer.
+
+        ``scene`` is ``None`` on the one path that cannot know it: finalizing a job
+        submitted by an *earlier* process (``media-ai job query``), where the inputs
+        that implied the scene are long gone. The key is then absent rather than
+        guessed — a wrong scene in a cost report is worse than a missing one.
+        """
+        from .usage import record_usage
+
+        entry = {"binding": self.binding.id, "provider": self.name,
+                 "model": fields.pop("model", None) or self.model_id}
+        if scene is not None:
+            entry["scene"] = scene.value if isinstance(scene, Scene) else scene
+        record_usage({**entry, **fields})
+
     # ---- declaration -----------------------------------------------------
 
     def supported_scenes(self) -> frozenset[Scene]:  # pragma: no cover - interface

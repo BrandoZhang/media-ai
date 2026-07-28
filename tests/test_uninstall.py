@@ -316,7 +316,7 @@ def test_stdout_is_exactly_one_json_object(home):
     )
     assert res.returncode == 0, res.stderr
     parsed = json.loads(res.stdout)
-    assert parsed["ok"] is True and parsed["operation"] == "uninstall"
+    assert parsed["ok"] is True and parsed["command"] == "uninstall"
     assert len(res.stdout.strip().splitlines()) == 1
 
 

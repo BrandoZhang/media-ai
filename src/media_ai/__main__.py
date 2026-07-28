@@ -1,10 +1,13 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
 Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
-``music``, ``sound``, ``concat``, ``job``, ``capabilities``, ``bindings``, ``config``,
-``usage``. Each group is
-also reachable directly; this umbrella reshapes argv so the group's own argparse sees
-a clean program name.
+``music``, ``sound``, ``job``, ``capabilities``, ``bindings``, ``config``, ``usage``.
+Each group is also reachable directly; this umbrella reshapes argv so the group's own
+argparse sees a clean program name.
+
+One group per **scene group** (``video.*`` → ``media-ai video``), so a skill covering
+a command group covers exactly the scenes under it — which is why joining clips is
+``video concat`` and not a group of its own.
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ _GROUPS = {
     "speech": "speech",
     "music": "music",
     "sound": "sound",
-    "concat": "concat",
     "job": "job",
     "capabilities": "capabilities",
     "bindings": "bindings",
@@ -50,9 +52,10 @@ def _usage(stream) -> None:
     print("  media-ai uninstall                 # remove the skills; keeps config unless asked", file=stream)
     print("  media-ai image generate --prompt 'a red bicycle' --output bike.png", file=stream)
     print("  media-ai video generate --prompt 'twin suns setting' --output clip.mp4", file=stream)
-    print("  media-ai speech generate --text 'hello there' --output hi.mp3 --provider elevenlabs", file=stream)
-    print("  media-ai music generate --prompt 'lofi hip hop beat' --output song.mp3 --provider elevenlabs", file=stream)
-    print("  media-ai sound generate --text 'a spooky whoosh' --output sfx.mp3 --provider elevenlabs", file=stream)
+    print("  media-ai video concat --inputs a.mp4 b.mp4 --output film.mp4", file=stream)
+    print("  media-ai speech generate --text 'hello there' --output hi.mp3", file=stream)
+    print("  media-ai music generate --prompt 'lofi hip hop beat' --output song.mp3", file=stream)
+    print("  media-ai sound generate --text 'a spooky whoosh' --output sfx.mp3", file=stream)
     print("  media-ai bindings list              # what this machine can call, and what is default", file=stream)
     print("  media-ai bindings available         # declared but not configured yet", file=stream)
     print("  media-ai config set-default video.text_to_video volc-ark/seedance-2.0", file=stream)

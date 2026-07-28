@@ -130,7 +130,7 @@ def test_job_query_finalizes_and_downloads(fake_provider, tmp_path):
     out = tmp_path / "out.mp4"
     status = prov.get_job(JobRef(provider="volc", id="task-9"), output=out)
     d = status.to_dict()
-    assert d["status"] == "succeeded" and d["path"] == str(out)
+    assert d["status"] == "succeeded" and d["artifacts"][0]["path"] == str(out)
     assert out.is_file() and "https://cdn/x.mp4" in fake.downloads
 
 

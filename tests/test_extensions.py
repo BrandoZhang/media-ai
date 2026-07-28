@@ -70,7 +70,7 @@ class AcmeAdapter(Adapter):
         out = Path(req.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(PNG_1x1_BYTES)
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name,
+        return GenerationResult(modality="image", provider=self.name,
                                 model=req.model, artifacts=[Artifact.from_path(out, "image", mime="image/png")],
                                 usage={}, meta={"sticker": req.options.get("sticker")})
 
@@ -235,7 +235,7 @@ class RpcAdapter(Adapter):
                      retryable=lambda e: isinstance(e, Transient))
         req.output.parent.mkdir(parents=True, exist_ok=True)
         req.output.write_bytes(data)
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name,
+        return GenerationResult(modality="image", provider=self.name,
                                 model=req.model, artifacts=[Artifact.from_path(req.output, "image")], usage={})
 
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import resolve_image_pixels, resolve_video_pixels
 from ..core.adapter import Adapter
-from ..core.scene import Scene
+from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import (
     DialogueRequest,
@@ -33,7 +33,6 @@ from ..core.types import (
     SpeechRequest,
     VideoRequest,
 )
-from ..core.usage import record_usage
 from ..media import audio, ffmpeg, pillow
 
 _DEFAULT_IMG = (768, 432)
@@ -68,7 +67,8 @@ class MockAdapter(Adapter):
         w, h = resolve_image_pixels(req.geometry, _DEFAULT_IMG)
         out = Path(req.output)
         pillow.ensure_parent(out)
-        title = f"mock {req.operation.value}"
+        scene = derive_scene(req)
+        title = f"mock {scene.value}"
         pillow.draw_caption_image(out, title=title, prompt=req.prompt, w=w, h=h,
                                   rgb=pillow.palette(req.prompt, req.seed), base_image=base)
         artifacts = [Artifact.from_path(out, "image", mime="image/png")]
@@ -78,10 +78,9 @@ class MockAdapter(Adapter):
                                       rgb=pillow.palette(req.prompt + str(i), req.seed), base_image=base)
             artifacts.append(Artifact.from_path(p, "image", mime="image/png", role="group"))
         usage = _image_tokens(w, h, req.count)
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": "mock", "kind": "image", "generated_images": req.count, **usage})
+        self.record(scene, kind="image", **usage)
         return GenerationResult(
-            modality="image", operation=req.operation.value, provider=self.name, model="mock",
+            modality="image", provider=self.name, model="mock",
             artifacts=artifacts, usage=usage,
             meta={"prompt": req.prompt, "seed": req.seed, "size": [w, h],
                   "refs": [r.raw for r in req.references]},
@@ -107,9 +106,10 @@ class MockAdapter(Adapter):
             r0 = req.reference_images[0]
             base = r0.path() if (r0.is_local and r0.path().is_file()) else None
         tag = _ref_tag(req)
+        scene = derive_scene(req)
         with tempfile.TemporaryDirectory() as td:
             frame = Path(td) / "frame.png"
-            pillow.draw_caption_image(frame, title=f"mock {req.operation.value}", prompt=req.prompt + tag,
+            pillow.draw_caption_image(frame, title=f"mock {scene.value}", prompt=req.prompt + tag,
                                       w=rw, h=rh, rgb=pillow.palette(req.prompt, req.seed), base_image=base)
             ffmpeg.image_to_clip(frame, out, seconds=req.duration or 5, fps=ffmpeg.DEFAULT_FPS, w=rw, h=rh)
         artifacts = [Artifact.from_path(out, "video", mime="video/mp4")]
@@ -120,10 +120,9 @@ class MockAdapter(Adapter):
             artifacts.append(Artifact.from_path(lf, "frame", mime="image/png", role="last_frame"))
         seconds = req.duration or 5
         usage = _video_tokens(bw, bh, seconds)
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": "mock", "kind": "video", "seconds": seconds, **usage})
+        self.record(scene, kind="video", seconds=seconds, **usage)
         return GenerationResult(
-            modality="video", operation=req.operation.value, provider=self.name, model="mock",
+            modality="video", provider=self.name, model="mock",
             artifacts=artifacts, usage=usage,
             meta={"prompt": req.prompt, "seconds": seconds, "seed": req.seed, "render_size": [rw, rh]},
         )
@@ -137,10 +136,9 @@ class MockAdapter(Adapter):
         if req.timestamps:
             artifacts.append(self._write_alignment(out, {"alignment": audio.fake_alignment(req.text, secs)}))
         usage = {"characters": len(req.text)}
-        record_usage({"tool": "speech.generate", "operation": "speech.generate", "provider": self.name,
-                      "model": "mock", "kind": "audio", **usage})
+        self.record(Scene.SPEECH_TEXT_TO_SPEECH, kind="audio", **usage)
         return GenerationResult(
-            modality="audio", operation="speech.generate", provider=self.name, model="mock",
+            modality="audio", provider=self.name, model="mock",
             artifacts=artifacts, usage=usage,
             meta={"voice": req.voice or "mock-voice-a", "seconds": round(secs, 3), "timestamps": req.timestamps},
         )
@@ -158,10 +156,9 @@ class MockAdapter(Adapter):
                        "voice_segments": _mock_voice_segments(req.turns, req.cast, secs)}
             artifacts.append(self._write_alignment(out, payload))
         usage = {"characters": total_chars}
-        record_usage({"tool": "speech.dialogue", "operation": "speech.dialogue", "provider": self.name,
-                      "model": "mock", "kind": "audio", **usage})
+        self.record(Scene.SPEECH_DIALOGUE, kind="audio", **usage)
         return GenerationResult(
-            modality="audio", operation="speech.dialogue", provider=self.name, model="mock",
+            modality="audio", provider=self.name, model="mock",
             artifacts=artifacts, usage=usage,
             meta={"voices": req.voices(), "instruction": req.instruction, "seconds": round(secs, 3),
                   "timestamps": req.timestamps},
@@ -190,9 +187,8 @@ class MockAdapter(Adapter):
             sidecar.write_text(json.dumps(_mock_plan(req.prompt or "composition"), ensure_ascii=False, indent=2),
                                encoding="utf-8")
             artifacts.append(Artifact.from_path(sidecar, "metadata", mime="application/json", role="metadata"))
-        record_usage({"tool": "music.generate", "operation": "music.generate", "provider": self.name,
-                      "model": "mock", "kind": "audio"})
-        return GenerationResult(modality="audio", operation="music.generate", provider=self.name, model="mock",
+        self.record(derive_scene(req), kind="audio")
+        return GenerationResult(modality="audio", provider=self.name, model="mock",
                                 artifacts=artifacts, usage={},
                                 meta={"prompt": req.prompt, "from_plan": req.composition_plan is not None,
                                       "seconds": round(secs, 3), "detailed": req.detailed})
@@ -202,9 +198,8 @@ class MockAdapter(Adapter):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(_mock_plan(req.prompt, req.duration_ms), ensure_ascii=False, indent=2),
                        encoding="utf-8")
-        record_usage({"tool": "music.plan", "operation": "music.plan", "provider": self.name,
-                      "model": "mock", "kind": "plan"})
-        return GenerationResult(modality="audio", operation="music.plan", provider=self.name, model="mock",
+        self.record(Scene.MUSIC_PLAN, kind="plan")
+        return GenerationResult(modality="audio", provider=self.name, model="mock",
                                 artifacts=[Artifact.from_path(out, "plan", mime="application/json")],
                                 usage={}, meta={"prompt": req.prompt, "free": True})
 
@@ -212,9 +207,8 @@ class MockAdapter(Adapter):
         out = Path(req.output)
         secs = req.duration_seconds if req.duration_seconds is not None else min(2.0, max(0.5, len(req.text) / 20))
         audio.write_tone_wav(out, secs, freq=180.0)
-        record_usage({"tool": "sound.generate", "operation": "sound.generate", "provider": self.name,
-                      "model": "mock", "kind": "audio", "characters": len(req.text)})
-        return GenerationResult(modality="audio", operation="sound.generate", provider=self.name, model="mock",
+        self.record(Scene.SOUND_TEXT_TO_SOUND, kind="audio", characters=len(req.text))
+        return GenerationResult(modality="audio", provider=self.name, model="mock",
                                 artifacts=[Artifact.from_path(out, "audio", mime="audio/wav")],
                                 usage={"characters": len(req.text)}, meta={"text": req.text, "seconds": round(secs, 3)})
 
@@ -274,7 +268,7 @@ def _ref_tag(req: VideoRequest) -> str:
 def _encode_job(req: VideoRequest) -> str:
     payload = {"prompt": req.prompt, "duration": req.duration, "seed": req.seed,
                "geometry": req.geometry.as_dict() if req.geometry else {},
-               "operation": req.operation.value, "return_last_frame": req.return_last_frame}
+               "return_last_frame": req.return_last_frame}
     return "mock-" + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
 
 

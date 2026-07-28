@@ -2,8 +2,19 @@
 
 Every command emits exactly one JSON object on stdout. Success is a
 :class:`GenerationResult`; an async submit is a :class:`JobHandle`; a poll is a
-:class:`JobStatus`. Legacy keys (``path``, ``extra_paths``, ``bytes``) are kept
-alongside the new ``artifacts[]`` for one release so existing Skills keep working.
+:class:`JobStatus`.
+
+**Every produced file is an entry in ``artifacts[]``** — there is no second, flatter
+way to say the same thing. The pre-release shapes carried ``path``/``bytes``/
+``extra_paths``/``kind`` alongside it, which meant a consumer could read the primary
+artifact two ways and the extras only one, and a caller that took the short path
+silently ignored every artifact after the first (``--count 3``, a timestamps sidecar,
+a returned last frame). One list, always.
+
+What produced a result is recorded in ``meta`` — ``meta.binding`` and ``meta.scene``,
+stamped by :func:`media_ai.cli.common.stamp`. The scene is not restated as a
+top-level field: only the CLI derives it, and a value an adapter has to repeat is a
+value an adapter can get wrong.
 """
 
 from __future__ import annotations
@@ -34,7 +45,6 @@ class Artifact:
 @dataclass
 class GenerationResult:
     modality: str
-    operation: str
     provider: str
     model: str | None
     artifacts: list[Artifact]
@@ -45,20 +55,13 @@ class GenerationResult:
         return self.artifacts[0]
 
     def to_dict(self) -> dict:
-        primary = self.artifacts[0] if self.artifacts else None
         return {
             "ok": True,
             "schema_version": SCHEMA_VERSION,
             "modality": self.modality,
-            "operation": self.operation,
             "provider": self.provider,
             "model": self.model,
             "artifacts": [a.to_dict() for a in self.artifacts],
-            # --- compatibility aliases (one release) ---
-            "kind": self.modality,
-            "path": primary.path if primary else None,
-            "bytes": primary.bytes if primary else 0,
-            "extra_paths": [a.path for a in self.artifacts[1:]],
             "usage": self.usage,
             "meta": self.meta,
         }
@@ -89,12 +92,10 @@ class JobHandle:
             "ok": True,
             "schema_version": SCHEMA_VERSION,
             "status": self.status,
-            "kind": self.modality,
             "modality": self.modality,
             "provider": self.provider,
             "model": self.model,
             "job": job,
-            "task_id": self.id,  # compat alias
             "output": self.output,
             "poll": f"media-ai job query {target} --id {self.id} --output {self.output}",
             "meta": self.meta,
@@ -126,8 +127,8 @@ class JobStatus:
         }
         if self.result is not None:
             rd = self.result.to_dict()
-            out.update({"kind": rd["kind"], "path": rd["path"], "bytes": rd["bytes"], "artifacts": rd["artifacts"],
-                        "extra_paths": rd["extra_paths"], "usage": rd["usage"], "meta": rd["meta"]})
+            out.update({"modality": rd["modality"], "artifacts": rd["artifacts"],
+                        "usage": rd["usage"], "meta": rd["meta"]})
         if self.raw:
             out["raw"] = self.raw
         return out

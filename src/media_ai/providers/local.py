@@ -26,8 +26,9 @@ class LocalAdapter(Adapter):
         from ..media import ffmpeg
 
         out = ffmpeg.concat_clips(inputs, Path(output), w=width, h=height)
+        self.record(Scene.VIDEO_CONCAT, kind="video", clips=len(inputs))
         return GenerationResult(
-            modality="video", operation="video.concat", provider=self.name, model="ffmpeg",
+            modality="video", provider=self.name, model="ffmpeg",
             artifacts=[Artifact.from_path(out, "video", mime="video/mp4")],
             usage={}, meta={"clips": len(inputs)},
         )

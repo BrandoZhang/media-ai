@@ -6,22 +6,22 @@ that, and this module answers both: *what can be picked* — each skill's blurb,
 install tier, and what it drags in with it, read from the skill's own frontmatter —
 and *what a pick costs*, i.e. the set of providers then worth asking about.
 
-The provider mapping is **derived, never hardcoded** — :data:`~media_ai.core.types.Operation`
-and each model's ``ModelCapabilities`` are the single source of truth (the same rule
-``media-ai capabilities`` follows), so a new provider or a new model shows up here
-without touching this file.
+The mapping is **derived, never hardcoded** — a skill's name gives its command
+group, the group gives its :class:`~media_ai.core.scene.Scene` set, and the manifests
+say which bindings serve those scenes. So a new binding appears in setup without
+touching this file, which is the same rule ``media-ai capabilities`` follows.
 
 Two consequences fall out of deriving it, both load-bearing for the wizard's size:
 
-- A skill maps to providers by **union, not product**. Credentials live per provider
-  in one flat namespace, so picking image + video + speech asks for four keys, not
-  3x2x2 combinations. Four is also the ceiling: it is how many credentialed
-  providers exist.
-- Skills with no matching operation contribute nothing. ``media-ai-concat`` runs on
-  local ffmpeg, ``media-ai-capabilities``/``-usage`` are offline, ``media-ai-shared``
-  is documentation, and ``media-ai-job`` polls a job some *other* skill created — so
-  none of them widens the credential ask. That falls out of the derivation rather
-  than needing a maintained exclusion list.
+- A skill maps to bindings by **union, not product**. Picking image + video + speech
+  asks about every binding serving any of those scenes, once each — not once per
+  combination.
+- Skills driving no scene contribute nothing. ``media-ai-capabilities``/``-usage``
+  are offline, ``media-ai-shared`` is documentation, and ``media-ai-job`` polls a job
+  some *other* skill created — so none of them widens the credential ask. That falls
+  out of the derivation rather than needing a maintained exclusion list. So does the
+  free local backend: ``video.concat`` is served by a binding with
+  ``auth.kind = "none"``, and nothing with nothing to ask gets asked about.
 """
 
 from __future__ import annotations

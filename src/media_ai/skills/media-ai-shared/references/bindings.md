@@ -45,7 +45,7 @@ Everything declared but not configured here, each with the command that adds it:
 ## What does one accept?
 
 ```bash
-media-ai capabilities --binding volc-ark/seedream-5.0-pro --pretty
+media-ai capabilities --binding <provider>/<model> --pretty
 media-ai capabilities --scene video.extend        # who serves this at all?
 media-ai capabilities --configured                # only what is reachable now
 ```

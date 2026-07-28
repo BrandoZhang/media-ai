@@ -45,7 +45,7 @@ you pass decides the scene** — no flag selects one:
 > backends also require the continue-from clip to be a URI they produced earlier, not
 > a local file.
 
-`media-ai concat` joins finished clips locally — see `references/concat.md`.
+`media-ai video concat` joins finished clips locally — see `references/concat.md`.
 
 ## Ask before you submit
 
@@ -65,8 +65,8 @@ media-ai capabilities --binding <id> --pretty        # what does that one accept
   `poll` command. Finalize with the `media-ai-job` skill (`media-ai job query --output`).
 
 ```json
-{"status":"queued","job":{"binding":"gemini/veo-3.1","id":"<op>"},
- "poll":"media-ai job query --binding gemini/veo-3.1 --id <op> --output clip.mp4"}
+{"status":"queued","job":{"binding":"<provider>/<model>","id":"<job-id>"},
+ "poll":"media-ai job query --binding <provider>/<model> --id <job-id> --output clip.mp4"}
 ```
 
 > **Run the `poll` string verbatim** — it names the binding that submitted the job,
@@ -110,14 +110,15 @@ media-ai video generate \
 media-ai video generate --first-frame hero.png --prompt "she turns and smiles" \
     --resolution 1080p --duration 6 --audio true --wait false --output hero.mp4
 
-# references → video, on a binding you name
-media-ai video generate --binding volc-ark/seedance-2.0 \
+# references → video, on a binding you name (see `media-ai capabilities --scene
+# video.reference_to_video` for which ones serve it)
+media-ai video generate --binding <provider>/<model> \
     --prompt "keep this character in a neon night market" \
     --reference-image '["char1.png","char2.png"]' \
     --resolution 720p --duration 5 --output market.mp4
 
 # join the finished shots
-media-ai concat --inputs '["s1.mp4","s2.mp4","s3.mp4"]' --output film.mp4
+media-ai video concat --inputs '["s1.mp4","s2.mp4","s3.mp4"]' --output film.mp4
 ```
 
 ## References

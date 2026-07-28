@@ -19,14 +19,12 @@ import base64
 import json
 from pathlib import Path
 
-from ..core.types import Operation
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
-from ..core.scene import Scene
+from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult
 from ..core.types import ImageRequest
-from ..core.usage import record_usage
 from ._base import HttpAdapter
 
 # GPT Image accepts a fixed size enum on the pre-gpt-image-2 models; gpt-image-2
@@ -112,7 +110,8 @@ class OpenAIAdapter(HttpAdapter):
         # a caller must never be able to send a request for something discovery says
         # is gone.
         client, headers = self._prepare()
-        if req.operation == Operation.IMAGE_EDIT or req.references:
+        scene = derive_scene(req)
+        if req.references:
             data = self._edit(client, headers, model, req)
         else:
             data = self._generate(client, headers, model, req)
@@ -129,16 +128,15 @@ class OpenAIAdapter(HttpAdapter):
         for i, it in enumerate(items[1:], start=2):
             artifacts.append(self._save(it, out.with_name(f"{out.stem}_{i}{out.suffix}"), fmt, role="group"))
         usage = data.get("usage") or {}
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": model, "kind": "image", "generated_images": len(items),
-                      "input_tokens": usage.get("input_tokens", 0),
-                      "output_tokens": usage.get("output_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        self.record(scene, model=model, kind="image", generated_images=len(items),
+                    input_tokens=usage.get("input_tokens", 0), output_tokens=usage.get("output_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0))
         meta = {"prompt": req.prompt, "size": data.get("size") or self._size(model, req)}
         # Surface the settings the API echoed back (what it actually did) for traceability.
         for k in ("output_format", "quality", "background", "created"):
             if data.get(k) is not None:
                 meta[k] = data[k]
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=model,
+        return GenerationResult(modality="image", provider=self.name, model=model,
                                 artifacts=artifacts, usage=usage, meta=meta)
 
     def _common_fields(self, model: str, req: ImageRequest) -> dict:

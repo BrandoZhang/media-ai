@@ -8,7 +8,7 @@ from pathlib import Path
 from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..core.types import ImageRequest, Operation
+from ..core.types import ImageRequest
 from . import common
 
 
@@ -31,18 +31,22 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai image", description="Generate or edit an image.")
     sub = ap.add_subparsers(dest="op", required=True)
     _add_common(sub.add_parser("generate", help="text (+optional references) -> image"))
-    edit = sub.add_parser("edit", help="reference image(s) -> image")
+    edit = sub.add_parser("edit", help="reference image(s) -> image; --reference is required")
     _add_common(edit)
     return ap
 
 
 def _do(args) -> object:
-    op = Operation.IMAGE_EDIT if args.op == "edit" else Operation.IMAGE_GENERATE
     refs = common.parse_refs(args.reference, "reference_image")
-    if op == Operation.IMAGE_EDIT and not refs:
-        raise MediaError("image edit requires at least one --reference", category=ErrorCategory.CLI)
+    # `edit` is `generate` with the reference made mandatory. It runs the same scene
+    # (`image.image_to_image`, derived from the references like every other scene) and
+    # exists only to catch the intent it declares: a caller that meant to transform an
+    # image and forgot the input gets an error instead of a brand-new one from text.
+    if args.op == "edit" and not refs:
+        raise MediaError("image edit requires at least one --reference", category=ErrorCategory.CLI,
+                         code="missing_reference", hint="add --reference <path>, or use `image generate` to make a new image")
     req = ImageRequest(
-        prompt=args.prompt, output=Path(args.output), operation=op, references=refs,
+        prompt=args.prompt, output=Path(args.output), references=refs,
         geometry=common.parse_geometry(args), count=args.count, seed=args.seed,
         negative_prompt=args.negative_prompt, background=args.background, quality=args.quality,
         output_format=args.format, options=common.parse_options(args.option),

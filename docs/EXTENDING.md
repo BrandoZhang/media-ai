@@ -63,7 +63,7 @@ Two rules for the data itself:
 Add a manifest and an `Adapter`:
 
 ```python
-from media_ai import Adapter, Artifact, GenerationResult, Scene
+from media_ai import Adapter, Artifact, GenerationResult, Scene, derive_scene
 
 class AcmeAdapter(Adapter):
     def supported_scenes(self):
@@ -72,8 +72,8 @@ class AcmeAdapter(Adapter):
     def generate_image(self, req):
         client, headers = self._prepare()          # HttpAdapter only
         ...
-        return GenerationResult(modality="image", operation=req.operation.value,
-                                provider=self.name, model=req.model,
+        self.record(derive_scene(req), kind="image", total_tokens=0)   # usage ledger
+        return GenerationResult(modality="image", provider=self.name, model=req.model,
                                 artifacts=[Artifact.from_path(req.output, "image")],
                                 usage={}, meta={})
 ```
@@ -87,6 +87,7 @@ The adapter is constructed from a `ResolvedBinding` and nothing else:
 | declared limits | `self.constraints` |
 | a per-binding knob | `self.option("poll_interval", 5)` |
 | the credential | `self.credential()` — resolved per call, revealed only in the request builder |
+| the usage ledger | `self.record(scene, kind=…, total_tokens=…)` — binding/provider/model filled in for you |
 
 **Do not read the environment.** A binding's behaviour must be fully described by the
 config entry that names it. Subclass `HttpAdapter` for REST (auth headers come from

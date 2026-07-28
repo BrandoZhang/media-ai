@@ -13,7 +13,6 @@ from .types import (
     JobRef,
     MediaRef,
     Modality,
-    Operation,
     VideoRequest,
 )
 from .validate import UnsupportedPolicy, validate_request
@@ -28,7 +27,6 @@ __all__ = [
     "ProviderSpec",
     "Constraints",
     "Modality",
-    "Operation",
     "MediaRef",
     "GeometrySpec",
     "ImageRequest",

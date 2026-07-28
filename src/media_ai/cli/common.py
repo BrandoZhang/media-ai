@@ -62,17 +62,23 @@ def bind(args, req):
     return build_adapter(rb), rb, scene
 
 
-def stamp(result, rb, scene):
+def stamp(result, rb, scene=None):
     """Record which binding ran and what it was asked for, in the result's ``meta``.
 
     An agent that keeps the JSON can answer "what actually produced this?" from the
     artifact alone — which matters most exactly when the CLI chose the binding
     itself, from the scene default.
+
+    ``scene`` is ``None`` for ``job query``, which finalizes work submitted by an
+    earlier process: the binding is named on the command line, but the inputs that
+    implied the scene are gone. The key is then left absent rather than filled with a
+    guess.
     """
     meta = getattr(result, "meta", None)
     if isinstance(meta, dict):
         meta.setdefault("binding", rb.id)
-        meta.setdefault("scene", scene.value)
+        if scene is not None:
+            meta.setdefault("scene", scene.value)
     if hasattr(result, "binding") and getattr(result, "binding", None) is None:
         result.binding = rb.id  # a JobHandle's poll command has to name it
     return result

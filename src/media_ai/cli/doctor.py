@@ -229,7 +229,7 @@ def _diagnose(args) -> dict:
     status = max((c["status"] for c in checks), key=lambda s: _RANK[s], default="ok")
     _print(checks, status)
     return {
-        "ok": True, "schema_version": SCHEMA_VERSION, "operation": "doctor",
+        "ok": True, "schema_version": SCHEMA_VERSION, "command": "doctor",
         "status": status, "checks": checks,
     }
 

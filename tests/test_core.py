@@ -238,18 +238,20 @@ def test_the_error_names_the_binding_and_how_to_ask_what_it_supports():
 def test_generation_result_contract_keys(tmp_path):
     p = tmp_path / "a.png"
     p.write_bytes(b"12345")
-    r = GenerationResult(modality="image", operation="image.generate", provider="mock", model="mock",
+    r = GenerationResult(modality="image", provider="mock", model="mock",
                          artifacts=[Artifact.from_path(p, "image", mime="image/png")], usage={"total_tokens": 3})
     d = r.to_dict()
     assert d["ok"] and d["schema_version"] >= 1
-    assert d["path"] == str(p) and d["bytes"] == 5  # compat aliases
-    assert d["artifacts"][0]["mime"] == "image/png"
+    assert d["artifacts"] == [{"path": str(p), "kind": "image", "mime": "image/png", "bytes": 5, "role": None}]
+    # Every produced file is in artifacts[] and nowhere else: a flat `path` alias let a
+    # consumer read the first artifact two ways and silently miss the rest.
+    assert not {"path", "bytes", "extra_paths", "kind", "operation"} & set(d)
 
 
 def test_job_handle_has_poll_hint():
     d = JobHandle(provider="volc", model="m", id="task-1", output="/o.mp4").to_dict()
     assert d["status"] == "queued" and d["job"]["id"] == "task-1"
-    assert "media-ai job query" in d["poll"] and d["task_id"] == "task-1"
+    assert "media-ai job query" in d["poll"] and "task_id" not in d
 
 
 # --------------------------------------------------------------------------
@@ -258,22 +260,26 @@ def test_job_handle_has_poll_hint():
 
 
 def test_record_and_summarize(_ledger):
-    usage.record_usage({"operation": "image.generate", "provider": "mock", "generated_images": 2, "total_tokens": 100})
-    usage.record_usage({"operation": "video.generate", "provider": "mock", "seconds": 3, "total_tokens": 50})
-    usage.record_usage({"operation": "speech.generate", "provider": "gemini", "characters": 42, "total_tokens": 20})
+    usage.record_usage({"binding": "mock/mock", "scene": "image.text_to_image", "generated_images": 2,
+                        "total_tokens": 100})
+    usage.record_usage({"binding": "mock/mock", "scene": "video.text_to_video", "seconds": 3, "total_tokens": 50})
+    usage.record_usage({"binding": "gemini/gemini-tts", "scene": "speech.text_to_speech", "characters": 42,
+                        "total_tokens": 20})
     totals = usage.summarize_usage()
     assert totals["calls"] == 3 and totals["total_tokens"] == 170
     assert totals["images_generated"] == 2 and totals["video_seconds"] == 3
     assert totals["speech_characters"] == 42
-    assert totals["by_provider"] == {"mock": 150, "gemini": 20}
-    assert totals["by_tool"]["speech.generate"] == 20
+    assert totals["by_binding"] == {"mock/mock": 150, "gemini/gemini-tts": 20}
+    assert totals["by_scene"]["speech.text_to_speech"] == 20
 
 
-def test_summarize_tolerates_legacy_backend_key(tmp_path, monkeypatch):
+def test_summarize_buckets_a_scene_less_line_rather_than_dropping_it(tmp_path, monkeypatch):
+    # `job query` finalizes work whose scene is unknowable by then; the cost is still real.
     log = tmp_path / "u.jsonl"
-    log.write_text(json.dumps({"tool": "image.generate", "backend": "volc", "total_tokens": 7}) + "\n")
+    log.write_text(json.dumps({"binding": "volc-ark/seedance-2.0", "total_tokens": 7}) + "\n")
     monkeypatch.setenv("MEDIA_USAGE_LOG", str(log))
-    assert usage.summarize_usage()["by_provider"] == {"volc": 7}
+    totals = usage.summarize_usage()
+    assert totals["by_binding"] == {"volc-ark/seedance-2.0": 7} and totals["by_scene"] == {"?": 7}
 
 
 def test_record_usage_never_raises(monkeypatch):

@@ -20,17 +20,6 @@ class Modality(str, Enum):
     AUDIO = "audio"
 
 
-class Operation(str, Enum):
-    IMAGE_GENERATE = "image.generate"
-    IMAGE_EDIT = "image.edit"
-    VIDEO_GENERATE = "video.generate"
-    SPEECH_GENERATE = "speech.generate"
-    SPEECH_DIALOGUE = "speech.dialogue"
-    MUSIC_GENERATE = "music.generate"
-    MUSIC_PLAN = "music.plan"
-    SOUND_GENERATE = "sound.generate"
-
-
 _REMOTE_PREFIXES = ("http://", "https://", "data:", "asset://", "gs://")
 
 
@@ -82,7 +71,6 @@ class GeometrySpec:
 class ImageRequest:
     prompt: str
     output: Path
-    operation: Operation = Operation.IMAGE_GENERATE
     references: list[MediaRef] = field(default_factory=list)  # i2i / edit inputs
     geometry: GeometrySpec | None = None
     count: int = 1  # n / sampleCount / candidateCount
@@ -103,7 +91,6 @@ class ImageRequest:
 class VideoRequest:
     prompt: str
     output: Path
-    operation: Operation = Operation.VIDEO_GENERATE
     first_frame: MediaRef | None = None
     last_frame: MediaRef | None = None
     reference_images: list[MediaRef] = field(default_factory=list)
@@ -138,7 +125,6 @@ class SpeechRequest:
 
     text: str
     output: Path
-    operation: Operation = Operation.SPEECH_GENERATE
     voice: str | None = None  # provider voice id (falls back to a provider default)
     output_format: str | None = None  # e.g. mp3_44100_128 (provider wire format)
     language_code: str | None = None  # ISO 639-1
@@ -171,7 +157,6 @@ class DialogueRequest:
     turns: list[DialogueTurn]
     output: Path
     cast: dict[str, str] = field(default_factory=dict)  # speaker name -> voice id
-    operation: Operation = Operation.SPEECH_DIALOGUE
     instruction: str | None = None  # global director note (provider-gated)
     output_format: str | None = None
     language_code: str | None = None
@@ -207,7 +192,6 @@ class MusicRequest:
     output: Path
     prompt: str | None = None
     composition_plan: dict | None = None  # loaded from a --plan JSON file
-    operation: Operation = Operation.MUSIC_GENERATE
     duration_ms: int | None = None  # song length (prompt mode only)
     output_format: str | None = None  # e.g. mp3_44100_128, or "auto"
     seed: int | None = None  # plan mode only
@@ -227,7 +211,6 @@ class MusicPlanRequest:
 
     prompt: str
     output: Path  # the plan JSON is written here
-    operation: Operation = Operation.MUSIC_PLAN
     duration_ms: int | None = None
     source_plan: dict | None = None  # optional source composition plan to refine
     model: str | None = None
@@ -245,7 +228,6 @@ class SoundEffectRequest:
 
     text: str
     output: Path
-    operation: Operation = Operation.SOUND_GENERATE
     duration_seconds: float | None = None
     output_format: str | None = None
     model: str | None = None

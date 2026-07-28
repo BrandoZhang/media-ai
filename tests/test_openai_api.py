@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef, Operation
+from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef
 from conftest import adapter_for
 
 
@@ -140,7 +140,6 @@ def test_edit_uses_multipart_with_reference_images(fake_provider, tmp_path):
     ref.write_bytes(PNG_1x1_BYTES)
     prov, fake = fake_provider("openai/gpt-image-2", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
     prov.generate_image(ImageRequest(prompt="make it night", output=tmp_path / "o.png",
-                                     operation=Operation.IMAGE_EDIT,
                                      references=[MediaRef(str(ref), "reference_image")]))
     call = fake.calls[0]
     assert call["path"] == "/images/edits" and call["multipart"]

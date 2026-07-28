@@ -4,8 +4,11 @@ Image generation is synchronous (``/images/generations``); video generation is a
 async task (``/contents/generations/tasks`` create → poll → optional cancel).
 Migrated from the original ``VolcBackend`` onto the provider-agnostic core.
 
-Model IDs are account-specific and must be enabled in the console; set them via
-config/env (``ARK_IMAGE_MODEL`` / ``ARK_VIDEO_MODEL``) or per call with ``--model``.
+Ark model ids are account-specific and must be enabled in the console, and some
+accounts address a model by an opaque endpoint id (``ep-…``) instead. Both are one
+mechanism now: a config binding that ``extends`` a shipped one and overrides
+``model_id``, so the id lives beside the credential that can reach it rather than in
+an environment variable the adapter reads behind the config's back.
 Refs: image https://www.volcengine.com/docs/82379/1541523 ; video create
 https://www.volcengine.com/docs/82379/1520757 ; query 1521309 ; cancel 1521720.
 """
@@ -21,9 +24,8 @@ from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import normalize_ratio
 from ..core.mediaref import to_data_uri
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.scene import Scene
+from ..core.scene import Scene, derive_scene
 from ..core.types import ImageRequest, JobRef, VideoRequest
-from ..core.usage import record_usage
 from ._base import HttpAdapter
 from ._volc_ark_errors import classify, parse_error_body, task_failure_error, to_media_error
 
@@ -104,12 +106,11 @@ class VolcArkAdapter(HttpAdapter):
             artifacts.append(self._save_image(it, p, client, headers, "image", role="group"))
         usage = data.get("usage") or {}
         used_model = data.get("model") or model_id
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": used_model, "kind": "image",
-                      "generated_images": usage.get("generated_images", len(items)),
-                      "output_tokens": usage.get("output_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        self.record(derive_scene(req), model=used_model, kind="image",
+                    generated_images=usage.get("generated_images", len(items)),
+                    output_tokens=usage.get("output_tokens", 0), total_tokens=usage.get("total_tokens", 0))
         return GenerationResult(
-            modality="image", operation=req.operation.value, provider=self.name, model=used_model,
+            modality="image", provider=self.name, model=used_model,
             artifacts=artifacts, usage=usage, meta={"prompt": req.prompt, "size": body["size"]},
         )
 
@@ -173,9 +174,10 @@ class VolcArkAdapter(HttpAdapter):
         task_id = self._create_task(req, client, headers)
         if not req.wait:
             return JobHandle(provider=self.name, model=req.model or self.model_id, id=task_id, output=str(req.output))
-        return self._poll(task_id, Path(req.output), client, headers, operation=req.operation.value)
+        return self._poll(task_id, Path(req.output), client, headers, scene=derive_scene(req))
 
-    def _finalize(self, res: dict, out: Path, client, headers, *, task_id: str, operation: str) -> GenerationResult:
+    def _finalize(self, res: dict, out: Path, client, headers, *, task_id: str,
+                  scene: Scene | None) -> GenerationResult:
         content = res.get("content") or {}
         if not content.get("video_url"):
             raise MediaError(f"Ark task {task_id} succeeded but returned no video_url",
@@ -188,11 +190,11 @@ class VolcArkAdapter(HttpAdapter):
             artifacts.append(Artifact.from_path(lf, "frame", mime="image/png", role="last_frame"))
         usage = res.get("usage") or {}
         used_model = res.get("model") or self.model_id
-        record_usage({"tool": operation, "operation": operation, "provider": self.name, "model": used_model,
-                      "kind": "video", "seconds": res.get("duration", 0),
-                      "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})
+        self.record(scene, model=used_model, kind="video", seconds=res.get("duration", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0))
         return GenerationResult(
-            modality="video", operation=operation, provider=self.name, model=used_model, artifacts=artifacts,
+            modality="video", provider=self.name, model=used_model, artifacts=artifacts,
             usage=usage, meta={"task_id": task_id, "seconds": res.get("duration"), "resolution": res.get("resolution")},
         )
 
@@ -202,7 +204,7 @@ class VolcArkAdapter(HttpAdapter):
         except Exception:  # noqa: BLE001 - cancellation is best-effort
             pass
 
-    def _poll(self, task_id: str, out: Path, client, headers, *, operation: str) -> GenerationResult:
+    def _poll(self, task_id: str, out: Path, client, headers, *, scene: Scene | None) -> GenerationResult:
         # The harness may kill this (blocking) tool at its action_timeout; cancel
         # the billed task on signal/timeout so a killed wait doesn't orphan it.
         def _on_signal(signum, _frame):
@@ -222,7 +224,7 @@ class VolcArkAdapter(HttpAdapter):
                 res = client.request_json("GET", f"/contents/generations/tasks/{task_id}", headers=headers)
                 status = str(res.get("status", "")).lower()
                 if status == "succeeded":
-                    return self._finalize(res, out, client, headers, task_id=task_id, operation=operation)
+                    return self._finalize(res, out, client, headers, task_id=task_id, scene=scene)
                 if status in _TERMINAL:
                     raise task_failure_error(res, self.name, task_id)
                 time.sleep(self.poll_interval)
@@ -247,7 +249,7 @@ class VolcArkAdapter(HttpAdapter):
             raise task_failure_error(res, self.name, ref.id)
         result = None
         if output is not None and status == "succeeded":
-            result = self._finalize(res, Path(output), client, headers, task_id=ref.id, operation="video.generate")
+            result = self._finalize(res, Path(output), client, headers, task_id=ref.id, scene=None)
         return JobStatus(provider=self.name, model=res.get("model"), id=ref.id, status=status or "unknown",
                          op="query", result=result, raw={k: v for k, v in res.items() if k in ("id", "usage", "error")})
 

@@ -40,7 +40,7 @@ def test_speech_generate_body_and_path(fake_provider, tmp_path):
     assert body["previous_text"] == "Prev."
     assert Path(res.primary().path).read_bytes() == b"ID3-fake-mp3-bytes"
     assert res.usage["characters"] == len("Hello there.")
-    assert res.modality == "audio" and res.operation == "speech.generate"
+    assert res.modality == "audio"
 
 
 def test_speech_defaults_to_provider_voice(fake_provider, tmp_path):
@@ -84,7 +84,6 @@ def test_dialogue_body_and_path(fake_provider, tmp_path):
                               {"text": "Who is there?", "voice_id": "voiceB"}]
     assert body["model_id"] == "eleven_v3" and body["settings"] == {"stability": 0.6}
     assert Path(res.primary().path).read_bytes() == b"dialogue-mp3"
-    assert res.operation == "speech.dialogue"
 
 
 def test_dialogue_and_speech_default_to_different_bindings(configured, tmp_path):
@@ -205,7 +204,6 @@ def test_music_generate_from_prompt(fake_provider, tmp_path):
     assert body == {"model_id": "music_v2", "prompt": "lofi hip hop beat",
                     "music_length_ms": 8000, "force_instrumental": True}
     assert Path(res.primary().path).read_bytes() == b"ID3-music"
-    assert res.operation == "music.generate"
 
 
 def test_music_generate_from_plan(fake_provider, tmp_path):

@@ -129,3 +129,30 @@ def test_declared_video_bindings_are_asynchronous(binding_id):
     )
     if generates_video:
         assert b.constraints.video.is_async, f"{binding_id} generates video but declares itself synchronous"
+
+
+@pytest.mark.parametrize("binding_id", BINDING_IDS)
+def test_a_usage_line_always_names_its_binding(binding_id, tmp_path, monkeypatch):
+    """The ledger's whole job is answering "what did this cost, and through what?".
+
+    A line naming only a provider cannot be attributed: one provider serves several
+    bindings at different prices. Filling the id in `Adapter.record` rather than at
+    each call site is what makes that unmissable, and this asserts no adapter can
+    route around it.
+    """
+    import json
+
+    from media_ai.core.scene import Scene as _Scene
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setenv("MEDIA_USAGE_LOG", str(log))
+    adapter = adapter_for(binding_id)
+    adapter.record(_Scene.IMAGE_TEXT_TO_IMAGE, kind="image", total_tokens=1)
+    adapter.record(None, kind="video")  # the job-finalize path, which cannot know one
+
+    named, unnamed = [json.loads(x) for x in log.read_text().splitlines()]
+    assert named["binding"] == binding_id and named["scene"] == "image.text_to_image"
+    assert named["provider"] == CATALOG.get(binding_id).provider
+    assert named["model"] == CATALOG.get(binding_id).model_id
+    # Absent, not guessed: a wrong scene in a cost report is worse than a missing one.
+    assert unnamed["binding"] == binding_id and "scene" not in unnamed

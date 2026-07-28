@@ -38,7 +38,10 @@ def _do(args):
     if args.op == "cancel":
         return adapter.cancel_job(ref)
     out = Path(args.output) if getattr(args, "output", None) else None
-    return adapter.get_job(ref, output=out)
+    status = adapter.get_job(ref, output=out)
+    if status.result is not None:
+        common.stamp(status.result, rb)  # no scene: the request that implied one is gone
+    return status
 
 
 def main() -> int:

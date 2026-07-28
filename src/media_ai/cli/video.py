@@ -1,8 +1,16 @@
-"""``media-ai video generate`` — provider-agnostic video generation.
+"""``media-ai video generate|concat`` — the video command group.
 
-Covers text→video, first/last-frame→video, and multimodal-reference→video via one
-normalized request. Async providers submit a task; ``--wait true`` (default) polls
-to completion, ``--wait false`` returns a JobHandle to poll with ``media-ai job``.
+``generate`` covers text→video, first/last-frame→video, multimodal-reference→video
+and extension via one normalized request. Async backends submit a task; ``--wait
+true`` (default) polls to completion, ``--wait false`` returns a JobHandle to poll
+with ``media-ai job``.
+
+``concat`` joins finished clips into one film. It sits here, under ``video``, rather
+than beside it as a top-level command: it serves ``video.concat``, one of the scenes
+the video group is defined by, and the binding that runs it (``local/ffmpeg``) is
+resolved and stamped exactly like any other. A top-level ``media-ai concat`` said the
+opposite — that joining clips is a different kind of thing from making them — which
+is also how it ended up with its own skill to keep in step.
 """
 
 from __future__ import annotations
@@ -12,7 +20,9 @@ from pathlib import Path
 
 from ..core.validate import validate_request
 from ..core.logging import get_logger
+from ..core.scene import Scene
 from ..core.types import MediaRef, VideoRequest
+from ..media import ffmpeg
 from . import common
 
 
@@ -39,10 +49,35 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--option", nargs="*", default=[])
     common.add_geometry_args(gen, resolution_help="480p|720p|1080p (provider-dependent)")
     common.add_global_args(gen)
+
+    cat = sub.add_parser("concat", help="join finished clips into one film (local ffmpeg)")
+    cat.add_argument("--inputs", required=True, nargs="+", help="ordered clip paths or a JSON array")
+    cat.add_argument("--output", required=True)
+    cat.add_argument("--width", type=int, default=ffmpeg.DEFAULT_W)
+    cat.add_argument("--height", type=int, default=ffmpeg.DEFAULT_H)
+    common.add_global_args(cat)
     return ap
 
 
 def _do(args) -> object:
+    return _concat(args) if args.op == "concat" else _generate(args)
+
+
+def _concat(args) -> object:
+    from ..core.config import load_config
+    from ..core.registry import build_adapter, catalog
+    from ..core.resolve import available_bindings, resolve
+
+    inputs = [Path(p) for p in common._listify(args.inputs)]
+    cat, config = catalog(), load_config()
+    rb = resolve(binding=args.binding, provider=args.provider, model=args.model,
+                 scene=Scene.VIDEO_CONCAT, catalog=cat, config=config)
+    rb.check_scene(Scene.VIDEO_CONCAT, available_bindings(cat, config))
+    result = build_adapter(rb).concat(inputs, Path(args.output), width=args.width, height=args.height)
+    return common.stamp(result, rb, Scene.VIDEO_CONCAT)
+
+
+def _generate(args) -> object:
     req = VideoRequest(
         prompt=args.prompt, output=Path(args.output),
         first_frame=MediaRef(args.first_frame, role="first_frame") if args.first_frame else None,

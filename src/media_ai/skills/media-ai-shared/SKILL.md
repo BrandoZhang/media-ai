@@ -28,9 +28,10 @@ metadata:
 
 ## The unit you address is a **binding**
 
-A binding is one callable `(provider, model)` pair: `volc-ark/seedance-2.0`,
-`gemini/veo-3.1`, `openai/gpt-image-2`. The same model reached through two providers
-is **two bindings**, each with its own endpoint, credential and limits.
+A binding is one callable `(provider, model)` pair, addressed as `<provider>/<model>`.
+The same model reached through two providers is **two bindings**, each with its own
+endpoint, credential, scenes and limits — so "which one am I billing?" is answered by
+the id alone. Run `media-ai bindings list` for the ones this machine has.
 
 ## Two rules that prevent most failures
 
@@ -73,9 +74,9 @@ can run verbatim, and `error.details` naming candidates or alternatives:
 ```json
 {"ok": false, "error": {
   "category": "cli", "code": "ambiguous_model",
-  "message": "model 'seedance-2.0' is served by 2 configured bindings; say which one",
-  "hint": "re-run with --binding heygen/seedance-2.0",
-  "details": {"candidates": ["heygen/seedance-2.0", "volc-ark/seedance-2.0"]}}}
+  "message": "model '<model>' is served by 2 configured bindings; say which one",
+  "hint": "re-run with --binding <provider-a>/<model>",
+  "details": {"candidates": ["<provider-a>/<model>", "<provider-b>/<model>"]}}}
 ```
 
 Full JSON shapes → `references/machine-contract.md`.

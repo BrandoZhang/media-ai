@@ -27,10 +27,9 @@ from pathlib import Path
 
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import read_bytes
-from ..core.scene import Scene
+from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, SpeechRequest, VideoRequest
-from ..core.usage import record_usage
 from ..media import ffmpeg, pillow
 from ..media.audio import write_pcm_wav
 from . import _gemini_files
@@ -124,9 +123,9 @@ class GeminiAdapter(HttpAdapter):
                                         source_mime=mime, role="group"))
         usage = data.get("usageMetadata") or {}
         used_model = data.get("modelVersion") or model  # the model that actually served the request
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": used_model, "kind": "image", "generated_images": len(images),
-                      "output_tokens": usage.get("candidatesTokenCount", 0), "total_tokens": usage.get("totalTokenCount", 0)})
+        self.record(derive_scene(req), model=used_model, kind="image", generated_images=len(images),
+                    output_tokens=usage.get("candidatesTokenCount", 0),
+                    total_tokens=usage.get("totalTokenCount", 0))
         meta: dict = {"prompt": req.prompt}
         if uploaded:
             meta["uploaded_refs"] = uploaded  # references sent via the Files API
@@ -138,7 +137,7 @@ class GeminiAdapter(HttpAdapter):
         grounding = _grounding_metadata(data)
         if grounding:
             meta["grounding"] = grounding  # search suggestions (display per ToS) + citations
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=used_model,
+        return GenerationResult(modality="image", provider=self.name, model=used_model,
                                 artifacts=artifacts, usage=usage, meta=meta)
 
     # ---- speech / dialogue (TTS via generateContent) ---------------------
@@ -146,7 +145,7 @@ class GeminiAdapter(HttpAdapter):
         model = req.model or self.model_id
         voice = req.voice or "Kore"
         speech_cfg = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-        return self._tts(model, req.text, speech_cfg, Path(req.output), "speech.generate", {"voice": voice})
+        return self._tts(model, req.text, speech_cfg, Path(req.output), Scene.SPEECH_TEXT_TO_SPEECH, {"voice": voice})
 
     def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
         if not req.turns or not req.cast:
@@ -157,10 +156,10 @@ class GeminiAdapter(HttpAdapter):
         speech_cfg = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": configs}}
         script = "\n".join(f"{t.speaker}: {t.text}" for t in req.turns)
         prompt = f"{req.instruction}\n\n{script}" if req.instruction else script
-        return self._tts(model, prompt, speech_cfg, Path(req.output), "speech.dialogue",
+        return self._tts(model, prompt, speech_cfg, Path(req.output), Scene.SPEECH_DIALOGUE,
                          {"voices": req.voices(), "instruction": req.instruction})
 
-    def _tts(self, model: str, prompt: str, speech_cfg: dict, out: Path, operation: str, meta: dict) -> GenerationResult:
+    def _tts(self, model: str, prompt: str, speech_cfg: dict, out: Path, scene: Scene, meta: dict) -> GenerationResult:
         client, headers = self._prepare()
         # TTS models produce audio only — responseModalities MUST be ["AUDIO"] (adding
         # "TEXT", as the image path does, makes the model reject the request with a 400).
@@ -174,12 +173,11 @@ class GeminiAdapter(HttpAdapter):
         write_pcm_wav(out, base64.b64decode(b64), rate=_pcm_rate(mime))  # headerless PCM -> WAV
         usage = data.get("usageMetadata") or {}
         used_model = data.get("modelVersion") or model
-        record_usage({"tool": operation, "operation": operation, "provider": self.name,
-                      "model": used_model, "kind": "audio", "characters": len(prompt),
-                      "total_tokens": usage.get("totalTokenCount", 0)})
+        self.record(scene, model=used_model, kind="audio", characters=len(prompt),
+                    total_tokens=usage.get("totalTokenCount", 0))
         if data.get("responseId"):
             meta["response_id"] = data["responseId"]
-        return GenerationResult(modality="audio", operation=operation, provider=self.name, model=used_model,
+        return GenerationResult(modality="audio", provider=self.name, model=used_model,
                                 artifacts=[Artifact.from_path(out, "audio", mime="audio/wav")], usage=usage, meta=meta)
 
     # ---- video (Veo long-running op) -------------------------------------
@@ -230,20 +228,23 @@ class GeminiAdapter(HttpAdapter):
             raise MediaError("Veo returned no operation name", category=ErrorCategory.PROVIDER, provider=self.name)
         if not req.wait:
             return JobHandle(provider=self.name, model=model, id=op_name, output=str(req.output))
-        return self._poll_operation(client, headers, op_name, Path(req.output), model, seconds=req.duration or 0)
+        return self._poll_operation(client, headers, op_name, Path(req.output), model,
+                                    seconds=req.duration or 0, scene=derive_scene(req))
 
-    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str, *, seconds: int = 0) -> GenerationResult:
+    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str, *,
+                        seconds: int = 0, scene: Scene | None = None) -> GenerationResult:
         deadline = time.monotonic() + self.poll_timeout
         while time.monotonic() < deadline:
             res = client.request_json("GET", f"/{op_name}", headers=headers)
             if res.get("done"):
-                return self._finalize_video(client, headers, op_name, out, model, res, seconds=seconds)
+                return self._finalize_video(client, headers, op_name, out, model, res,
+                                            seconds=seconds, scene=scene)
             time.sleep(self.poll_interval)
         raise MediaError(f"Veo operation {op_name} timed out after {self.poll_timeout}s",
                          category=ErrorCategory.TIMEOUT, provider=self.name)
 
     def _finalize_video(self, client, headers, op_name: str, out: Path, model: str, res: dict,
-                        *, seconds: int = 0) -> GenerationResult:
+                        *, seconds: int = 0, scene: Scene | None = None) -> GenerationResult:
         if res.get("error"):
             raise _operation_error(res["error"], op_name, self.name)
         uri = _veo_video_uri(res)
@@ -255,9 +256,8 @@ class GeminiAdapter(HttpAdapter):
         # which the requested duration would undercount). Fall back to the requested
         # duration only if the probe can't read it (missing ffmpeg / unreadable file).
         secs = int(round(ffmpeg.probe_duration(out))) or seconds
-        record_usage({"tool": "video.generate", "operation": "video.generate", "provider": self.name,
-                      "model": model, "kind": "video", "seconds": secs})
-        return GenerationResult(modality="video", operation="video.generate", provider=self.name, model=model,
+        self.record(scene, model=model, kind="video", seconds=secs)
+        return GenerationResult(modality="video", provider=self.name, model=model,
                                 artifacts=[Artifact.from_path(out, "video", mime="video/mp4")], usage={},
                                 meta={"operation": op_name, "seconds": secs})
 

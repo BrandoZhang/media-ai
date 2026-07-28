@@ -520,14 +520,17 @@ media-ai-video/
 
 ### 9.1 skill 从 10 个降到 9 个：concat 并入 video
 
-`media-ai-concat` 是 **video-only** 的：`cli/concat.py` 输出 `"modality": "video"` /
-`"operation": "video.concat"`，它自己的 SKILL.md 也写着 *"Typically the last step after generating
-per-shot clips with the `media-ai-video` skill"*。它从来就是 video 工作流的最后一步，被切成独立
-skill 是按 CLI 命令组切分的副产物。
+`media-ai-concat` 是 **video-only** 的：它服务 `video.concat`，它自己的 SKILL.md 也写着
+*"Typically the last step after generating per-shot clips with the `media-ai-video` skill"*。
+它从来就是 video 工作流的最后一步，被切成独立 skill 是按 CLI 命令组切分的副产物。
 
-**`media-ai concat` 命令本身不动**（机器契约不受影响），只是文档归属并入 `media-ai-video`，
-`media-ai-concat/` 目录删除。最大的收益不是少一个目录，是**少一次 skill 触发**：Agent 生成完
-5 段 clip，「怎么拼」就在它刚读过的那个 skill 里。
+文档归属并入 `media-ai-video`，`media-ai-concat/` 目录删除。最大的收益不是少一个目录，是**少一次
+skill 触发**：Agent 生成完 5 段 clip，「怎么拼」就在它刚读过的那个 skill 里。
+
+**命令本身也跟着搬了**（P4）：`media-ai concat` → `media-ai video concat`。P3 时以为「机器契约不受
+影响」就可以不动，但那样一来「一个 skill = 一个命令组 = 一组 scene」这条等式就断在 concat 上——
+顶层命令说「拼接和生成是两类东西」，而 scene 分类说的正相反。既然是这条等式当初把 concat 切了出去，
+就该由它把命令也收回来。
 
 **speech / music / sound 保持三个，不合并。** 三者参数几乎零交集（speech 是选角：`--voice` /
 cast / timestamps；music 是作曲：`--plan` / `--duration-ms` 3s–600s；sound 是单个音效：0.5–30s /
@@ -536,7 +539,8 @@ cast / timestamps；music 是作曲：`--plan` / `--duration-ms` 3s–600s；sou
 吸收。
 
 最终 9 个：`image` · `video`（含 concat）· `speech` · `music` · `sound` · `job` · `shared` ·
-`capabilities` · `usage`。
+`capabilities` · `usage`。其中 `job` 是 dependency 层级、`shared`/`capabilities`/`usage` 是 core，
+所以选单里真正要选的只有 5 个。
 
 ## 10. 淘汰清单（D5）
 
@@ -637,12 +641,32 @@ ratio_range = [0.0625, 16]      # [1/16, 16]
 | **P0** | `core/binding.py` + manifest schema + 加载器 + 第一批 manifest + CI 断言 | ✅ 纯新增 |
 | **P1** | `core/resolve.py` + registry 重写、CLI binding 寻址、凭据收敛为显式引用、`init`/`doctor`/`bindings`/`config` | ✅ 配置格式 breaking |
 | **P2** | adapter 接 `ResolvedBinding`、不读 env、`supported_scenes()`；校验改读 manifest constraints；删 `capabilities.py`/`modelspec.py`/`_catalog.py` | ✅ |
-| **P3** | skill 重组（能力域主入口 + binding 片段，concat 并入 video）+ 文档全面重写 | 待做 |
-| **P4** | 删淘汰模型与残余机制，清理文档 | 待做 |
+| **P3** | skill 重组（能力域主入口 + binding 片段，concat 并入 video）+ 文档全面重写 | ✅ |
+| **P4** | 收敛到单一 scene 分类、删残余机制、文档收尾 | ✅ 结果 JSON breaking |
 
 **原 P1/P3/P4 合并成了一步。** 它们通过 config 文件格式强耦合：改格式的人必须同时改读方
 （`resolve`）、写方（`init`）和检查方（`doctor`），否则中间会出现「向导写出的配置没人读」的
 状态——正是 3 号诉求要消灭的东西。硬拆只会产生一座用完就扔的桥。
+
+**P4 实际做了什么**（写下来是因为它比「清理」大）：
+
+- **`Operation` 枚举删除，`Scene` 成为唯一分类。** 留着两套分类就是留着一个会漂移的第二真相：
+  `Operation.VIDEO_GENERATE` 覆盖五个 scene，`image.generate` 与 `image.edit` 却对应同一个
+  `image.image_to_image`——同一件事既被合并又被拆分。结果 JSON 的顶层 `operation` 字段随之删除，
+  「跑的是什么」只由 `meta.scene` 回答（`stamp()` 写入，adapter 不再复述）。
+- **兼容别名删除。** `path` / `bytes` / `extra_paths` / `kind` / `task_id` 全部移除。一次调用可以
+  产出多个文件（`--count 3`、时间戳 sidecar、返回尾帧），扁平别名只暴露第一个——照它写的消费方
+  会静默丢掉其余，这比没有别名更糟。**每个产出物都在 `artifacts[]` 里，且只在那里。**
+- **usage ledger 按 binding + scene 归集。** 原先每行写两个同值字段（`tool` / `operation`）却不写
+  binding；`by_provider` 把同一 provider 下不同价位的模型加在一起，答不出「该停掉哪一个」。
+  新的 `Adapter.record()` 统一补齐 binding/provider/model，`tests/test_contract.py` 对每个 binding
+  断言这一点。`job query` 收尾那条线**不猜 scene**——字段缺席，而不是填一个错的。
+- **`media-ai concat` → `media-ai video concat`。** 它服务 `video.concat`，而「一个 skill 对应一个
+  命令组对应一组 scene」是 §9.1 的前提；顶层命令与那条前提矛盾，也正是它当初被切成独立 skill 的
+  原因。
+- **live 测试改为 binding 驱动**（`ARK_IMAGE_MODEL` 之类的 env 选模型已随重构消失）：从
+  `capabilities --configured` 读出本机可达的 binding 逐个冒烟，工作流用
+  `bindings available` 声明的 env 变量自动配置——加 binding 不需要改 CI。
 
 每阶段独立提交，`uv run pytest -q` + `ruff` 全绿才推进。测试仍然全离线（`FakeClient`）。
 
@@ -651,10 +675,10 @@ ratio_range = [0.0625, 16]      # [1/16, 16]
 - **Seedream 5.0 pro 的「多张图层」输出**、**5.0 lite 的联网搜索开关字段名**、两者的像素区间
   ——文档未给，manifest 里留空 + `notes` 标 TODO（§11.1）
 - **`optimize_prompt_mode` 的透传方式**：adapter 逐个 option 显式映射，还是做通用的
-  option→body 透传。前者安全、后者才真的「零代码接兄弟模型」。P2 决定
+  option→body 透传。前者安全、后者才真的「零代码接兄弟模型」。仍为逐个显式映射，未改
 - **内部 RPC 平台**：`transport = "rpc"` + `auth.kind = "custom"` 的口子已留；具体 adapter 在
   内部仓库实现，通过 `media_ai.bindings` 入口点注册 manifest
 - **多账号 / 多区域**：`extends` 已覆盖，无需额外设计（§4.2 用例 1）
-- **`schema_version`**：结果 JSON 形状会因 `error.code` / `error.hint` 与 `meta.scene` /
-  `meta.binding` 变化，`core/result.py` 的 `SCHEMA_VERSION` 需要 bump
+- ~~**`schema_version`**~~：已 bump 到 `2`（`error.code` / `error.hint`、`meta.scene` /
+  `meta.binding`、删顶层 `operation` 与全部兼容别名）
 - **Seedance 2.0 之外的 Volc 视频模型**：本轮不接（原「Seedance 5」是笔误）

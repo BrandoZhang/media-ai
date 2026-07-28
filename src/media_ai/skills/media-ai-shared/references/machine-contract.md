@@ -1,73 +1,75 @@
 # media-ai machine contract — full JSON shapes
 
-Every `media-ai` command prints **exactly one JSON object** on stdout (`schema_version: 1`).
+Every `media-ai` command prints **exactly one JSON object** on stdout (`schema_version: 2`).
 Parse the whole of stdout as a single JSON object (it spans multiple lines under
 `--pretty`); treat stderr as redacted human logs only. Branch on the exit code (see the
 table in `SKILL.md`) without parsing the message.
 
-## Success — `GenerationResult` (image generate/edit, waited video, audio speech/music/sound, concat)
+## Success — `GenerationResult` (image, waited video, video concat, audio speech/music/sound)
 
 ```json
 {
   "ok": true,
-  "schema_version": 1,
+  "schema_version": 2,
   "modality": "image",
-  "operation": "image.generate",
   "provider": "openai",
   "model": "gpt-image-2",
   "artifacts": [
     {"path": "out.png", "kind": "image", "mime": "image/png", "bytes": 12345, "role": null}
   ],
-  "kind": "image",              // compat alias == modality
-  "path": "out.png",            // compat alias == artifacts[0].path
-  "bytes": 12345,               // compat alias == artifacts[0].bytes
-  "extra_paths": [],            // compat alias == artifacts[1:].path
   "usage": {"total_tokens": 1290},
-  "meta": {"prompt": "..."}
+  "meta": {"prompt": "...", "binding": "openai/gpt-image-2", "scene": "image.text_to_image"}
 }
 ```
 
-- `artifacts[]` is the source of truth: each has `path`, `kind`
-  (`image|video|frame|audio|timestamps|metadata|plan`), `mime`, `bytes`, `role`. `--count N`
-  (image), `--return-last-frame` (video), or a sidecar (`--timestamps` → a `timestamps`
-  artifact, role `alignment`; music `--detailed` → a `metadata` artifact) can add more
-  than one artifact; `path`/`bytes` mirror `artifacts[0]`, `extra_paths` the rest.
-  Audio (speech/music/sound) is **synchronous** — it returns this `GenerationResult`, not
-  a `JobHandle`.
-- The `path`/`bytes`/`extra_paths`/`kind` aliases exist for one release — prefer `artifacts[]`.
+- **`artifacts[]` is where every produced file is, and the only place it is.** Each
+  entry has `path`, `kind` (`image|video|frame|audio|timestamps|metadata|plan`),
+  `mime`, `bytes` and `role`. There is no flat `path`/`bytes`/`extra_paths` beside it:
+  one call can produce several files — `--count N` (image), `--return-last-frame`
+  (video), `--timestamps` (a `timestamps` artifact, role `alignment`), music
+  `--detailed` (a `metadata` artifact) — and a short alias that showed only the first
+  made the rest easy to drop silently. Read `artifacts[0].path` for the primary file
+  and iterate for the others.
+- **`meta.binding` and `meta.scene` say what ran and what it was asked for.** Keep
+  them with the file and "what produced this?" stays answerable — which matters most
+  when you passed no binding flags and the CLI used the scene default.
+- Audio (speech/music/sound) and image are **synchronous** — they return this
+  `GenerationResult`, never a `JobHandle`.
 
 ## Async submit — `JobHandle` (`video generate --wait false`)
 
 ```json
 {
-  "ok": true, "schema_version": 1,
-  "status": "queued", "kind": "video", "modality": "video",
-  "provider": "gemini", "model": "veo-3.1-generate-preview",
-  "job": {"provider": "gemini", "model": "veo-3.1-generate-preview", "id": "<op-id>"},
-  "task_id": "<op-id>",         // compat alias == job.id
+  "ok": true, "schema_version": 2,
+  "status": "queued", "modality": "video",
+  "provider": "gemini", "model": "<wire model id>",
+  "job": {"provider": "gemini", "model": "<wire model id>", "id": "<job-id>",
+          "binding": "<provider>/<model>"},
   "output": "/tmp/run/clip.mp4",
-  "poll": "media-ai job query --binding gemini/nano-banana-2 --id <op-id> --output /tmp/run/clip.mp4",
+  "poll": "media-ai job query --binding <provider>/<model> --id <job-id> --output /tmp/run/clip.mp4",
   "meta": {}
 }
 ```
 
-> The `poll` field is a **ready-to-run command** — execute it verbatim to check
-> status and finalize. Use `job.id` + `job.provider` if you build the call yourself.
+> The `poll` field is a **ready-to-run command** — execute it verbatim to check status
+> and finalize. It names the *binding*, not just the provider, because one provider can
+> serve several bindings and only the binding identifies the job's owner.
 
 ## Poll / cancel — `JobStatus` (`job query` / `job cancel`)
 
 ```json
 {
-  "ok": true, "schema_version": 1, "op": "query",
-  "provider": "gemini", "model": "veo-3.1-generate-preview",
-  "id": "<op-id>", "status": "succeeded"
+  "ok": true, "schema_version": 2, "op": "query",
+  "provider": "gemini", "model": "<wire model id>",
+  "id": "<job-id>", "status": "succeeded"
 }
 ```
 
 `status` ∈ `queued | running | succeeded | failed | cancelled | expired`. When the
 job **finished and `--output` was given**, the object also merges the finalized
-`kind`, `path`, `artifacts`, `extra_paths`, `usage`, `meta` (the downloaded file),
-and may include a provider-specific `raw` block.
+`modality`, `artifacts`, `usage` and `meta` (the downloaded file), and may include a
+provider-specific `raw` block. `meta.scene` is absent there: the request that implied
+a scene belonged to the earlier process that submitted the job.
 
 ## Failure — error contract (any command)
 
@@ -77,10 +79,10 @@ and may include a provider-specific `raw` block.
   "error": {
     "category": "unsupported",
     "code": "unsupported",
-    "message": "background 'transparent' not supported by gpt-image-2",
+    "message": "background 'transparent' not supported by <model>",
     "retryable": false,
     "provider": "openai",
-    "model": "gpt-image-2",
+    "model": "<model>",
     "details": {"unsupported": [{"field": "background", "reason": "..."}]}
   }
 }

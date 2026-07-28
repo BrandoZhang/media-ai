@@ -1,16 +1,22 @@
-"""Live provider smoke tests — hit the REAL APIs.
+"""Live smoke tests — hit the REAL APIs.
 
 These are the regression tests to run on merge to main (or on demand) with real
-credentials. They are **double-gated** so they never run by accident and never
-fail when creds are absent:
+credentials. They are **double-gated** so they never run by accident and never fail
+when nothing is configured:
 
-  1. `MEDIA_LIVE_TESTS=1` must be set (opt in), AND
-  2. the specific provider's key must be present.
+  1. ``MEDIA_LIVE_TESTS=1`` must be set (opt in), AND
+  2. the binding under test must be reachable *on this machine* — configured in
+     ``config.toml`` with a credential that resolves.
 
-Otherwise each test **skips** (green). Configure via env / `.env` (see
-`.env.example`) and CI secrets (see `.github/workflows/live.yml`). Kept minimal
-(one small image per provider) to bound cost; the video smoke is gated again
-behind `MEDIA_LIVE_VIDEO=1` since it is slow and costlier.
+The second gate is asked of the CLI rather than of the environment. There is no list
+of provider keys here, because a key is not what makes a call possible: a **binding**
+is, and only ``media-ai capabilities --configured`` knows which ones this machine has.
+That also means these tests need no edit when a binding is added — a configured one is
+picked up, an unconfigured one skips green.
+
+Which bindings to exercise comes from the same source: every configured binding
+serving the scene under test, one small artifact each, to bound cost. The video smoke
+is gated again behind ``MEDIA_LIVE_VIDEO=1`` since it is slow and costlier.
 """
 
 from __future__ import annotations
@@ -27,13 +33,9 @@ pytestmark = pytest.mark.live
 _LIVE = os.getenv("MEDIA_LIVE_TESTS", "").lower() in {"1", "true", "yes", "on"}
 _VIDEO = os.getenv("MEDIA_LIVE_VIDEO", "").lower() in {"1", "true", "yes", "on"}
 
-
-def _has(*names: str) -> bool:
-    return all(os.getenv(n) for n in names)
-
-
-def _any(*names: str) -> bool:
-    return any(os.getenv(n) for n in names)
+#: Bindings that produce nothing real. Running a live test against `mock/mock` would
+#: pass while proving nothing, which is the one outcome worse than skipping.
+_OFFLINE = {"mock/mock", "local/ffmpeg"}
 
 
 def _cli(*args: str) -> subprocess.CompletedProcess:
@@ -44,69 +46,65 @@ def _last_json(proc: subprocess.CompletedProcess) -> dict:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
-def _smoke_image(provider: str, tmp_path) -> dict:
-    out = tmp_path / f"{provider}.png"
-    proc = _cli("image", "generate", "--provider", provider,
-                "--prompt", "a single small red circle centered on a plain white background",
-                "--output", str(out))
-    assert proc.returncode == 0, f"{provider} live image failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
+def _configured_for(scene: str) -> list[str]:
+    """Binding ids this machine can actually call for one scene, or [] when opted out."""
+    if not _LIVE:
+        return []
+    proc = _cli("capabilities", "--scene", scene, "--configured")
+    if proc.returncode != 0:
+        return []
+    return [b["binding"] for b in _last_json(proc).get("bindings", []) if b["binding"] not in _OFFLINE]
+
+
+def _params(scene: str):
+    """Parametrize over the reachable bindings, or one skip marker naming what is missing.
+
+    An empty parametrize list would silently collect *nothing*, which reads as a green
+    run that tested something. One explicitly skipped case says which scene had no
+    binding, which is the difference between "nothing to run" and "nothing ran".
+    """
+    found = _configured_for(scene)
+    if found:
+        return [pytest.param(b, id=b) for b in found]
+    reason = f"set MEDIA_LIVE_TESTS=1 and configure a binding for {scene}"
+    return [pytest.param(None, id="none-configured", marks=pytest.mark.skip(reason=reason))]
+
+
+def _assert_artifact(proc: subprocess.CompletedProcess, binding: str, out) -> dict:
+    assert proc.returncode == 0, f"{binding} failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
     res = _last_json(proc)
     assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
-    assert res["provider"] == provider
+    assert res["meta"]["binding"] == binding
     return res
 
 
-@pytest.mark.skipif(not (_LIVE and _has("OPENAI_API_KEY")),
-                    reason="set MEDIA_LIVE_TESTS=1 and OPENAI_API_KEY")
-def test_live_openai_image(tmp_path):
-    _smoke_image("openai", tmp_path)
-
-
-@pytest.mark.skipif(not (_LIVE and _any("GEMINI_API_KEY", "GOOGLE_API_KEY")),
-                    reason="set MEDIA_LIVE_TESTS=1 and GEMINI_API_KEY/GOOGLE_API_KEY")
-def test_live_gemini_image(tmp_path):
-    _smoke_image("gemini", tmp_path)
-
-
-@pytest.mark.skipif(not (_LIVE and _any("GEMINI_API_KEY", "GOOGLE_API_KEY")),
-                    reason="set MEDIA_LIVE_TESTS=1 and GEMINI_API_KEY/GOOGLE_API_KEY")
-def test_live_gemini_speech(tmp_path):
-    out = tmp_path / "gemini.wav"
-    proc = _cli("speech", "generate", "--provider", "gemini",
-                "--text", "Say cheerfully: Have a wonderful day!", "--voice", "Kore",
+@pytest.mark.parametrize("binding", _params("image.text_to_image"))
+def test_live_text_to_image(binding, tmp_path):
+    out = tmp_path / f"{binding.replace('/', '_')}.png"
+    proc = _cli("image", "generate", "--binding", binding,
+                "--prompt", "a single small red circle centered on a plain white background",
                 "--output", str(out))
-    assert proc.returncode == 0, f"gemini live speech failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
-    res = _last_json(proc)
-    assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
-    assert res["provider"] == "gemini" and res["modality"] == "audio"
+    res = _assert_artifact(proc, binding, out)
+    assert res["modality"] == "image" and res["meta"]["scene"] == "image.text_to_image"
 
 
-@pytest.mark.skipif(not (_LIVE and _any("ELEVENLABS_API_KEY", "ELEVEN_API_KEY")),
-                    reason="set MEDIA_LIVE_TESTS=1 and ELEVENLABS_API_KEY/ELEVEN_API_KEY")
-def test_live_elevenlabs_speech(tmp_path):
-    out = tmp_path / "eleven.mp3"
-    proc = _cli("speech", "generate", "--provider", "elevenlabs",
+@pytest.mark.parametrize("binding", _params("speech.text_to_speech"))
+def test_live_text_to_speech(binding, tmp_path):
+    # No --voice: each binding declares its own default, and a voice id from one
+    # account is meaningless on another.
+    out = tmp_path / f"{binding.replace('/', '_')}.wav"
+    proc = _cli("speech", "generate", "--binding", binding,
                 "--text", "The first move is what sets everything in motion.",
-                "--voice", "JBFqnCBsd6RMkjVDRZzb",  # a stable premade voice, no extra config
                 "--output", str(out))
-    assert proc.returncode == 0, f"elevenlabs live speech failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
-    res = _last_json(proc)
-    assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
-    assert res["provider"] == "elevenlabs" and res["modality"] == "audio"
+    res = _assert_artifact(proc, binding, out)
+    assert res["modality"] == "audio" and res["meta"]["scene"] == "speech.text_to_speech"
 
 
-@pytest.mark.skipif(not (_LIVE and _has("ARK_API_KEY", "ARK_IMAGE_MODEL")),
-                    reason="set MEDIA_LIVE_TESTS=1, ARK_API_KEY and ARK_IMAGE_MODEL (account-specific)")
-def test_live_volc_image(tmp_path):
-    _smoke_image("volc", tmp_path)
-
-
-@pytest.mark.skipif(not (_LIVE and _VIDEO and _has("ARK_API_KEY", "ARK_VIDEO_MODEL")),
-                    reason="set MEDIA_LIVE_TESTS=1, MEDIA_LIVE_VIDEO=1, ARK_API_KEY and ARK_VIDEO_MODEL")
-def test_live_volc_video(tmp_path):
-    out = tmp_path / "v.mp4"
-    proc = _cli("video", "generate", "--provider", "volc", "--prompt", "a calm ocean wave rolling in",
+@pytest.mark.skipif(not _VIDEO, reason="set MEDIA_LIVE_VIDEO=1 (slow and costlier than the rest)")
+@pytest.mark.parametrize("binding", _params("video.text_to_video"))
+def test_live_text_to_video(binding, tmp_path):
+    out = tmp_path / f"{binding.replace('/', '_')}.mp4"
+    proc = _cli("video", "generate", "--binding", binding, "--prompt", "a calm ocean wave rolling in",
                 "--output", str(out), "--duration", "3", "--resolution", "480p")
-    assert proc.returncode == 0, f"volc live video failed (exit {proc.returncode}): {proc.stderr or proc.stdout}"
-    res = _last_json(proc)
-    assert res["ok"] and out.is_file() and res["artifacts"][0]["bytes"] > 0
+    res = _assert_artifact(proc, binding, out)
+    assert res["modality"] == "video" and res["meta"]["scene"] == "video.text_to_video"

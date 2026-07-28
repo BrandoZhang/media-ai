@@ -3,7 +3,7 @@
 Public API for embedding and for writing **custom backends**::
 
     from media_ai import register_manifest, Adapter, HttpAdapter
-    from media_ai import Scene, Operation, Modality, Constraints
+    from media_ai import Scene, Modality, Constraints
     from media_ai import GenerationResult, Artifact, JobHandle, MediaError
 
 A backend is a **manifest** (what it can do) plus an **adapter** (how to call it).
@@ -34,7 +34,6 @@ from .core.types import (
     Modality,
     MusicPlanRequest,
     MusicRequest,
-    Operation,
     SoundEffectRequest,
     SpeechRequest,
     VideoRequest,
@@ -59,7 +58,6 @@ __all__ = [
     "UnsupportedPolicy",
     "validate_request",
     "Modality",
-    "Operation",
     "ImageRequest",
     "VideoRequest",
     "SpeechRequest",

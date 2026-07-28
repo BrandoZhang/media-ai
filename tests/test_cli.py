@@ -50,7 +50,7 @@ def env(tmp_path):
     e = dict(os.environ)
     e["MEDIA_CONFIG_FILE"] = str(config)
     e["MEDIA_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
-    for k in ("MEDIA_PROVIDER", "ARK_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+    for k in ("ARK_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
         e.pop(k, None)
     return e
 
@@ -59,7 +59,7 @@ def test_dispatcher_lists_groups():
     proc = subprocess.run([sys.executable, "-m", "media_ai"], capture_output=True, text=True)
     assert proc.returncode != 0
     listing = (proc.stdout + proc.stderr).lower()
-    for name in ("image", "video", "concat", "job", "capabilities", "bindings", "config", "usage"):
+    for name in ("image", "video", "job", "capabilities", "bindings", "config", "usage"):
         assert name in listing
 
 
@@ -78,6 +78,29 @@ def test_image_generate_contract(env, tmp_path):
     assert res["ok"] and res["modality"] == "image" and res["provider"] == "mock"
     assert res["artifacts"][0]["bytes"] > 0 and out.is_file()
     assert res["usage"]["total_tokens"] > 0
+    assert res["meta"]["binding"] == "mock/mock" and res["meta"]["scene"] == "image.text_to_image"
+
+
+def test_edit_and_generate_with_a_reference_are_the_same_scene(env, tmp_path):
+    """`edit` declares an intent; it does not select a scene.
+
+    The references do that, so both commands run `image.image_to_image`. What `edit`
+    buys is the guard: a caller who meant to transform an image and forgot the input
+    gets an error rather than an unrelated new picture.
+    """
+    ref = tmp_path / "in.png"
+    assert json_out(run(env, "image", "generate", "--prompt", "a dune", "--output", str(ref)))["ok"]
+
+    scenes = set()
+    for op in ("generate", "edit"):
+        res = json_out(run(env, "image", op, "--prompt", "low angle", "--reference", str(ref),
+                           "--output", str(tmp_path / f"{op}.png")))
+        assert res["ok"]
+        scenes.add(res["meta"]["scene"])
+    assert scenes == {"image.image_to_image"}
+
+    proc = run(env, "image", "edit", "--prompt", "low angle", "--output", str(tmp_path / "x.png"), expect=2)
+    assert json_out(proc)["error"]["code"] == "missing_reference"
 
 
 def test_full_storyboard_pipeline(env, tmp_path):
@@ -86,17 +109,17 @@ def test_full_storyboard_pipeline(env, tmp_path):
     assert ref["ok"]
     edit = json_out(run(env, "image", "edit", "--reference", str(w / "ref.png"), "--prompt", "low angle",
                         "--output", str(w / "ref2.png")))
-    assert edit["ok"] and edit["operation"] == "image.edit"
+    assert edit["ok"] and edit["meta"]["scene"] == "image.image_to_image"
     shot1 = json_out(run(env, "video", "generate", "--prompt", "turns", "--first-frame", str(w / "ref.png"),
                          "--output", str(w / "s1.mp4"), "--duration", "1", "--resolution", "480p",
                          "--return-last-frame", "true"))
-    assert shot1["extra_paths"], "return-last-frame should emit a frame"
+    assert [a for a in shot1["artifacts"] if a["role"] == "last_frame"], "return-last-frame should emit a frame"
     shot2 = json_out(run(env, "video", "generate", "--prompt", "twin suns", "--output", str(w / "s2.mp4"),
                          "--duration", "1", "--resolution", "480p"))
     assert shot2["ok"]
-    final = json_out(run(env, "concat", "--inputs", json.dumps([str(w / "s1.mp4"), str(w / "s2.mp4")]),
+    final = json_out(run(env, "video", "concat", "--inputs", json.dumps([str(w / "s1.mp4"), str(w / "s2.mp4")]),
                          "--output", str(w / "final.mp4")))
-    assert (w / "final.mp4").is_file() and final["bytes"] > 0
+    assert (w / "final.mp4").is_file() and final["artifacts"][0]["bytes"] > 0
     totals = json_out(run(env, "usage"))["totals"]
     assert totals["total_tokens"] > 0 and totals["images_generated"] >= 2 and totals["video_seconds"] >= 2
 
