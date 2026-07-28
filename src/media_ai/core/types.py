@@ -130,15 +130,6 @@ class VideoRequest:
     def modality(self) -> Modality:
         return Modality.VIDEO
 
-    def all_references(self) -> list[MediaRef]:
-        refs: list[MediaRef] = []
-        if self.first_frame:
-            refs.append(self.first_frame)
-        if self.last_frame:
-            refs.append(self.last_frame)
-        refs += self.reference_images + self.reference_videos + self.reference_audios
-        return refs
-
 
 @dataclass
 class SpeechRequest:

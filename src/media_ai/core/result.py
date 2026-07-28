@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -75,8 +75,16 @@ class JobHandle:
     modality: str = "video"
     status: str = "queued"
     meta: dict = field(default_factory=dict)
+    binding: str | None = None
+    """Which binding submitted this. The poll command has to name it: a provider may
+    serve several bindings, and `--provider gemini` alone would be ambiguous between
+    Veo, Nano Banana and Gemini TTS."""
 
     def to_dict(self) -> dict:
+        target = f"--binding {self.binding}" if self.binding else f"--provider {self.provider}"
+        job = {"provider": self.provider, "model": self.model, "id": self.id}
+        if self.binding:
+            job["binding"] = self.binding
         return {
             "ok": True,
             "schema_version": SCHEMA_VERSION,
@@ -85,10 +93,10 @@ class JobHandle:
             "modality": self.modality,
             "provider": self.provider,
             "model": self.model,
-            "job": {"provider": self.provider, "model": self.model, "id": self.id},
+            "job": job,
             "task_id": self.id,  # compat alias
             "output": self.output,
-            "poll": f"media-ai job query --provider {self.provider} --id {self.id} --output {self.output}",
+            "poll": f"media-ai job query {target} --id {self.id} --output {self.output}",
             "meta": self.meta,
         }
 

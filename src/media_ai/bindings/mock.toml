@@ -11,7 +11,7 @@
 name      = "mock"
 title     = "Mock (offline)"
 transport = "local"
-adapter   = "media_ai.providers.mock:MockAdapter"
+adapter   = "media_ai.providers.mock:MockProvider"
 
 [provider.auth]
 kind = "none"

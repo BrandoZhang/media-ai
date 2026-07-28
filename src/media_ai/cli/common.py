@@ -21,11 +21,10 @@ def bool_arg(s) -> bool:
 
 
 def add_global_args(ap: argparse.ArgumentParser) -> None:
-    ap.add_argument("--provider", default=None,
-                    help="mock|volc|openai|gemini|elevenlabs (default $MEDIA_PROVIDER or mock)")
-    ap.add_argument("--model", default=None, help="model id; may imply the provider")
-    ap.add_argument("--provider-profile", dest="provider_profile", default=None,
-                    help="named profile from ~/.config/media-ai/config.toml (or $MEDIA_PROFILE)")
+    ap.add_argument("--binding", default=None,
+                    help="<provider>/<model>, e.g. volc-ark/seedance-2.0 (see: media-ai bindings list)")
+    ap.add_argument("--provider", default=None, help="provider name; with --model it names a binding")
+    ap.add_argument("--model", default=None, help="model name; used alone only when one binding serves it")
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
     ap.add_argument("--log-level", default=None, help="debug|info|warning|error")
     ap.add_argument("--metadata-out", default=None, help="also write the result JSON to this path (secret-free)")
@@ -35,6 +34,48 @@ def add_global_args(ap: argparse.ArgumentParser) -> None:
 
 def provider_name(args) -> str | None:
     return getattr(args, "provider", None)
+
+
+def bind(args, req):
+    """Resolve the binding for ``req``, check it serves the scene, and build its adapter.
+
+    Every generation command goes through here, so the addressing rules, the scene
+    check and the ``model_id`` that reaches the wire are decided in exactly one place.
+    Returns ``(adapter, resolved_binding, scene)``.
+    """
+    from ..core.config import load_config
+    from ..core.registry import build_adapter, catalog
+    from ..core.resolve import available_bindings, resolve
+    from ..core.scene import derive_scene
+
+    scene = derive_scene(req)
+    cat, config = catalog(), load_config()
+    available = available_bindings(cat, config)
+    rb = resolve(
+        binding=getattr(args, "binding", None),
+        provider=getattr(args, "provider", None),
+        model=getattr(args, "model", None),
+        scene=scene, catalog=cat, config=config,
+    )
+    rb.check_scene(scene, available)
+    req.model = rb.model_id
+    return build_adapter(rb), rb, scene
+
+
+def stamp(result, rb, scene):
+    """Record which binding ran and what it was asked for, in the result's ``meta``.
+
+    An agent that keeps the JSON can answer "what actually produced this?" from the
+    artifact alone — which matters most exactly when the CLI chose the binding
+    itself, from the scene default.
+    """
+    meta = getattr(result, "meta", None)
+    if isinstance(meta, dict):
+        meta.setdefault("binding", rb.id)
+        meta.setdefault("scene", scene.value)
+    if hasattr(result, "binding") and getattr(result, "binding", None) is None:
+        result.binding = rb.id  # a JobHandle's poll command has to name it
+    return result
 
 
 def add_geometry_args(ap: argparse.ArgumentParser, *, resolution_help: str) -> None:

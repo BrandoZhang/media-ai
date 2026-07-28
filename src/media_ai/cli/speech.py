@@ -12,7 +12,6 @@ import argparse
 import json
 from pathlib import Path
 
-from ..core import registry
 from ..core.capabilities import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
@@ -66,12 +65,10 @@ def _do_generate(args) -> object:
         output_format=args.output_format, language_code=args.language_code, seed=args.seed,
         timestamps=args.timestamps, options=common.parse_options(args.option),
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
-                                     profile=args.provider_profile)
-    req.model = model
-    for w in validate_request(req, provider.capabilities(model, Modality.AUDIO), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, adapter.capabilities(req.model, Modality.AUDIO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_speech(req)
+    return common.stamp(adapter.generate_speech(req), rb, scene)
 
 
 def _do_dialogue(args) -> object:
@@ -89,13 +86,12 @@ def _do_dialogue(args) -> object:
         output_format=args.output_format, language_code=args.language_code, seed=args.seed,
         timestamps=args.timestamps, options=common.parse_options(args.option), model=args.model,
     )
-    # Resolve only the provider; keep the request's own model so the adapter picks its
-    # dialogue default (e.g. ElevenLabs eleven_v3), not the provider-wide speech default.
-    provider, _ = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
-                                 profile=args.provider_profile)
-    for w in validate_request(req, provider.capabilities(args.model, Modality.AUDIO), common.policy(args)):
+    # No "resolve the provider but keep the model" dance any more: dialogue is its own
+    # scene, so its default binding is a different entry from plain speech.
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, adapter.capabilities(req.model, Modality.AUDIO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_dialogue(req)
+    return common.stamp(adapter.generate_dialogue(req), rb, scene)
 
 
 def _parse_dialogue(args) -> tuple[dict, list[DialogueTurn], str | None]:

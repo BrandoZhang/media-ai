@@ -1,10 +1,13 @@
-"""``media-ai init`` — set up credentials, model defaults, and Agent Skills.
+"""``media-ai init`` — set up bindings, scene defaults, and Agent Skills.
 
 Skill-first: a user picks what they want to *do* ("generate images") and the wizard
-derives which providers that needs. The derivation is a union rather than a product —
-credentials live per provider in one flat namespace — so the credential ask is bounded
-by the number of credentialed providers no matter how many skills are selected. See
-:mod:`media_ai.cli._discovery`.
+derives which **bindings** could serve that, from the manifests. Nothing here holds a
+list of models or providers — add a binding to a manifest and it appears in the menu,
+which is what keeps setup and the code that runs afterwards describing the same
+system. See :mod:`media_ai.cli._discovery`.
+
+A binding, not a provider, is what gets a credential: three Seedream models are three
+questions. That is the price of a config that says outright which key each call uses.
 
 The machine contract still holds: every prompt is drawn on ``/dev/tty`` (see
 :mod:`media_ai.cli._prompt`) and stdout carries exactly one JSON object summarising
@@ -20,51 +23,36 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..core import registry
+from ..core.config import Config, config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
+from ..core.registry import catalog
+from ..core.scene import scenes_for_group
 from ..core.result import SCHEMA_VERSION
-from ..core.types import Operation
 from ..credentials import stores
-from ..credentials.profile import config_path
 from ..credentials.tomlwrite import atomic_write, dumps, write_private, write_public
 from . import common
 from ._announce import announcements
 from ._discovery import (
     available_skills,
-    operations_for_skill,
-    providers_for_skills,
+    bindings_for_skills,
+    group_of,
     resolve_selection,
+    scenes_for_skill,
     selectable_skills,
     skill_info,
 )
 from ._prompt import Cancelled, GoBack, Option, get_prompter, run_steps
 from ._skillstore import SKILL_DESTS, copy_skill, installed_skills, record_install, skill_is_current
 
-# Which config keys hold a provider's default model, per skill group. These are
-# genuinely separate models — Gemini's image/Veo/TTS families are disjoint, and
-# ElevenLabs splits by operation — which is why one `model` per profile can't
-# express them. Kept beside the adapters that read them.
-MODEL_SLOTS: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
-    ("gemini", "image"): (("image_model", "image generation and editing"),),
-    ("gemini", "video"): (("video_model", "video generation"),),
-    ("gemini", "speech"): (("tts_model", "text-to-speech"),),
-    ("volc", "image"): (("image_model", "image generation and editing"),),
-    ("volc", "video"): (("video_model", "video generation"),),
-    ("openai", "image"): (("image_model", "image generation and editing"),),
-    ("elevenlabs", "speech"): (("model", "text-to-speech"), ("dialogue_model", "multi-voice dialogue")),
-    ("elevenlabs", "music"): (("music_model", "music"),),
-    ("elevenlabs", "sound"): (("sound_model", "sound effects"),),
-}
-
 CREDENTIALS_HEADER = (
     "media-ai credentials — written by `media-ai init`.\n"
     "SECRETS: keep this file chmod 600; the CLI refuses to read it otherwise.\n"
-    "Each [<name>] is an account. A table named after a provider is that\n"
-    "provider's default credential."
+    "Each [<name>] is an account. The wizard names one after the binding that\n"
+    "uses it, so `which key did this binding use?` has a one-line answer."
 )
 CONFIG_HEADER = (
     "media-ai config — written by `media-ai init`.\n"
-    "NON-SECRET: safe to share. Holds routing and model defaults, never a key."
+    "NON-SECRET: safe to share. Bindings and scene defaults, never a key."
 )
 
 
@@ -123,8 +111,8 @@ def _skill_choices(skills: list[str]) -> list[Option]:
     """
     out = []
     for skill in skills:
-        ops = operations_for_skill(skill)
-        hint = "no credentials needed" if not ops else ", ".join(sorted(o.value for o in ops))
+        scenes = scenes_for_skill(skill)
+        hint = "no credentials needed" if not scenes else ", ".join(sorted(s.value for s in scenes))
         out.append(Option(label=skill, hint=hint, value=skill, detail=skill_info(skill).summary))
     return out
 
@@ -292,202 +280,151 @@ def _apply_installs(plan: list[dict], *, dry_run: bool) -> None:
 # ---------------------------------------------------------------- credentials
 
 
-def _env_var_names(provider: str) -> tuple[str, ...]:
-    return stores.ENV_VARS.get(provider, (f"{provider.upper()}_API_KEY",))
-
-
-def _env_already_set(provider: str) -> str | None:
-    for var in _env_var_names(provider):
+def _env_already_set(env: tuple[str, ...]) -> str | None:
+    for var in env:
         if os.getenv(var):
             return var
     return None
 
 
-def _collect_credentials(providers: dict[str, list[str]], prompter) -> dict[str, dict]:
-    """Ask how to store keys once, then collect one per provider.
+def _collect_credentials(bindings: dict[str, list[str]], prompter) -> dict[str, dict]:
+    """Ask how to store keys once, then collect one **per binding**.
 
-    The storage *mechanism* is uniform across providers (the resolver chain is the
-    same for all of them); only the environment variable name differs. So this asks
-    the how-question once rather than per provider.
+    Per binding, not per provider: a binding carries its own credential reference, so
+    picking three Seedream models is three questions. That is the cost of the config
+    saying outright which key each call uses, instead of a shared entry a reader has
+    to go and look up.
+
+    The storage *mechanism* is the same for all of them, so the how-question is asked
+    once. Returns ``{binding id: {"api_key": …}}`` — a raw key to store, or an
+    ``env://VAR`` reference to write instead.
     """
     modes = [
         Option("paste the key", hint="stored in credentials.toml, chmod 600"),
-        Option("reference an environment variable", hint='writes env://VAR, the key never lands on disk'),
+        Option("reference an environment variable", hint="writes env://VAR, the key never lands on disk"),
     ]
     mode = prompter.select("How should keys be stored?", modes)
 
-    # Esc inside this loop steps back one *provider*, not out of the whole step: with
-    # four providers configured one after another, letting it unwind to the driver
-    # would throw away every key already typed. Going back from the first one — or
-    # from the storage question — still leaves the step, which is what the user means.
+    # Esc inside this loop steps back one *binding*, not out of the whole step: with
+    # several configured one after another, letting it unwind to the driver would
+    # throw away every key already typed. Going back from the first one — or from the
+    # storage question — still leaves the step, which is what the user means.
     creds: dict[str, dict] = {}
-    order = sorted(providers)
+    order = sorted(bindings)
     i = 0
     while i < len(order):
-        provider = order[i]
+        bid = order[i]
         try:
-            entry = _ask_one_credential(provider, providers[provider], mode, prompter)
+            entry = _ask_one_credential(bid, bindings[bid], mode, prompter)
         except GoBack:
             if i == 0:
                 raise
             creds.pop(order[i - 1], None)
             i -= 1
             continue
-        creds.pop(provider, None)
+        creds.pop(bid, None)
         if entry:
-            creds[provider] = entry
+            creds[bid] = entry
         i += 1
-    return {name: creds[name] for name in order if name in creds}
+    return {bid: creds[bid] for bid in order if bid in creds}
 
 
-def _ask_one_credential(provider: str, skills: list[str], mode: int, prompter) -> dict | None:
-    already = _env_already_set(provider)
-    label = f"{provider} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
+def _ask_one_credential(bid: str, skills: list[str], mode: int, prompter) -> dict | None:
+    cat = catalog()
+    spec = cat.get(bid)
+    provider = cat.providers[spec.provider]
+    env = provider.auth.env or (f"{provider.name.upper().replace('-', '_')}_API_KEY",)
+    label = f"{bid} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
+    if provider.setup_hint:
+        label += f"\n  {provider.setup_hint}"
+    already = _env_already_set(env)
     if already and not prompter.confirm(f"{label}\n  ${already} is already set; configure anyway?", default=False):
-        return None
+        # Declining still writes the binding — pointed at the variable that is set, so
+        # a config that omits nothing is what makes `bindings list` trustworthy.
+        return {"api_key": f"env://{already}"}
     if mode == 1:
-        var = _env_var_names(provider)[0]
-        chosen = prompter.text(f"{label}\n  environment variable to read", default=var)
+        chosen = prompter.text(f"{label}\n  environment variable to read", default=env[0])
         return {"api_key": f"env://{chosen}"}
     key = prompter.secret(f"{label}\n  API key")
     return {"api_key": key.strip()} if key.strip() else None
 
 
-# --------------------------------------------------------------------- models
+# ------------------------------------------------------------------ model ids
 
 
-def _model_hint(caps) -> str:
-    """What a user needs to know before making this model their default.
+def _binding_choice(bid: str, skills: list[str]) -> Option:
+    """One binding as a menu row, labelled with what it costs to trust it.
 
-    Discovery lists deprecated and preview models — they are still callable, and
-    withholding them would be worse. But offering one unlabelled means someone picks
-    a superseded model on setup day and finds out months later.
+    Lifecycle and live-test provenance go in the hint for the same reason discovery
+    reports them: a preview model that has never been exercised against the real API
+    is a fine thing to pick, and a terrible thing to pick without being told.
     """
+    spec = catalog().get(bid)
     bits = []
-    if caps.status == "deprecated":
-        bits.append(f"deprecated → {caps.replacement}" if caps.replacement else "deprecated")
-    elif caps.status == "preview":
+    if spec.lifecycle.value == "deprecated":
+        bits.append(f"deprecated → {spec.replacement}" if spec.replacement else "deprecated")
+    elif spec.lifecycle.value == "preview":
         bits.append("preview")
-    bits.append(f"verified {caps.verified}" if caps.verified else "never live-tested")
-    return " · ".join(bits)
+    bits.append(f"verified {spec.verified}" if spec.verified else "never live-tested")
+    bits.append(", ".join(s.removeprefix("media-ai-") for s in skills))
+    return Option(bid, hint=" · ".join(bits), value=bid)
 
 
-def _rank(caps) -> tuple:
-    """Sort key: current before preview before deprecated, verified before not."""
-    order = {"ga": 0, "preview": 1, "deprecated": 2, "removed": 3}
-    return (order.get(caps.status, 9), 0 if caps.verified else 1)
+def _ask_model_ids(bindings: list[str], prompter, *, advanced: bool) -> dict[str, str]:
+    """Per-binding overrides for the id that goes on the wire.
 
-
-# Groups whose models are *not* the ids `models()` enumerates. ElevenLabs runs music
-# and sound effects on their own models and declares them in dedicated capability
-# fields, while lumping every audio operation into one `AudioCaps.operations` — so
-# matching on the operation set alone would offer TTS ids as the music default, and
-# the wizard would write one into config for `music generate` to fail on.
-_MODEL_FIELDS = {"music": "music_models", "sound": "sound_models"}
-
-
-def _models_for(provider: str, group: str) -> list[Option]:
-    """Candidate models for a skill group, labelled with lifecycle and provenance.
-
-    Returns Options rather than bare ids so the caller cannot show one without its
-    status — the catalogue knowing a model is deprecated is no use if the wizard
-    that sets it as a default does not say so.
+    Only asked where the manifest's default cannot be trusted: Ark model ids are
+    account-specific, so the shipped one may simply not exist on the account being
+    configured. Everywhere else the manifest is right and the question is noise —
+    behind ``--advanced`` for anyone who wants it anyway.
     """
-    try:
-        prov = registry.get_provider(provider)
-        wanted = {op for op in Operation if op.value.split(".", 1)[0] == group}
-        field_name = _MODEL_FIELDS.get(group)
-        found, declared = [], []
-        for model in prov.models():
-            caps = prov.capabilities(model)
-            for block in (caps.image, caps.video, caps.audio):
-                if block is None or not block.operations & wanted:
-                    continue
-                declared += list(getattr(block, field_name, ()) or ()) if field_name else []
-                found.append(caps)
-                break
-        if field_name and declared:
-            # These ids are not in `models()`, so there is no ModelCapabilities to
-            # label them with — say where they came from instead of nothing.
-            seen = dict.fromkeys(declared)
-            return [Option(label=m, hint=f"{provider} {group} model", value=m) for m in seen]
-        found.sort(key=_rank)
-        return [Option(label=c.model, hint=_model_hint(c), value=c.model) for c in found]
-    except Exception:  # noqa: BLE001 - discovery is best-effort; free text still works
-        return []
-
-
-def _configure_volc_endpoints(groups: set[str], prompter) -> dict:
-    """Ark addresses models by account-specific endpoint ids.
-
-    An ``ep-…`` id names a deployment, not a model, so on its own it tells the CLI
-    nothing — it cannot answer "does this support image editing?". Asking which model
-    sits behind it is what makes the endpoint's capabilities knowable.
-    """
-    prompter.note(
-        "\nVolcengine Ark model ids are account-specific: a custom endpoint (ep-…) only\n"
-        "exists on the account that created it, so the built-in defaults may not be\n"
-        "enabled on yours. Check the Ark console for your ids."
-    )
-    table: dict = {}
-    endpoints: dict = {}
-    for group in sorted(groups):
-        for key, label in MODEL_SLOTS.get(("volc", group), ()):
-            model = prompter.text(f"volc — model id for {label}", default="")
-            if not model:
-                continue
-            table[key] = model
-            if model.lower().startswith("ep-"):
-                candidates = _models_for("volc", group)
-                if candidates:
-                    idx = prompter.select(
-                        f"  which model does {model} serve?\n"
-                        "  (this is what lets the CLI know its capabilities)",
-                        candidates,
-                    )
-                    endpoints[model] = candidates[idx].value
-    if endpoints:
-        table["endpoints"] = endpoints
-    return table
-
-
-def _configure_models(providers: list[str], groups: set[str], prompter, *, advanced: bool) -> dict:
-    """Per-provider model defaults, keyed by skill group rather than by provider.
-
-    Only Volc is asked unconditionally: its ids cannot be enumerated. For the rest the
-    built-in defaults are sensible, so the questions are behind ``advanced``.
-    """
-    out: dict = {}
-    for provider in providers:
-        if provider == "volc":
-            table = _configure_volc_endpoints(groups, prompter)
-            if table:
-                out["volc"] = table
+    cat = catalog()
+    out: dict[str, str] = {}
+    account_specific = [b for b in bindings if cat.providers[cat.get(b).provider].name == "volc-ark"]
+    if account_specific:
+        prompter.note(
+            "\nVolcengine Ark model ids are account-specific: a custom endpoint (ep-…) only\n"
+            "exists on the account that created it, and the shipped defaults may not be\n"
+            "enabled on yours. Check the Ark console for your ids."
+        )
+    for bid in bindings:
+        spec = cat.get(bid)
+        if bid not in account_specific and not advanced:
             continue
-        if not advanced:
+        entered = prompter.text(f"{bid} — model id sent on the wire", default=spec.model_id)
+        if entered and entered != spec.model_id:
+            out[bid] = entered
+    return out
+
+
+def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dict[str, str]:
+    """Which binding each command group uses when a call names none.
+
+    Asked per *group* and stored per *scene*. A group is the decision people actually
+    make ("images go here"); storing it expanded means refining one scene later — text
+    to image on one binding, editing on another — needs no schema change.
+    """
+    cat = catalog()
+    out: dict[str, str] = {}
+    for group in sorted({group_of(s) for s in skills}):
+        scenes = scenes_for_group(group)
+        if not scenes:
             continue
-        table = {}
-        for group in sorted(groups):
-            slots = MODEL_SLOTS.get((provider, group), ())
-            # Hoisted out of the slot loop: discovery rebuilds the provider and reads
-            # every model's capabilities, and ElevenLabs' speech group alone has two
-            # slots that would each repeat all of it for the same answer.
-            candidates = _models_for(provider, group) if slots else []
-            for key, label in slots:
-                if not candidates:
-                    continue
-                idx = prompter.select(f"{provider} — model for {label}", candidates)
-                table[key] = candidates[idx].value
-        if table:
-            out[provider] = table
+        candidates = [b for b in bindings if cat.get(b).scenes & scenes]
+        if not candidates:
+            continue
+        if len(candidates) == 1:
+            chosen = candidates[0]
+        else:
+            idx = prompter.select(f"Default for `media-ai {group}` when no binding is named", 
+                                  [Option(b, hint=cat.get(b).title, value=b) for b in candidates])
+            chosen = candidates[idx]
+        for scene in sorted(scenes & cat.get(chosen).scenes, key=lambda s: s.value):
+            out[scene.value] = chosen
     return out
 
 
 # ----------------------------------------------------------------- the wizard
-
-
-def _groups_for(skills: list[str]) -> set[str]:
-    return {op.value.split(".", 1)[0] for s in skills for op in operations_for_skill(s)}
 
 
 @dataclass
@@ -511,10 +448,11 @@ class _Answers:
     want_custom: bool = False
     custom_dest: Path | None = None
     plan: list[dict] = field(default_factory=list)
-    needed: dict[str, list[str]] = field(default_factory=dict)
-    providers: list[str] = field(default_factory=list)
-    creds: dict = field(default_factory=dict)
-    models: dict = field(default_factory=dict)
+    needed: dict[str, list[str]] = field(default_factory=dict)   # binding id -> skills
+    bindings: list[str] = field(default_factory=list)            # the ones picked
+    creds: dict = field(default_factory=dict)                    # binding id -> {"api_key": …}
+    model_ids: dict[str, str] = field(default_factory=dict)      # binding id -> wire id override
+    defaults: dict[str, str] = field(default_factory=dict)       # scene -> binding id
     verify: dict[str, bool] = field(default_factory=dict)
 
 
@@ -532,7 +470,7 @@ def _wizard(args, prompter) -> dict:
         prompter.box(title, message)
     summary: dict = {
         "ok": True, "schema_version": SCHEMA_VERSION, "operation": "init",
-        "wrote": [], "backed_up": [], "providers": [], "skills": [], "dry_run": bool(args.dry_run),
+        "wrote": [], "backed_up": [], "bindings": [], "skills": [], "dry_run": bool(args.dry_run),
     }
     answers = _Answers()
     run_steps(
@@ -541,9 +479,10 @@ def _wizard(args, prompter) -> dict:
             lambda: _ask_dests(args, prompter, answers),
             lambda: _ask_custom_dest(args, prompter, answers),
             lambda: _ask_collisions(args, prompter, answers),
-            lambda: _ask_providers(args, prompter, answers),
+            lambda: _ask_bindings(args, prompter, answers),
             lambda: _ask_credentials(args, prompter, answers),
-            lambda: _ask_models(args, prompter, answers),
+            lambda: _ask_model_id_overrides(args, prompter, answers),
+            lambda: _ask_defaults(args, prompter, answers),
             lambda: _ask_verify(args, prompter, answers),
         ],
         prompter,
@@ -625,41 +564,49 @@ def _ask_collisions(args, prompter, answers: _Answers) -> None:
         answers.plan = _plan_installs(answers.skills, dests, prompter, unattended=args.non_interactive)
 
 
-def _ask_providers(args, prompter, answers: _Answers) -> None:
-    answers.needed, answers.providers = {}, []
+def _ask_bindings(args, prompter, answers: _Answers) -> None:
+    answers.needed, answers.bindings = {}, []
     if args.skills_only or args.non_interactive:
         # Credentials are never collected unattended: there is nothing sensible to
         # default a key to, and guessing one would be worse than stopping here.
         return
-    answers.needed = providers_for_skills(answers.skills)
+    answers.needed = bindings_for_skills(answers.skills)
     if not answers.needed:
         prompter.note("The selected skills run locally — no credentials needed.")
         return
-    choices = [
-        Option(p, hint=", ".join(s.removeprefix("media-ai-") for s in sk), value=p)
-        for p, sk in sorted(answers.needed.items())
-    ]
+    choices = [_binding_choice(bid, skills) for bid, skills in sorted(answers.needed.items())]
     picked = prompter.multiselect(
-        "These providers can serve the skills you picked. Configure which?",
+        "These bindings can serve the skills you picked. Configure which?",
         choices, preselected=list(range(len(choices))),
     )
-    answers.providers = [choices[i].value for i in picked]
+    answers.bindings = [choices[i].value for i in picked]
 
 
 def _ask_credentials(args, prompter, answers: _Answers) -> None:
     answers.creds = {}
-    if not answers.providers:
+    if not answers.bindings:
         return
-    answers.creds = _collect_credentials({p: answers.needed[p] for p in answers.providers}, prompter)
+    answers.creds = _collect_credentials({b: answers.needed[b] for b in answers.bindings}, prompter)
 
 
-def _ask_models(args, prompter, answers: _Answers) -> None:
-    answers.models = {}
-    if not answers.providers:
+def _ask_model_id_overrides(args, prompter, answers: _Answers) -> None:
+    answers.model_ids = {}
+    if not answers.creds:
         return
-    answers.models = _configure_models(
-        answers.providers, _groups_for(answers.skills), prompter, advanced=args.advanced
-    )
+    answers.model_ids = _ask_model_ids(sorted(answers.creds), prompter, advanced=args.advanced)
+
+
+def _ask_defaults(args, prompter, answers: _Answers) -> None:
+    """Which binding each group falls back to — the only automatic choice there is.
+
+    Worth asking even when a group has one candidate: without a default, a call that
+    names no binding fails, and "it worked in the wizard" is the wrong lesson to draw
+    from a setup that configured a key and stopped short of making it reachable.
+    """
+    answers.defaults = {}
+    if not answers.creds:
+        return
+    answers.defaults = _ask_scene_defaults(sorted(answers.creds), answers.skills, prompter)
 
 
 def _ask_verify(args, prompter, answers: _Answers) -> None:
@@ -672,8 +619,9 @@ def _ask_verify(args, prompter, answers: _Answers) -> None:
     answers.verify = {}
     if not args.verify:
         return
-    for provider in sorted(answers.creds):
-        answers.verify[provider] = provider != "openai" or prompter.confirm(
+    for bid in sorted(answers.creds):
+        provider = bid.partition("/")[0]
+        answers.verify[bid] = provider != "openai" or prompter.confirm(
             "openai has no free probe — verifying costs one small image generation. Verify it?",
             default=False,
         )
@@ -692,20 +640,48 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
     state the ask-then-do split exists to avoid.
     """
     pending: list[tuple[Path, str, object]] = []
-    if answers.creds:
+    raw_keys = {bid: e for bid, e in answers.creds.items() if not e["api_key"].startswith("env://")}
+    if raw_keys:
+        # Only keys that are actually stored go in the secret file. A binding pointed
+        # at env:// keeps its key out of the filesystem entirely, which is the whole
+        # reason that option exists.
         path = credentials_path()
-        pending.append((path, _render(path, _load(path) | answers.creds, CREDENTIALS_HEADER), write_private))
-    if answers.models:
-        path = config_path()
-        existing = _load(path)
-        existing["providers"] = (existing.get("providers") or {}) | answers.models
-        pending.append((path, _render(path, existing, CONFIG_HEADER), write_public))
+        pending.append((path, _render(path, _load(path) | raw_keys, CREDENTIALS_HEADER), write_private))
+    if answers.creds or answers.defaults:
+        pending.append((config_path(), _render_config(answers), write_public))
 
     summary["skills"] = answers.plan
     _apply_installs(answers.plan, dry_run=args.dry_run)
     for path, text, writer in pending:
         _write_merged(path, text, writer, args, summary)
-    summary["providers"] = sorted(answers.creds)
+    summary["bindings"] = sorted(answers.creds)
+    summary["defaults"] = dict(sorted(answers.defaults.items()))
+
+
+def _render_config(answers: _Answers) -> str:
+    """Merge this run's bindings and defaults into whatever is already configured.
+
+    Merged rather than replaced: setting up video today must not silently drop the
+    image binding configured last week. Re-running with the same answers produces the
+    same bytes, which is what keeps the installer a no-op on a second pass.
+    """
+    from ..core.config import UserBinding
+
+    existing = load_config()
+    bindings = dict(existing.bindings)
+    for bid, entry in answers.creds.items():
+        key = entry["api_key"]
+        bindings[bid] = UserBinding(
+            id=bid,
+            model_id=answers.model_ids.get(bid),
+            credential=key if key.startswith("env://") else f"cred://{bid}",
+        )
+    merged = Config(
+        bindings=bindings,
+        defaults=dict(existing.defaults) | answers.defaults,
+        path=config_path(), exists=True,
+    )
+    return render_config(merged, header=CONFIG_HEADER)
 
 
 def _render(path: Path, data: dict, header: str) -> str:
@@ -771,9 +747,14 @@ def _report(summary: dict, prompter) -> None:
         prompter.note(f"{verb} {path}")
     for path in summary["backed_up"]:
         prompter.note(f"backed up {path}")
-    providers = summary["providers"]
-    if providers:
-        prompter.note(f"\nTo make {providers[0]} the default, set:\n  export MEDIA_PROVIDER={providers[0]}")
+    if summary["defaults"]:
+        lines = "\n".join(f"  {scene:<24} {bid}" for scene, bid in summary["defaults"].items())
+        prompter.note(f"\nCalls that name no binding will use:\n{lines}")
+    elif summary["bindings"]:
+        prompter.note(
+            "\nNo default was set, so every call has to name a binding:\n"
+            f"  media-ai config set-default <scene> {summary['bindings'][0]}"
+        )
     prompter.note("\nTry it offline:\n  media-ai image generate --provider mock --prompt hello --output /tmp/x.png")
     prompter.outro(
         "Dry run — nothing was changed."

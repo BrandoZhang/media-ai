@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.result import SCHEMA_VERSION
 from ..media import ffmpeg
 from . import common
 
@@ -20,17 +19,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _do(args) -> dict:
+def _do(args) -> object:
+    from ..core.config import load_config
+    from ..core.registry import build_adapter, catalog
+    from ..core.resolve import available_bindings, resolve
+    from ..core.scene import Scene
+
     inputs = [Path(p) for p in common._listify(args.inputs)]
-    out = ffmpeg.concat_clips(inputs, Path(args.output), w=args.width, h=args.height)
-    size = out.stat().st_size if out.is_file() else 0
-    return {
-        "ok": True, "schema_version": SCHEMA_VERSION, "modality": "video", "operation": "video.concat",
-        "provider": "local", "model": None, "kind": "video", "path": str(out),
-        "bytes": size, "clips": len(inputs),
-        "artifacts": [{"path": str(out), "kind": "video", "mime": "video/mp4", "bytes": size, "role": None}],
-        "usage": {}, "meta": {"clips": len(inputs)},
-    }
+    cat, config = catalog(), load_config()
+    rb = resolve(binding=args.binding, provider=args.provider, model=args.model,
+                 scene=Scene.VIDEO_CONCAT, catalog=cat, config=config)
+    rb.check_scene(Scene.VIDEO_CONCAT, available_bindings(cat, config))
+    result = build_adapter(rb).concat(inputs, Path(args.output), width=args.width, height=args.height)
+    return common.stamp(result, rb, Scene.VIDEO_CONCAT)
 
 
 def main() -> int:

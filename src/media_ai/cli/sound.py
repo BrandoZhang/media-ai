@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core import registry
 from ..core.capabilities import validate_request
 from ..core.logging import get_logger
 from ..core.types import Modality, SoundEffectRequest
@@ -37,12 +36,10 @@ def _do(args) -> object:
         text=args.text, output=Path(args.output), duration_seconds=args.duration_seconds,
         output_format=args.output_format, model=args.model, options=common.parse_options(args.option),
     )
-    # Resolve only the provider; keep the request's own model (adapter picks the sound default).
-    provider, _ = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
-                                 profile=args.provider_profile)
-    for w in validate_request(req, provider.capabilities(args.model, Modality.AUDIO), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, adapter.capabilities(req.model, Modality.AUDIO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_sound(req)
+    return common.stamp(adapter.generate_sound(req), rb, scene)
 
 
 def main() -> int:

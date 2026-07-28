@@ -84,16 +84,34 @@ def test_exit_code_is_zero_even_when_checks_warn(home):
 # ---------------------------------------------------------------- credentials
 
 
-def test_a_configured_provider_is_reported_by_source_never_by_value(home, monkeypatch):
+def test_a_configured_binding_is_reported_by_source_never_by_value(home, monkeypatch, configured):
     monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    configured({"openai/gpt-image-2": "env://OPENAI_API_KEY"})
     result = diagnose()
-    assert checks(result)["credential:openai"]["status"] == "ok"
-    assert "OPENAI_API_KEY" in checks(result)["credential:openai"]["detail"]
+    entry = checks(result)["binding:openai/gpt-image-2"]
+    assert entry["status"] == "ok"
+    assert "env" in entry["detail"]
     assert SECRET not in json.dumps(result)
 
 
-def test_the_offline_provider_is_never_asked_for_a_key(home):
-    assert "credential:mock" not in checks(diagnose())
+def test_a_binding_whose_credential_does_not_resolve_is_a_failure(home, monkeypatch, configured):
+    """The one thing doctor exists to catch: configured, and still not callable."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    configured({"openai/gpt-image-2": "env://OPENAI_API_KEY"})
+    entry = checks(diagnose())["binding:openai/gpt-image-2"]
+    assert entry["status"] == "fail"
+    assert "OPENAI_API_KEY" in entry["detail"]
+
+
+def test_a_default_pointing_at_nothing_is_a_failure(home, configured):
+    configured({}, defaults={"image.text_to_image": "openai/gpt-image-2"})
+    assert checks(diagnose())["defaults"]["status"] == "fail"
+
+
+def test_the_offline_backends_are_never_asked_for_a_key(home):
+    entries = checks(diagnose())
+    assert entries["binding:mock/mock"]["status"] == "ok"
+    assert "no credential needed" in entries["binding:mock/mock"]["detail"]
 
 
 def test_a_loose_credentials_file_is_a_failure(home):

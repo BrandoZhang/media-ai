@@ -64,14 +64,30 @@ def classify(exc: MediaError | None) -> str:
     return "invalid"
 
 
+def _adapter(provider: str):
+    """The adapter for a provider's first configured binding.
+
+    A probe checks the *credential*, which a binding owns — and every binding on one
+    provider shares an endpoint, so any of them proves the key. Which one is arbitrary
+    and does not need to be a choice.
+    """
+    from ..core.config import load_config
+    from ..core.registry import build_adapter, catalog
+    from ..core.resolve import available_bindings
+
+    for rb in available_bindings(catalog(), load_config()):
+        if rb.provider.name == provider and rb.configured:
+            return build_adapter(rb)
+    raise MediaError(f"no configured binding for provider {provider!r}", category=ErrorCategory.AUTH)
+
+
 def _probe_job_query(provider: str, job_id: str) -> MediaError | None:
     """Query a job id that cannot exist. Authentication happens before lookup, so a
     not-found answer proves the key worked — and a GET costs nothing."""
-    from ..core import registry
     from ..core.types import JobRef
 
     try:
-        registry.get_provider(provider).query_job(JobRef(id=job_id, provider=provider))
+        _adapter(provider).query_job(JobRef(id=job_id, provider=provider))
         return None
     except MediaError as exc:
         return exc
@@ -79,11 +95,10 @@ def _probe_job_query(provider: str, job_id: str) -> MediaError | None:
 
 def _probe_elevenlabs() -> MediaError | None:
     """``music plan`` is credit-free but fully authenticated."""
-    from ..core import registry
     from ..core.types import MusicRequest
 
     try:
-        registry.get_provider("elevenlabs").plan_music(MusicRequest(prompt="probe", duration=3))
+        _adapter("elevenlabs").plan_music(MusicRequest(prompt="probe", duration=3))
         return None
     except MediaError as exc:
         return exc
@@ -95,12 +110,11 @@ def _probe_openai() -> MediaError | None:
     import tempfile
     from pathlib import Path
 
-    from ..core import registry
     from ..core.types import ImageRequest
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            registry.get_provider("openai").generate_image(
+            _adapter("openai").generate_image(
                 ImageRequest(prompt="a grey square", model="gpt-image-1-mini",
                              output=Path(tmp) / "probe.png", options={"quality": "low"})
             )
@@ -111,15 +125,19 @@ def _probe_openai() -> MediaError | None:
 
 _PROBES = {
     "gemini": lambda: _probe_job_query("gemini", "models/veo-3.1-generate-preview/operations/probe"),
-    "volc": lambda: _probe_job_query("volc", "probe-nonexistent-task"),
+    "volc-ark": lambda: _probe_job_query("volc-ark", "probe-nonexistent-task"),
     "elevenlabs": _probe_elevenlabs,
     "openai": _probe_openai,
 }
 
 
-def probe(provider: str) -> str:
-    """Check a provider's configured credential. Never raises — the result is a label."""
-    fn = _PROBES.get(provider)
+def probe(binding: str) -> str:
+    """Check a binding's credential. Never raises — the result is a label.
+
+    Keyed by provider because a probe tests the *endpoint's* credential, which every
+    binding on that provider shares.
+    """
+    fn = _PROBES.get(binding.partition("/")[0])
     if fn is None:
         return "unsupported"
     try:

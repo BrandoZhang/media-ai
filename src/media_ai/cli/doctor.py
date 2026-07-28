@@ -27,11 +27,9 @@ import tomllib
 from pathlib import Path
 
 from .. import __version__
-from ..core import registry
 from ..core.errors import MediaError
 from ..core.result import SCHEMA_VERSION
-from ..credentials.profile import config_path
-from ..credentials.resolver import default_chain
+from ..core.config import config_path
 from ..credentials.stores import credentials_path
 from . import common
 from ._discovery import available_skills
@@ -128,35 +126,70 @@ def _unparseable(path: Path) -> str:
     return ""
 
 
-def _check_credentials() -> list[dict]:
-    """Which providers resolve a credential — by *source*, never by value.
+def _check_bindings() -> list[dict]:
+    """Every configured binding: does its adapter import, and does its credential resolve?
 
-    A provider with no key is a ``warn``, not a failure: nobody configures all four.
+    Reported by *source*, never by value — "resolved from env" is the whole answer.
+    Unconfigured bindings are not listed at all: nobody configures everything, and a
+    dozen warnings about models this machine was never meant to call is noise that
+    hides the one that is actually broken.
     """
-    chain = default_chain()
-    out = []
-    for name in registry.provider_names():
+    from ..core.config import load_config
+    from ..core.registry import catalog, load_adapter_class
+    from ..core.resolve import available_bindings
+
+    out: list[dict] = []
+    try:
+        cat, config = catalog(), load_config()
+        bindings = available_bindings(cat, config)
+    except MediaError as exc:
+        return [_check("bindings", "fail", str(exc))]
+
+    for rb in bindings:
+        name = f"binding:{rb.id}"
         try:
-            provider = registry.get_provider(name)
-        except Exception as exc:  # noqa: BLE001 - a broken adapter is its own finding
-            out.append(_check(f"credential:{name}", "warn", f"provider could not be loaded: {exc}"))
+            load_adapter_class(rb.provider.adapter)
+        except MediaError as exc:
+            out.append(_check(name, "fail", str(exc)))
             continue
-        if not getattr(provider, "requires_credentials", True):
+        if not rb.provider.auth.needs_credential:
+            out.append(_check(name, "ok", f"{rb.provider.transport.value}, no credential needed"))
             continue
         try:
-            cred = chain.resolve(name)
-        except MediaError:
-            out.append(_check(f"credential:{name}", "warn", "no credential found (unconfigured)"))
+            cred = rb.credentials().resolve()
+        except MediaError as exc:
+            out.append(_check(name, "fail", exc.message))
             continue
         except Exception as exc:  # noqa: BLE001 - a broken source is a finding, not a crash
             # A malformed credentials.toml reaches here as a TOMLDecodeError. Letting
             # it out would abandon the whole diagnosis — including the file-mode check
             # that is trying to explain the very problem being diagnosed.
-            out.append(_check(f"credential:{name}", "fail", f"{type(exc).__name__}: {exc}"))
+            out.append(_check(name, "fail", f"{type(exc).__name__}: {exc}"))
             continue
-        # `source` is a descriptor like "env:OPENAI_API_KEY" — never the key itself.
-        out.append(_check(f"credential:{name}", "ok", f"resolved from {cred.source}"))
+        out.append(_check(name, "ok", f"credential resolved from {cred.source}"))
+
+    if not out:
+        out.append(_check("bindings", "warn", "nothing configured; run `media-ai init`"))
     return out
+
+
+def _check_defaults() -> list[dict]:
+    """A default pointing at a binding that is not configured fails every bare call."""
+    from ..core.config import load_config
+    from ..core.registry import catalog
+    from ..core.resolve import available_bindings
+
+    try:
+        config = load_config()
+        reachable = {b.id for b in available_bindings(catalog(), config)}
+    except MediaError as exc:
+        return [_check("defaults", "fail", str(exc))]
+    if not config.defaults:
+        return [_check("defaults", "warn", "no scene defaults; every call must name a binding")]
+    missing = sorted({b for b in config.defaults.values() if b not in reachable})
+    if missing:
+        return [_check("defaults", "fail", f"default binding(s) not configured: {', '.join(missing)}")]
+    return [_check("defaults", "ok", f"{len(config.defaults)} scene default(s)")]
 
 
 def _check_skills() -> list[dict]:
@@ -192,7 +225,7 @@ def _check_skills() -> list[dict]:
 
 
 def _diagnose(args) -> dict:
-    checks = _check_cli() + _check_media() + _check_files() + _check_credentials() + _check_skills()
+    checks = _check_cli() + _check_media() + _check_files() + _check_bindings() + _check_defaults() + _check_skills()
     status = max((c["status"] for c in checks), key=lambda s: _RANK[s], default="ok")
     _print(checks, status)
     return {

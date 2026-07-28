@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from media_ai.core import registry
+from media_ai.core.binding import builtin_catalog
 
 # a 1x1 PNG, so image-saving paths can write bytes without a network fetch
 PNG_1x1 = base64.b64encode(
@@ -84,25 +85,52 @@ def _ledger(tmp_path, monkeypatch, request):
     # URLs, model ids); only the offline tests are scrubbed hermetic.
     if request.node.get_closest_marker("live"):
         return tmp_path / "usage.jsonl"
-    monkeypatch.setenv("MEDIA_PROVIDER", "mock")
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-                "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL",
+                "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL", "MEDIA_PROVIDER",
                 "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_PROFILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
+    # A test that never writes a config still gets an empty one, so nothing reads the
+    # developer's real ~/.config/media-ai while the suite runs.
+    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    registry.reset_catalog()
     return tmp_path / "usage.jsonl"
 
 
 @pytest.fixture
 def clean_registry():
-    """Snapshot and restore the module-global provider registry around a test."""
-    saved = dict(registry._REGISTRY)
-    saved_flags = (registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED)
+    """Snapshot and restore the module-global binding catalog around a test."""
+    saved = list(registry._EXTRA)
     try:
         yield
     finally:
-        registry._REGISTRY.clear()
-        registry._REGISTRY.update(saved)
-        registry._BUILTINS_LOADED, registry._ENTRYPOINTS_LOADED = saved_flags
+        registry._EXTRA[:] = saved
+        registry.reset_catalog()
+
+
+@pytest.fixture
+def configured(tmp_path, monkeypatch):
+    """Write a config that makes the named bindings callable, and return its path.
+
+    ``configured({"mock/mock": None}, defaults={"image.text_to_image": "mock/mock"})``
+    is the offline equivalent of having run the wizard.
+    """
+
+    def make(bindings: dict, defaults: dict | None = None, *, name="config.toml") -> Path:
+        from media_ai.core.config import Config, UserBinding, render_config
+
+        path = tmp_path / name
+        config = Config(
+            bindings={bid: UserBinding(id=bid, credential=cred) for bid, cred in bindings.items()},
+            defaults=defaults or {},
+        )
+        path.write_text(render_config(config), encoding="utf-8")
+        monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+        return path
+
+    return make
+
+
+CATALOG = builtin_catalog()
 
 
 def have_media_stack() -> bool:

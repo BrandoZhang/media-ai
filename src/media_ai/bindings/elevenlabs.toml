@@ -7,7 +7,7 @@
 name       = "elevenlabs"
 title      = "ElevenLabs"
 transport  = "http"
-adapter    = "media_ai.providers.elevenlabs:ElevenLabsAdapter"
+adapter    = "media_ai.providers.elevenlabs:ElevenLabsProvider"
 docs       = "https://elevenlabs.io/docs/api-reference"
 setup_hint = "Create a key at https://elevenlabs.io/app/settings/api-keys"
 

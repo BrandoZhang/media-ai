@@ -1,4 +1,4 @@
-"""``[providers.<name>.endpoints]`` — mapping an opaque deployment id to a real model.
+"""Mapping an opaque deployment id to the model behind it.
 
 An Ark endpoint id (``ep-2026…-zrbtw``) names a *deployment*, not a model, so it
 carries no capability information. Before this mapping existed, ``capabilities()``
@@ -7,15 +7,20 @@ images and video.generate when asked about video. That made "does my endpoint su
 image editing?" unanswerable — which is exactly what the install wizard needs to know.
 
 Mapping the id to the model behind it makes the answer come from the model.
+
+The user-facing form is now ``extends`` in the config — one mechanism that also covers
+a second account and a second region (see :mod:`media_ai.core.config`). What is tested
+here is the adapter-level half it rests on.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from media_ai.core import registry
 from media_ai.core.capabilities import Operation
+from media_ai.core.scene import Scene
 from media_ai.core.types import Modality
+from media_ai.providers.openai import OpenAIProvider
 from media_ai.providers.volc import VolcProvider
 
 IMG = "doubao-seedream-4-5-251128"
@@ -47,7 +52,7 @@ def ops(caps) -> set[str]:
 
 def test_unmapped_endpoint_still_answers_whatever_is_asked():
     """Documents the fail-open behaviour that remains when no mapping exists."""
-    prov = registry.get_provider("volc", config={})
+    prov = VolcProvider(config={})
     assert ops(prov.capabilities("ep-unknown", modality=Modality.IMAGE)) == {"image.generate", "image.edit"}
     assert ops(prov.capabilities("ep-unknown", modality=Modality.VIDEO)) == {"video.generate"}
 
@@ -55,27 +60,27 @@ def test_unmapped_endpoint_still_answers_whatever_is_asked():
 @pytest.mark.parametrize("asked", [Modality.IMAGE, Modality.VIDEO, None])
 def test_mapped_image_endpoint_is_stable_across_what_is_asked(asked):
     """The fix: the answer comes from the model, not from the question."""
-    prov = registry.get_provider("volc", config=MAPPED)
+    prov = VolcProvider(config=MAPPED)
     assert ops(prov.capabilities("ep-my-img", modality=asked)) == {"image.generate", "image.edit"}
 
 
 @pytest.mark.parametrize("asked", [Modality.IMAGE, Modality.VIDEO, None])
 def test_mapped_video_endpoint_is_stable_across_what_is_asked(asked):
-    prov = registry.get_provider("volc", config=MAPPED)
+    prov = VolcProvider(config=MAPPED)
     assert ops(prov.capabilities("ep-my-vid", modality=asked)) == {"video.generate"}
 
 
 def test_mapped_endpoint_reports_the_id_the_api_expects():
     """Capabilities describe the backing model but must name the id callers use."""
-    caps = registry.get_provider("volc", config=MAPPED).capabilities("ep-my-img")
+    caps = VolcProvider(config=MAPPED).capabilities("ep-my-img")
     assert caps.model == "ep-my-img"
     assert any(IMG in note for note in caps.notes)
 
 
 def test_mapped_endpoint_gains_the_real_geometry_constraints():
     """An unmapped endpoint leaves geometry unconstrained; a mapped one inherits it."""
-    unmapped = registry.get_provider("volc", config={}).capabilities("ep-my-img", modality=Modality.IMAGE)
-    mapped = registry.get_provider("volc", config=MAPPED).capabilities("ep-my-img")
+    unmapped = VolcProvider(config={}).capabilities("ep-my-img", modality=Modality.IMAGE)
+    mapped = VolcProvider(config=MAPPED).capabilities("ep-my-img")
     assert unmapped.image.aspect_ratios == ()
     assert mapped.image.aspect_ratios  # inherited from doubao-seedream
     assert mapped.image.pixel_max == (4096, 4096)
@@ -83,7 +88,7 @@ def test_mapped_endpoint_gains_the_real_geometry_constraints():
 
 def test_edit_support_is_answerable_for_a_mapped_endpoint():
     """The wizard's question: can this endpoint do image.edit?"""
-    caps = registry.get_provider("volc", config=MAPPED).capabilities("ep-my-img")
+    caps = VolcProvider(config=MAPPED).capabilities("ep-my-img")
     assert Operation.IMAGE_EDIT in caps.image.operations
 
 
@@ -147,26 +152,53 @@ def test_none_model_passes_through():
 
 def test_alias_is_available_to_every_provider():
     """backing_model lives on the base class, so an Azure-style deployment works too."""
-    prov = registry.get_provider("openai", config={"endpoints": {"my-deploy": "gpt-image-1-mini"}})
+    prov = OpenAIProvider(config={"endpoints": {"my-deploy": "gpt-image-1-mini"}})
     assert prov.backing_model("my-deploy") == "gpt-image-1-mini"
 
 
 # ------------------------------------------------------------ config file
 
 
-def test_endpoints_load_from_the_config_file(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        '[providers.volc]\n'
-        'image_model = "ep-my-img"\n\n'
-        '[providers.volc.endpoints]\n'
-        f'"ep-my-img" = "{IMG}"\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(cfg))
-    prov = registry.get_provider("volc")
-    assert prov.image_model == "ep-my-img"
-    assert ops(prov.capabilities("ep-my-img", modality=Modality.VIDEO)) == {"image.generate", "image.edit"}
+def test_a_deployment_id_is_configured_with_extends(tmp_path, monkeypatch):
+    """The user-facing form: name the binding, point `extends` at the real model.
+
+    The same mechanism covers a second account and a second region, so there is no
+    separate endpoints table to learn — and the wire keeps using the `ep-` id, which
+    is the only name the API accepts.
+    """
+    from media_ai.core.binding import builtin_catalog
+    from media_ai.core.config import Config, UserBinding
+    from media_ai.core.resolve import resolve
+
+    config = Config(bindings={
+        "volc-ark/my-endpoint": UserBinding(
+            id="volc-ark/my-endpoint", extends="volc-ark/seedream-4.5",
+            model_id="ep-example-endpoint", credential="env://ARK_API_KEY",
+        )
+    })
+    rb = resolve(binding="volc-ark/my-endpoint", catalog=builtin_catalog(), config=config)
+
+    assert rb.model_id == "ep-example-endpoint", "the wire keeps the id the API knows"
+    # …while every capability question is answered by the model it actually serves.
+    assert rb.spec.id == "volc-ark/seedream-4.5"
+    assert rb.spec.constraints.output.formats == ("jpeg",)
+    assert Scene.IMAGE_IMAGE_TO_IMAGE in rb.spec.scenes
+
+
+def test_an_extending_binding_appears_in_discovery(tmp_path):
+    """Otherwise `bindings list` would describe the package, not this machine."""
+    from media_ai.core.binding import builtin_catalog
+    from media_ai.core.config import Config, UserBinding
+    from media_ai.core.resolve import available_bindings
+
+    config = Config(bindings={
+        "volc-ark-sg/seedance-2.0": UserBinding(
+            id="volc-ark-sg/seedance-2.0", extends="volc-ark/seedance-2.0",
+            base_url="https://ark.ap-southeast.volces.com/api/v3", credential="env://ARK_SG_KEY",
+        )
+    })
+    ids = {b.id for b in available_bindings(builtin_catalog(), config)}
+    assert "volc-ark-sg/seedance-2.0" in ids
 
 
 # --------------------------------------------------- lifecycle through a mapping
@@ -174,13 +206,13 @@ def test_endpoints_load_from_the_config_file(tmp_path, monkeypatch):
 
 def test_notes_are_not_duplicated():
     """The adapter hard-coded notes the catalogue spec also carries, printing each twice."""
-    caps = registry.get_provider("volc", config={}).capabilities(IMG)
+    caps = VolcProvider(config={}).capabilities(IMG)
     assert len(caps.notes) == len(set(caps.notes))
 
 
 def test_mapped_endpoint_inherits_the_backing_model_verification():
     """Mapping hides the real model behind an opaque id; its provenance must survive."""
-    prov = registry.get_provider("volc", config=MAPPED)
+    prov = VolcProvider(config=MAPPED)
     direct = prov.capabilities(IMG)
     mapped = prov.capabilities("ep-my-img")
     assert mapped.status == direct.status
@@ -188,15 +220,13 @@ def test_mapped_endpoint_inherits_the_backing_model_verification():
 
 
 def test_mapped_endpoint_carries_the_backing_model_notes():
-    caps = registry.get_provider("volc", config=MAPPED).capabilities("ep-my-img")
+    caps = VolcProvider(config=MAPPED).capabilities("ep-my-img")
     assert any("2K" in n for n in caps.notes), caps.notes
     assert any(IMG in n for n in caps.notes)
 
 
 def test_configured_video_model_outside_the_catalogue_is_still_video():
     """Both branches of _is_video_model must agree; only one used to check video_model."""
-    from media_ai.core.types import Modality
-
     cfg = {"endpoints": {"ep-v": "house-video-model"}, "video_model": "house-video-model"}
-    caps = registry.get_provider("volc", config=cfg).capabilities("ep-v", modality=Modality.IMAGE)
+    caps = VolcProvider(config=cfg).capabilities("ep-v", modality=Modality.IMAGE)
     assert caps.video is not None and caps.image is None

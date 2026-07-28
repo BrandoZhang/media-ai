@@ -152,9 +152,21 @@ class Geometry:
     pixel_sizes: tuple[str, ...] = ()  # exact allowed WxH when fixed-enum
     pixel_multiple: int | None = None
     pixel_max_edge: int | None = None
-    pixel_total: tuple[int, int] | None = None
-    """``(min, max)`` on width×height. ``0`` for either end means unbounded — used
-    where a provider documents one side and leaves the other to the API."""
+    pixel_total_min: int | None = None
+    pixel_total_max: int | None = None
+    """Bounds on width×height, each independently optional.
+
+    Two scalars rather than a ``[min, max]`` pair because a provider may document one
+    end and leave the other to the API — Seedream 4.5 publishes the floor its preset
+    fallback implies and no ceiling. A pair would need a sentinel for the missing end,
+    and every candidate fails the same way: ``0`` already means real things elsewhere
+    in this schema (``max_references = 0`` is "no references"), ``-1`` collides with
+    nothing but still lets ``w * h > pixel_total_max`` silently reject everything.
+    ``None`` cannot be compared by accident.
+
+    **The rule:** a range is a pair only when both ends are always known
+    (``ratio_range``, ``duration_ms``). Anything that can be half-known is two fields.
+    """
     ratio_range: tuple[float, float] | None = None
     max_edge_ratio: float | None = None
 
@@ -218,6 +230,27 @@ class Constraints:
     def supports_flag(self, name: str) -> bool:
         return bool(self.supports.get(name, False))
 
+    def to_dict(self) -> dict:
+        """Only what this binding actually declares.
+
+        Empty sub-tables are dropped rather than emitted as zeros and empty lists: a
+        video binding has nothing to say about voices, and printing
+        ``"max_dialogue_voices": 0`` beside it reads as a limit rather than an absence.
+        """
+        out: dict = {}
+        if self.supports:
+            out["supports"] = dict(sorted(self.supports.items()))
+        if self.options:
+            out["options"] = list(self.options)
+        for name, block in (
+            ("geometry", self.geometry), ("output", self.output),
+            ("references", self.references), ("video", self.video), ("audio", self.audio),
+        ):
+            body = {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(block).items() if v not in (None, (), 0)}
+            if body:
+                out[name] = body
+        return out
+
 
 @dataclass(frozen=True)
 class BindingSpec:
@@ -250,6 +283,26 @@ class BindingSpec:
 
     def serves(self, scene: Scene) -> bool:
         return scene in self.scenes
+
+    def to_dict(self) -> dict:
+        """The discovery payload — this *is* what ``media-ai capabilities`` prints.
+
+        Discovery and pre-flight validation read the same declaration, so the answer
+        to "what does this support?" cannot drift from what gets enforced.
+        """
+        return {
+            "binding": self.id,
+            "provider": self.provider,
+            "model": self.model,
+            "model_id": self.model_id,
+            "title": self.title,
+            "lifecycle": self.lifecycle.value,
+            "replacement": self.replacement,
+            "verified": self.verified,
+            "scenes": sorted(s.value for s in self.scenes),
+            "constraints": self.constraints.to_dict(),
+            "notes": list(self.notes),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -344,7 +397,8 @@ def _parse_constraints(raw: dict, source: str) -> Constraints:
             pixel_sizes=_str_tuple(geo, "pixel_sizes", source),
             pixel_multiple=geo.get("pixel_multiple"),
             pixel_max_edge=geo.get("pixel_max_edge"),
-            pixel_total=_pair(geo, "pixel_total", source),
+            pixel_total_min=geo.get("pixel_total_min"),
+            pixel_total_max=geo.get("pixel_total_max"),
             ratio_range=_pair(geo, "ratio_range", source, cast=float),
             max_edge_ratio=geo.get("max_edge_ratio"),
         ),

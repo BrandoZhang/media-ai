@@ -36,7 +36,7 @@ _TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
 
 
 class VolcProvider(HttpProvider):
-    name = "volc"
+    name = "volc-ark"
     catalog = VOLC
     auth_scheme = "bearer"
 

@@ -11,10 +11,23 @@ import json
 
 import pytest
 
-from media_ai.core import registry
+from media_ai.core.registry import load_adapter_class
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.modelspec import Catalog, ModelSpec, ModelStatus, apply_spec
 from media_ai.providers._catalog import CATALOGS
+
+# The catalogue is keyed by the adapter's own provider name, which is not always the
+# manifest's (volc-ark ships as providers/volc.py until P2 renames it).
+_ADAPTERS = {
+    "gemini": "media_ai.providers.gemini:GeminiProvider",
+    "openai": "media_ai.providers.openai:OpenAIProvider",
+    "volc": "media_ai.providers.volc:VolcProvider",
+    "elevenlabs": "media_ai.providers.elevenlabs:ElevenLabsProvider",
+}
+
+
+def _adapter(name: str, **kw):
+    return load_adapter_class(_ADAPTERS[name])(**kw)
 
 # --------------------------------------------------------------- resolution
 
@@ -199,12 +212,12 @@ def test_synthetic_specs_are_never_discoverable(provider, spec):
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_discovery_matches_the_catalogue(name):
     """models() and the catalogue must not drift apart."""
-    assert registry.get_provider(name).models() == CATALOGS[name].discoverable_ids()
+    assert _adapter(name).models() == CATALOGS[name].discoverable_ids()
 
 
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_every_discoverable_model_describes_itself(name):
-    prov = registry.get_provider(name)
+    prov = _adapter(name)
     for model in prov.models():
         caps = prov.capabilities(model)
         assert caps.model == model
@@ -213,7 +226,7 @@ def test_every_discoverable_model_describes_itself(name):
 
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_removed_models_refuse_to_describe_themselves(name):
-    prov = registry.get_provider(name)
+    prov = _adapter(name)
     for model in CATALOGS[name].ids_with_status(ModelStatus.REMOVED):
         with pytest.raises(MediaError):
             prov.capabilities(model)
@@ -222,7 +235,7 @@ def test_removed_models_refuse_to_describe_themselves(name):
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_deprecated_models_still_describe_themselves(name):
     """Deprecated is a warning, not a wall — a migration needs to inspect them."""
-    prov = registry.get_provider(name)
+    prov = _adapter(name)
     for model in CATALOGS[name].ids_with_status(ModelStatus.DEPRECATED):
         caps = prov.capabilities(model)
         assert caps.status == "deprecated" and caps.replacement
@@ -230,14 +243,14 @@ def test_deprecated_models_still_describe_themselves(name):
 
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_all_models_is_a_superset_of_models(name):
-    prov = registry.get_provider(name)
+    prov = _adapter(name)
     assert set(prov.models()) <= set(prov.all_models())
 
 
 @pytest.mark.parametrize("name", list(CATALOGS))
 def test_all_models_excludes_synthetic_fallbacks(name):
     synthetic = {s.id for s in CATALOGS[name].specs if s.synthetic}
-    assert not (set(registry.get_provider(name).all_models()) & synthetic)
+    assert not (set(_adapter(name).all_models()) & synthetic)
 
 
 def test_verification_state_is_reported_not_assumed():
@@ -292,7 +305,7 @@ def test_unrecognised_gemini_image_ids_still_resolve_as_images():
 def test_unknown_tts_model_reports_speech_operations():
     from media_ai.core.types import Operation as Op
 
-    caps = registry.get_provider("gemini").capabilities("gemini-9-ultra-tts-preview")
+    caps = _adapter("gemini").capabilities("gemini-9-ultra-tts-preview")
     assert caps.audio is not None
     assert Op.SPEECH_GENERATE in caps.audio.operations
 
@@ -306,70 +319,23 @@ def test_all_models_is_a_superset_even_when_discovery_is_configured(name, monkey
     would drop the endpoints the account can actually call."""
     monkeypatch.setenv("ARK_IMAGE_MODEL", "ep-configured-image")
     monkeypatch.setenv("ARK_VIDEO_MODEL", "ep-configured-video")
-    prov = registry.get_provider(name)
+    prov = _adapter(name)
     assert set(prov.models()) <= set(prov.all_models())
 
 
 def test_configured_volc_endpoints_appear_in_all_models(monkeypatch):
     monkeypatch.setenv("ARK_IMAGE_MODEL", "ep-configured-image")
-    listed = registry.get_provider("volc").all_models()
+    listed = _adapter("volc").all_models()
     assert "ep-configured-image" in listed
 
 
 def test_all_models_has_no_duplicates():
     for name in CATALOGS:
-        ids = registry.get_provider(name).all_models()
+        ids = _adapter(name).all_models()
         assert len(ids) == len(set(ids))
 
 
-# ------------------------------------------------- capabilities CLI surface
-
-
-def _run_cli(*argv):
-    import subprocess
-    import sys
-
-    res = subprocess.run([sys.executable, "-m", "media_ai", "capabilities", *argv],
-                         capture_output=True, text=True, timeout=60)
-    return res.returncode, json.loads(res.stdout)
-
-
-def test_naming_a_removed_model_is_an_error_not_a_stub():
-    """Asking about one model by name and getting a retired one must stay exit 3 —
-    turning it into ok:true would hide that the caller named something unusable."""
-    code, out = _run_cli("--provider", "openai", "--model", "dall-e-3")
-    assert code == 3 and out["ok"] is False
-    assert out["error"]["category"] == "unsupported"
-
-
-def test_naming_a_live_model_still_succeeds():
-    code, out = _run_cli("--provider", "openai", "--model", "gpt-image-2")
-    assert code == 0 and out["ok"] is True
-
-
-def test_listing_all_models_includes_retired_entries():
-    code, out = _run_cli("--provider", "openai", "--all-models")
-    assert code == 0
-    retired = [m for m in out["providers"][0]["models"] if m["status"] == "removed"]
-    assert {m["model"] for m in retired} == {"dall-e-3", "sora"}
-
-
-def test_retired_listing_entries_have_the_same_shape_as_live_ones():
-    """Agents parse providers[].models[] as one uniform shape; a short dict would make
-    a retired model look like a malformed one."""
-    _, out = _run_cli("--provider", "openai", "--all-models")
-    models = out["providers"][0]["models"]
-    live = next(m for m in models if m["status"] == "ga")
-    gone = next(m for m in models if m["status"] == "removed")
-    assert set(gone) == set(live)
-
-
-def test_retired_listing_entry_names_its_replacement():
-    _, out = _run_cli("--provider", "openai", "--all-models")
-    gone = next(m for m in out["providers"][0]["models"] if m["model"] == "dall-e-3")
-    assert gone["replacement"] == "gpt-image-2"
-
-
-def test_default_listing_omits_retired_models():
-    _, out = _run_cli("--provider", "openai")
-    assert all(m["status"] != "removed" for m in out["providers"][0]["models"])
+# The `capabilities` CLI surface moved to tests/test_cli.py, and with it the retired
+# model behaviour these used to pin. Lifecycle is declared in the binding manifests
+# now, and a model that cannot be called is deleted rather than kept as a tombstone
+# (see docs/REFACTOR.md D5) — so there is no "removed" entry left to describe.

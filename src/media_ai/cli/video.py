@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core import registry
 from ..core.capabilities import validate_request
 from ..core.logging import get_logger
 from ..core.types import MediaRef, Modality, VideoRequest
@@ -28,6 +27,8 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--reference-image", dest="reference_image", nargs="*", default=[])
     gen.add_argument("--reference-video", dest="reference_video", nargs="*", default=[])
     gen.add_argument("--reference-audio", dest="reference_audio", nargs="*", default=[])
+    gen.add_argument("--continue-from", dest="continue_from", default=None,
+                     help="continue from the end of this clip (video.extend); some backends require a URI")
     gen.add_argument("--duration", "--seconds", dest="duration", type=int, default=None)
     gen.add_argument("--seed", type=int, default=None)
     gen.add_argument("--audio", type=common.bool_arg, default=None)
@@ -49,16 +50,15 @@ def _do(args) -> object:
         reference_images=common.parse_refs(args.reference_image, "reference_image"),
         reference_videos=common.parse_refs(args.reference_video, "reference_video"),
         reference_audios=common.parse_refs(args.reference_audio, "reference_audio"),
+        continue_from=MediaRef(args.continue_from, role="continue_from") if args.continue_from else None,
         geometry=common.parse_geometry(args), duration=args.duration, seed=args.seed,
         audio=args.audio, watermark=args.watermark, negative_prompt=args.negative_prompt,
         return_last_frame=args.return_last_frame, wait=args.wait, options=common.parse_options(args.option),
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.VIDEO,
-                                     profile=args.provider_profile)
-    req.model = model
-    for w in validate_request(req, provider.capabilities(model, Modality.VIDEO), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, adapter.capabilities(req.model, Modality.VIDEO), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_video(req)
+    return common.stamp(adapter.generate_video(req), rb, scene)
 
 
 def main() -> int:

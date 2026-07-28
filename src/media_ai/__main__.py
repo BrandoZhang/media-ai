@@ -1,7 +1,8 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
 Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
-``music``, ``sound``, ``concat``, ``job``, ``capabilities``, ``usage``. Each group is
+``music``, ``sound``, ``concat``, ``job``, ``capabilities``, ``bindings``, ``config``,
+``usage``. Each group is
 also reachable directly; this umbrella reshapes argv so the group's own argparse sees
 a clean program name.
 """
@@ -28,6 +29,8 @@ _GROUPS = {
     "concat": "concat",
     "job": "job",
     "capabilities": "capabilities",
+    "bindings": "bindings",
+    "config": "config",
     "usage": "usage",
 }
 
@@ -50,7 +53,10 @@ def _usage(stream) -> None:
     print("  media-ai speech generate --text 'hello there' --output hi.mp3 --provider elevenlabs", file=stream)
     print("  media-ai music generate --prompt 'lofi hip hop beat' --output song.mp3 --provider elevenlabs", file=stream)
     print("  media-ai sound generate --text 'a spooky whoosh' --output sfx.mp3 --provider elevenlabs", file=stream)
-    print("  media-ai capabilities --provider openai", file=stream)
+    print("  media-ai bindings list              # what this machine can call, and what is default", file=stream)
+    print("  media-ai bindings available         # declared but not configured yet", file=stream)
+    print("  media-ai config set-default video.text_to_video volc-ark/seedance-2.0", file=stream)
+    print("  media-ai capabilities --scene video.image_to_video", file=stream)
 
 
 def _usage_error(message: str) -> int:

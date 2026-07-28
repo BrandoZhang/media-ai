@@ -12,7 +12,7 @@
 name       = "volc-ark"
 title      = "Volcengine Ark"
 transport  = "http"
-adapter    = "media_ai.providers.volc_ark:VolcArkAdapter"
+adapter    = "media_ai.providers.volc:VolcProvider"
 docs       = "https://www.volcengine.com/docs/82379/1330310"
 setup_hint = "Enable the model in the Ark console, then create an API key. Model IDs are per-account."
 
@@ -37,6 +37,7 @@ scenes   = ["image.text_to_image", "image.image_to_image"]
 notes    = [
   "interactive editing: mark a region on the input image, or write <point>/<bbox> tags into the prompt",
   "TODO: 'single image / multiple layers' output is documented without a wire field — left undeclared",
+  "documented standard ratios (1:1 4:3 3:4 16:9 9:16 3:2 2:3 21:9) are examples, not an enum — the vendor states supported ratios are not limited to them, so only ratio_range gates",
 ]
 
 [binding.constraints]
@@ -50,11 +51,11 @@ streaming        = false
 grounding        = false
 
 [binding.constraints.geometry]
-mode          = "both"
-named_sizes   = ["1K", "2K"]
-aspect_ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"]
-pixel_total   = [921600, 4624220]
-ratio_range   = [0.0625, 16.0]
+mode            = "both"
+named_sizes     = ["1K", "2K"]
+pixel_total_min = 921600
+pixel_total_max = 4624220
+ratio_range     = [0.0625, 16.0]
 
 [binding.constraints.output]
 formats   = ["png", "jpeg"]
@@ -75,11 +76,12 @@ id       = "volc-ark/seedream-5.0-lite"
 model    = "seedream-5.0-lite"
 model_id = "doubao-seedream-5-0-260128"
 title    = "Seedream 5.0 lite"
-aliases  = ["volc-ark/doubao-seedream-5-0-lite-260128"]
 scenes   = ["image.text_to_image", "image.image_to_image"]
 notes    = [
   "group output is budgeted jointly with inputs: references + generated images <= 15",
+  "the API also accepts the wire id doubao-seedream-5-0-lite-260128 for this model",
   "TODO: the web-search toggle is documented without a wire field name — left undeclared",
+  "documented standard ratios (1:1 4:3 3:4 16:9 9:16 3:2 2:3 21:9) are examples, not an enum — the vendor states supported ratios are not limited to them, so only ratio_range gates",
 ]
 
 [binding.constraints]
@@ -95,7 +97,6 @@ grounding        = true
 [binding.constraints.geometry]
 mode          = "both"
 named_sizes   = ["2K", "3K", "4K"]
-aspect_ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"]
 ratio_range   = [0.0625, 16.0]
 
 [binding.constraints.output]
@@ -123,6 +124,7 @@ notes    = [
   "jpeg only — asking for a .png output writes jpeg bytes under a png name",
   "a pixel size below the 2K floor falls back to the '2K' preset",
   "the upper pixel bound is not documented; the API is the authority",
+  "documented standard ratios (1:1 4:3 3:4 16:9 9:16 3:2 2:3 21:9) are examples, not an enum — the vendor states supported ratios are not limited to them, so only ratio_range gates",
 ]
 
 [binding.constraints]
@@ -136,11 +138,10 @@ streaming        = true
 grounding        = false
 
 [binding.constraints.geometry]
-mode          = "both"
-named_sizes   = ["2K", "4K"]
-aspect_ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"]
-pixel_total   = [3686400, 0]
-ratio_range   = [0.0625, 16.0]
+mode            = "both"
+named_sizes     = ["2K", "4K"]
+pixel_total_min = 3686400
+ratio_range     = [0.0625, 16.0]
 
 [binding.constraints.output]
 formats          = ["jpeg"]

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core import registry
 from ..core.capabilities import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
@@ -50,12 +49,10 @@ def _do(args) -> object:
         negative_prompt=args.negative_prompt, background=args.background, quality=args.quality,
         output_format=args.format, options=common.parse_options(args.option),
     )
-    provider, model = registry.build(common.provider_name(args), args.model, Modality.IMAGE,
-                                     profile=args.provider_profile)
-    req.model = model
-    for w in validate_request(req, provider.capabilities(model, Modality.IMAGE), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, adapter.capabilities(req.model, Modality.IMAGE), common.policy(args)):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_image(req)
+    return common.stamp(adapter.generate_image(req), rb, scene)
 
 
 def main() -> int:

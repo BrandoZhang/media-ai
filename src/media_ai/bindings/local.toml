@@ -9,7 +9,7 @@
 name      = "local"
 title     = "Local (bundled ffmpeg)"
 transport = "local"
-adapter   = "media_ai.providers.local:LocalAdapter"
+adapter   = "media_ai.providers.local:LocalProvider"
 
 [provider.auth]
 kind = "none"

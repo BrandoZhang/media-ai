@@ -121,6 +121,41 @@ def test_a_model_may_be_served_by_more_than_one_binding():
         assert b in CATALOG.for_model(b.model)
 
 
+@pytest.mark.parametrize("binding_id", BINDING_IDS)
+def test_no_bound_is_encoded_as_a_sentinel(binding_id):
+    """An absent limit is an absent field, never ``0`` or ``-1``.
+
+    A sentinel does not make a careless comparison fail — it makes it quietly do the
+    opposite: ``w * h > pixel_total_max`` with a max of 0 or -1 rejects every request
+    and says nothing. ``None`` cannot be compared by accident.
+    """
+    c = CATALOG.get(binding_id).constraints
+    bounds = {
+        "pixel_total_min": c.geometry.pixel_total_min,
+        "pixel_total_max": c.geometry.pixel_total_max,
+        "pixel_multiple": c.geometry.pixel_multiple,
+        "pixel_max_edge": c.geometry.pixel_max_edge,
+        "max_edge_ratio": c.geometry.max_edge_ratio,
+        "max_total_images": c.output.max_total_images,
+        "references.max_bytes": c.references.max_bytes,
+        "references.max_pixels": c.references.max_pixels,
+        "references.min_edge": c.references.min_edge,
+        "audio.max_characters": c.audio.max_characters,
+    }
+    for name, value in bounds.items():
+        assert value is None or value > 0, f"{name} = {value!r}: use an absent field, not a sentinel"
+
+    for name, pair in (("geometry.ratio_range", c.geometry.ratio_range),
+                       ("references.ratio_range", c.references.ratio_range),
+                       ("audio.duration_ms", c.audio.duration_ms),
+                       ("audio.duration_s", c.audio.duration_s)):
+        if pair is not None:
+            # A pair is only allowed where both ends are always known — so both ends
+            # must be real. Anything half-known belongs in two optional scalars.
+            assert all(v > 0 for v in pair), f"{name} = {pair!r}"
+            assert pair[0] <= pair[1], f"{name} is inverted: {pair!r}"
+
+
 def test_local_bindings_need_no_credential():
     for b in BINDINGS:
         provider = CATALOG.providers[b.provider]

@@ -62,6 +62,7 @@ class MediaError(RuntimeError):
         provider: str | None = None,
         model: str | None = None,
         details: dict | None = None,
+        hint: str | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -72,6 +73,10 @@ class MediaError(RuntimeError):
         self.provider = provider
         self.model = model
         self.details = details or {}
+        # A command the caller can run to fix this. The CLI's main consumer is an
+        # agent, and "what do I do now" is the question a refusal has to answer —
+        # especially where nothing falls back on its behalf.
+        self.hint = hint or self.details.pop("hint", None)
 
     @property
     def exit_code(self) -> int:
@@ -86,5 +91,6 @@ class MediaError(RuntimeError):
             "retryable": self.retryable,
             "provider": self.provider,
             "model": self.model,
+            "hint": self.hint,
             "details": self.details,
         }

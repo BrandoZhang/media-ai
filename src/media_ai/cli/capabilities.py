@@ -1,104 +1,105 @@
-"""``media-ai capabilities`` — machine-readable capability discovery.
+"""``media-ai capabilities`` — what the bindings on this machine can do.
 
-An Agent Skill queries this to learn what each provider/model supports (operations,
-geometry modes, options, async) *before* asking for a generation, so it can pick a
-valid request instead of guessing and hitting an ``unsupported`` error.
+Prints the binding manifests directly. Discovery and pre-flight validation read the
+same declaration, so "what does this support?" cannot drift from what actually gets
+enforced — which is the whole reason the declaration is data.
+
+Each entry also says whether it is **usable right now**: a binding needing a
+credential appears as available only once one is configured. An agent choosing where
+to send work needs both halves of that — what exists, and what it can reach.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from ..core import registry
-from ..core.capabilities import ModelCapabilities
-from ..core.errors import MediaError
-from ..core.modelspec import ModelStatus
-from ..core.logging import get_logger
+from ..core.config import load_config
+from ..core.errors import ErrorCategory, MediaError
+from ..core.registry import catalog
+from ..core.resolve import available_bindings
 from ..core.result import SCHEMA_VERSION
+from ..core.scene import Scene
 from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai capabilities", description="Describe provider/model capabilities.")
-    ap.add_argument("--provider", default=None, help="limit to one provider")
-    ap.add_argument("--model", default=None, help="limit to one model")
-    ap.add_argument("--all-models", dest="all_models", action="store_true",
-                    help="also describe deprecated/removed models normally withheld from discovery")
-    ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--log-level", default=None)
-    ap.add_argument("--metadata-out", default=None)
+    ap = argparse.ArgumentParser(prog="media-ai capabilities", description="Describe the available bindings.")
+    ap.add_argument("--scene", default=None, help="only bindings serving this scene, e.g. video.image_to_video")
+    ap.add_argument("--configured", action="store_true", help="only bindings usable right now")
+    common.add_global_args(ap)
     return ap
 
 
-def _retired_entry(provider: str, model: str, prov) -> dict:
-    """A listing entry for a model that refuses to describe itself.
-
-    Carries the same keys as a real entry — agents parse ``providers[].models[]`` as
-    one uniform shape, and a short dict would make a retired model look like a
-    malformed one.
-    """
-    spec = prov.catalog.get(model) if prov.catalog is not None else None
-    caps = ModelCapabilities(
-        provider=provider, model=model, modalities=frozenset(),
-        status=spec.status.value if spec else ModelStatus.REMOVED.value,
-        replacement=spec.replacement if spec else None,
-        verified=spec.verified if spec else None,
-        notes=(spec.notes + spec.lifecycle_notes()) if spec else (),
-    )
-    return caps.to_dict()
-
-
-def _describe(name: str, args) -> list[dict]:
-    """Describe one provider's models, surviving a misconfigured adapter."""
+def _parse_scene(raw: str | None) -> Scene | None:
+    if not raw:
+        return None
     try:
-        prov = registry.get_provider(name)
-        models = prov.all_models() if args.all_models else prov.models()
-        caps = []
-        for m in models:
-            try:
-                caps.append(prov.capabilities(m).to_dict())
-            except MediaError:
-                # A listing substitutes a stub for a model that refuses to describe
-                # itself: seeing what is gone, and what replaced it, is the point of
-                # asking for all of them.
-                caps.append(_retired_entry(name, m, prov))
-        return caps
-    except Exception as exc:  # noqa: BLE001 - a misconfigured provider shouldn't hide the rest
-        get_logger().warning("could not describe provider %s: %s", name, exc)
-        return []
+        return Scene(raw)
+    except ValueError:
+        raise MediaError(
+            f"unknown scene {raw!r}",
+            category=ErrorCategory.CLI, code="unknown_scene",
+            details={"scenes": [s.value for s in Scene]},
+        ) from None
+
+
+def _matches(spec, args, scene: Scene | None, binding_id: str | None = None) -> bool:
+    if args.binding and (binding_id or spec.id) != args.binding:
+        return False
+    if args.provider and spec.provider != args.provider:
+        return False
+    if args.model and spec.model != args.model:
+        return False
+    return scene is None or scene in spec.scenes
 
 
 def _do(args) -> dict:
-    names = [args.provider] if args.provider else registry.provider_names()
+    scene = _parse_scene(args.scene)
+    cat, config = catalog(), load_config()
+    reachable = {b.id: b for b in available_bindings(cat, config)}
 
-    if args.provider and args.model:
-        # An unambiguous question about one model gets an unambiguous answer, errors
-        # included: naming a retired model must stay exit 3, not become ok:true with a
-        # stub. The resilience below exists to stop one broken adapter hiding the
-        # others, which is not what is being asked here.
-        prov = registry.get_provider(args.provider)
-        return {
-            "ok": True, "schema_version": SCHEMA_VERSION,
-            "providers": [{"provider": args.provider, "models": [prov.capabilities(args.model).to_dict()]}],
-        }
+    entries: list[dict] = []
+    for spec in cat.all():
+        if not _matches(spec, args, scene):
+            continue
+        provider = cat.providers[spec.provider]
+        rb = reachable.get(spec.id)
+        entry = spec.to_dict()
+        entry.update({
+            "transport": provider.transport.value,
+            "needs_credential": provider.auth.needs_credential,
+            "available": rb is not None,
+            "configured": bool(rb and rb.configured),
+        })
+        if rb is None and provider.setup_hint:
+            entry["setup_hint"] = provider.setup_hint
+        entries.append(entry)
 
-    if args.model:
-        # No --provider: every provider is asked about the id, which is rarely what a
-        # caller wants (see the warning in docs) but is long-standing behaviour.
-        providers = []
-        for name in names:
-            try:
-                providers.append({
-                    "provider": name,
-                    "models": [registry.get_provider(name).capabilities(args.model).to_dict()],
-                })
-            except Exception as exc:  # noqa: BLE001
-                get_logger().warning("could not describe %s for provider %s: %s", args.model, name, exc)
-                providers.append({"provider": name, "models": []})
-        return {"ok": True, "schema_version": SCHEMA_VERSION, "providers": providers}
+    # Bindings that exist only in the config — a second account, a deployment id — are
+    # real and callable, so omitting them would describe the package rather than this
+    # machine.
+    known = {e["binding"] for e in entries}
+    for bid, rb in sorted(reachable.items()):
+        if bid in known or not _matches(rb.spec, args, scene, binding_id=bid):
+            continue
+        entry = rb.spec.to_dict()
+        entry.update({
+            "binding": bid, "model_id": rb.model_id, "extends": rb.spec.id,
+            "transport": rb.provider.transport.value,
+            "needs_credential": rb.provider.auth.needs_credential,
+            "available": True, "configured": rb.configured,
+        })
+        entries.append(entry)
 
-    providers = [{"provider": name, "models": _describe(name, args)} for name in names]
-    return {"ok": True, "schema_version": SCHEMA_VERSION, "providers": providers}
+    if args.configured:
+        entries = [e for e in entries if e["available"]]
+
+    return {
+        "ok": True,
+        "schema_version": SCHEMA_VERSION,
+        "bindings": sorted(entries, key=lambda e: e["binding"]),
+        "defaults": dict(sorted(config.defaults.items())),
+    }
 
 
 def main() -> int:

@@ -4,7 +4,7 @@
 name       = "openai"
 title      = "OpenAI"
 transport  = "http"
-adapter    = "media_ai.providers.openai:OpenAIAdapter"
+adapter    = "media_ai.providers.openai:OpenAIProvider"
 docs       = "https://platform.openai.com/docs/guides/image-generation"
 setup_hint = "Create a key at https://platform.openai.com/api-keys. GPT Image may require org verification."
 
@@ -43,11 +43,12 @@ transparency = false
 group_output = true
 
 [binding.constraints.geometry]
-mode           = "both"
-pixel_multiple = 16
-pixel_max_edge = 3840
-pixel_total    = [655360, 8294400]
-max_edge_ratio = 3.0
+mode            = "both"
+pixel_multiple  = 16
+pixel_max_edge  = 3840
+pixel_total_min = 655360
+pixel_total_max = 8294400
+max_edge_ratio  = 3.0
 
 [binding.constraints.output]
 formats   = ["png", "jpeg", "webp"]

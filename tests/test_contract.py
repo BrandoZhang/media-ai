@@ -11,19 +11,25 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from media_ai.core import registry
+from conftest import CATALOG
 from media_ai.core.capabilities import UnsupportedPolicy, validate_request
+from media_ai.core.registry import load_adapter_class
 from media_ai.core.errors import MediaError
 from media_ai.core.types import ImageRequest, Modality, Operation, SpeechRequest, VideoRequest
 
 
+def _adapter(provider: str):
+    """Instantiate an adapter the way the registry does, minus a binding."""
+    return load_adapter_class(CATALOG.providers[provider].adapter)()
+
+
 def _all_models():
-    out = []
-    for name in registry.provider_names():
-        prov = registry.get_provider(name)
-        for model in prov.models():
-            out.append((name, model))
-    return out
+    """Every (provider, wire model id) the manifests declare.
+
+    Driven by the manifests rather than by asking each adapter what it supports, so a
+    binding whose declaration and implementation disagree fails here.
+    """
+    return [(b.provider, b.model_id) for b in CATALOG.all()]
 
 
 ALL = _all_models()
@@ -31,7 +37,7 @@ ALL = _all_models()
 
 @pytest.mark.parametrize("provider,model", ALL, ids=[f"{p}:{m}" for p, m in ALL])
 def test_capabilities_wellformed_and_serializable(provider, model):
-    prov = registry.get_provider(provider)
+    prov = _adapter(provider)
     caps = prov.capabilities(model)
     import json
 
@@ -46,7 +52,7 @@ def test_capabilities_wellformed_and_serializable(provider, model):
 
 @pytest.mark.parametrize("provider,model", ALL, ids=[f"{p}:{m}" for p, m in ALL])
 def test_declared_operations_are_known(provider, model):
-    caps = registry.get_provider(provider).capabilities(model)
+    caps = _adapter(provider).capabilities(model)
     for sub in (caps.image, caps.video, caps.audio):
         if sub is not None:
             for op in sub.operations:
@@ -55,7 +61,7 @@ def test_declared_operations_are_known(provider, model):
 
 @pytest.mark.parametrize("provider,model", ALL, ids=[f"{p}:{m}" for p, m in ALL])
 def test_unsupported_option_is_rejected(provider, model):
-    caps = registry.get_provider(provider).capabilities(model)
+    caps = _adapter(provider).capabilities(model)
     if caps.image is not None:
         req = ImageRequest(prompt="x", output=Path("o.png"), options={"__definitely_not_a_real_option__": 1})
         with pytest.raises(MediaError):
@@ -72,20 +78,11 @@ def test_unsupported_option_is_rejected(provider, model):
 
 @pytest.mark.parametrize("provider,model", ALL, ids=[f"{p}:{m}" for p, m in ALL])
 def test_video_models_are_async_with_job_semantics(provider, model):
-    caps = registry.get_provider(provider).capabilities(model)
-    if caps.video is not None:
-        # every video model in this system is job-based (submit -> poll -> finalize)
+    caps = _adapter(provider).capabilities(model)
+    if caps.video is not None and caps.video.operations:
+        # Every video model that *generates* is job-based (submit -> poll -> finalize).
+        # A backend with no generation operations is exempt: local ffmpeg returns the
+        # finished file, and there is no job to poll.
         assert caps.video.is_async is True
 
 
-def test_registry_infers_provider_from_model_id():
-    assert registry.provider_for_model("gpt-image-2") == "openai"
-    assert registry.provider_for_model("veo-3.0-generate-001") == "gemini"
-    assert registry.provider_for_model("gemini-3.1-flash-image") == "gemini"
-    # a removed Imagen id still routes to gemini (for a clear removal error, not mock)
-    assert registry.provider_for_model("imagen-4.0-generate-001") == "gemini"
-    # a removed Sora id still routes to openai (for a clear removal error, not mock)
-    assert registry.provider_for_model("sora-2") == "openai"
-    assert registry.provider_for_model("doubao-seedance-2-0-260128") == "volc"
-    assert registry.provider_for_model("eleven_multilingual_v2") == "elevenlabs"
-    assert registry.provider_for_model("totally-unknown") is None

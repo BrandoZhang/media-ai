@@ -1,0 +1,139 @@
+"""``media-ai bindings list|available|add`` — see and configure what this machine can call.
+
+Every refusal from :mod:`media_ai.core.resolve` names one of these as its fix, so they
+exist for the same reason the errors carry hints: nothing falls back on the caller's
+behalf, which makes "what *can* I call, and how do I add the one I want?" a question
+the CLI has to answer directly.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from ..core.config import UserBinding, config_path, load_config, render_config
+from ..core.errors import ErrorCategory, MediaError
+from ..core.registry import catalog
+from ..core.resolve import available_bindings
+from ..core.result import SCHEMA_VERSION
+from ..credentials.reference import is_reference
+from ..credentials.tomlwrite import write_public
+from . import common
+
+CONFIG_HEADER = (
+    "media-ai config — bindings and scene defaults.\n"
+    "NON-SECRET: safe to share. `credential` is a reference, never a key."
+)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="media-ai bindings", description="List or configure bindings.")
+    sub = ap.add_subparsers(dest="op", required=True)
+    for op in ("list", "available"):
+        common.add_global_args(sub.add_parser(op))
+    add = sub.add_parser("add", help="write a binding into the config")
+    add.add_argument("id", help="<provider>/<model>, or any name when using --extends")
+    add.add_argument("--credential", default=None, help="env://VAR | cred://<account> | keychain://<name>")
+    add.add_argument("--extends", default=None, help="inherit the capabilities of another binding")
+    add.add_argument("--model-id", dest="model_id", default=None, help="override the id sent on the wire")
+    add.add_argument("--base-url", dest="base_url", default=None)
+    common.add_global_args(add)
+    return ap
+
+
+def _entry(rb) -> dict:
+    return {
+        "binding": rb.id,
+        "provider": rb.provider.name,
+        "model": rb.spec.model,
+        "model_id": rb.model_id,
+        "scenes": sorted(s.value for s in rb.spec.scenes),
+        "configured": rb.configured,
+        "needs_credential": rb.provider.auth.needs_credential,
+        "credential": rb.credential,
+        "base_url": rb.base_url,
+    }
+
+
+def _list(args) -> dict:
+    cat, config = catalog(), load_config()
+    return {
+        "ok": True, "schema_version": SCHEMA_VERSION,
+        "bindings": [_entry(b) for b in available_bindings(cat, config)],
+        "defaults": dict(sorted(config.defaults.items())),
+        "config": str(config_path()),
+    }
+
+
+def _available(args) -> dict:
+    """Declared but not yet configured — what you could add, and what it would need."""
+    cat, config = catalog(), load_config()
+    reachable = {b.id for b in available_bindings(cat, config)}
+    out = []
+    for spec in cat.all():
+        if spec.id in reachable:
+            continue
+        provider = cat.providers[spec.provider]
+        out.append({
+            "binding": spec.id,
+            "provider": spec.provider,
+            "title": spec.title,
+            "scenes": sorted(s.value for s in spec.scenes),
+            "env": list(provider.auth.env),
+            "setup_hint": provider.setup_hint,
+            "add": f"media-ai bindings add {spec.id} --credential env://"
+                   f"{provider.auth.env[0] if provider.auth.env else 'API_KEY'}",
+        })
+    return {"ok": True, "schema_version": SCHEMA_VERSION, "bindings": out}
+
+
+def _add(args) -> dict:
+    cat, config = catalog(), load_config()
+    spec = cat.get(args.extends or args.id)
+    if spec is None:
+        raise MediaError(
+            f"nothing declares {args.extends or args.id!r}",
+            category=ErrorCategory.NOT_FOUND, code="unknown_binding",
+            details={"declared": cat.ids()},
+            hint="media-ai bindings available",
+        )
+    provider = cat.providers[spec.provider]
+    if provider.auth.needs_credential and not args.credential:
+        env = provider.auth.env[0] if provider.auth.env else f"{provider.name.upper()}_API_KEY"
+        raise MediaError(
+            f"binding {args.id!r} needs a credential",
+            category=ErrorCategory.AUTH, code="credential_missing",
+            details={"setup_hint": provider.setup_hint},
+            hint=f"media-ai bindings add {args.id} --credential env://{env}",
+        )
+    if args.credential and not is_reference(args.credential):
+        raise MediaError(
+            "--credential must be a reference (env://VAR, cred://<account>, keychain://<name>), never a raw key",
+            category=ErrorCategory.AUTH, code="credential_is_raw_key",
+            hint="put the key in credentials.toml and refer to it as cred://<account>",
+        )
+
+    bindings = dict(config.bindings)
+    bindings[args.id] = UserBinding(
+        id=args.id, extends=args.extends, model_id=args.model_id,
+        base_url=args.base_url, credential=args.credential,
+    )
+    updated = type(config)(bindings=bindings, defaults=dict(config.defaults), path=config.path, exists=True)
+    write_public(config_path(), render_config(updated, header=CONFIG_HEADER))
+    return {
+        "ok": True, "schema_version": SCHEMA_VERSION,
+        "binding": args.id, "config": str(config_path()),
+        "scenes": sorted(s.value for s in spec.scenes),
+    }
+
+
+def _do(args) -> dict:
+    return {"list": _list, "available": _available, "add": _add}[args.op](args)
+
+
+def main() -> int:
+    args = common.parse_args(_build_parser())
+    return common.run(_do, args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

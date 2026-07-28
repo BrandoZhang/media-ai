@@ -7,7 +7,7 @@
 name       = "gemini"
 title      = "Google Gemini"
 transport  = "http"
-adapter    = "media_ai.providers.gemini:GeminiAdapter"
+adapter    = "media_ai.providers.gemini:GeminiProvider"
 docs       = "https://ai.google.dev/gemini-api/docs"
 setup_hint = "Create a key at https://aistudio.google.com/apikey"
 

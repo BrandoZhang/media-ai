@@ -30,7 +30,7 @@ from pathlib import Path
 from .. import __version__
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..credentials.profile import config_path
+from ..core.config import config_path
 from ..credentials.tomlwrite import dumps, write_public
 from ._discovery import SKILL_PREFIX, skill_root
 

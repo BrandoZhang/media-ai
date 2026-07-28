@@ -1,7 +1,7 @@
 """The internal :class:`Provider` interface every adapter implements.
 
-The CLI never touches credentials: it selects a provider by name; the registry
-constructs the adapter with a bound :class:`CredentialProvider`; the adapter
+The CLI never touches credentials: it names a binding; the registry
+constructs the adapter with the binding's :class:`BindingCredentials`; the adapter
 resolves its :class:`Credential` lazily (only when a call actually needs the
 network) and reveals the value only inside its HTTP request builder.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..credentials.resolver import CredentialProvider, default_chain
+from ..credentials.reference import BindingCredentials
 from ..credentials.secret import Credential
 from .capabilities import ModelCapabilities
 from .errors import ErrorCategory, MediaError
@@ -43,8 +43,11 @@ class Provider:
     # it is discovered via an entry point (see media_ai.core.registry).
     model_hints: tuple[str, ...] = ()
 
-    def __init__(self, *, credentials: CredentialProvider | None = None, config: dict | None = None) -> None:
-        self._credentials = credentials or default_chain()
+    def __init__(self, *, credentials: BindingCredentials | None = None, config: dict | None = None) -> None:
+        # No default chain to fall back on: an adapter is constructed from a binding,
+        # and the binding names its credential. One built without one can still run
+        # whatever needs no key (the local and mock backends).
+        self._credentials = credentials or BindingCredentials(None, provider=self.name)
         self.config = config or {}
 
     # ---- credentials -----------------------------------------------------

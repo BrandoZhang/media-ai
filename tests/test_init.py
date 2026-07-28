@@ -95,7 +95,7 @@ def test_non_interactive_never_collects_credentials(home):
     args = make_args(non_interactive=True, skills_dest=str(home / "sk"))
     summary, prompter = run(args, [])
     assert prompter.asked == []
-    assert summary["providers"] == []
+    assert summary["bindings"] == []
     assert not (home / "credentials.toml").exists()
 
 
@@ -274,7 +274,7 @@ class TestTheSkillMenu:
     def test_picking_only_local_skills_asks_for_no_key(self, home):
         args = make_args(skills_dest=str(home / "sk"))
         summary, prompter = run(args, [pick("media-ai-concat")])
-        assert summary["providers"] == []
+        assert summary["bindings"] == []
         assert "no credentials needed" in "\n".join(prompter.notes)
 
 
@@ -376,13 +376,15 @@ class TestGoingBack:
         unwinding all of them would throw away keys already typed."""
         args = make_args(skills_dest=str(home / "sk"))
         # volc is left out: its model step asks unconditional questions of its own.
-        needed = sorted(init_mod.providers_for_skills(["media-ai-image"]))
-        two = [p for p in needed if p != "volc"][:2]
+        needed = sorted(init_mod.bindings_for_skills(["media-ai-image"]))
+        # Ark bindings are left out: their model-id step asks unconditional questions.
+        two = [b for b in needed if not b.startswith("volc-ark/")][:2]
         picked = [needed.index(p) for p in two]
-        # skills -> two providers -> mode -> key, key, (back at the 2nd) -> key
+        # skills -> two bindings -> mode -> key, key, (back at the 2nd) -> key -> default
         _summary, prompter = run(
             args,
-            [pick("media-ai-image"), picked, 0, f"sk-{two[0]}", GoBack, f"sk-{two[0]}-again", "sk-second-try"],
+            [pick("media-ai-image"), picked, 0, f"sk-{two[0]}", GoBack, f"sk-{two[0]}-again",
+             "sk-second-try", 0],
         )
         assert prompter.asked.count("How should keys be stored?") == 1, "the whole step restarted"
         assert creds(home)[two[0]]["api_key"] == f"sk-{two[0]}-again"
@@ -391,7 +393,7 @@ class TestGoingBack:
     def test_back_at_the_first_provider_leaves_the_step(self, home):
         args = make_args(skills_dest=str(home / "sk"))
         _summary, prompter = run(args, [pick("media-ai-image"), [0], 0, GoBack, []])
-        assert prompter.asked.count("These providers can serve the skills you picked. Configure which?") == 2
+        assert prompter.asked.count("These bindings can serve the skills you picked. Configure which?") == 2
 
     def test_a_deselected_provider_takes_its_key_with_it(self, home):
         """Go back and untick the provider: the key typed for it was already in hand,
@@ -400,7 +402,7 @@ class TestGoingBack:
         args = make_args(skills_dest=str(home / "sk"))
         # skills -> providers -> mode -> (key: go back) -> providers: none
         summary, _ = run(args, [pick("media-ai-image"), [0], 0, GoBack, []])
-        assert summary["providers"] == []
+        assert summary["bindings"] == []
         assert not (home / "credentials.toml").exists()
 
     def test_going_back_to_a_local_only_skill_does_not_crash(self, home):
@@ -412,13 +414,13 @@ class TestGoingBack:
             args, [pick("media-ai-image"), [0], 0, GoBack, GoBack, pick("media-ai-concat")],
         )
         assert summary["ok"] is True
-        assert summary["providers"] == []
+        assert summary["bindings"] == []
         assert "media-ai-concat" in summary["skills"][0]["installed"]
 
 
-def provider_index(name: str, skills=("media-ai-image",)) -> list[int]:
-    """Answer the provider menu by name, for the same reason as :func:`pick`."""
-    return [sorted(init_mod.providers_for_skills(list(skills))).index(name)]
+def binding_index(name: str, skills=("media-ai-image",)) -> list[int]:
+    """Answer the binding menu by name, for the same reason as :func:`pick`."""
+    return [sorted(init_mod.bindings_for_skills(list(skills))).index(name)]
 
 
 class TestVerifyIsAskedBeforeAnythingIsWritten:
@@ -431,7 +433,7 @@ class TestVerifyIsAskedBeforeAnythingIsWritten:
     def test_cancelling_at_the_verify_question_writes_nothing(self, home):
         args = make_args(skills_dest=str(home / "sk"), verify=True)
         with pytest.raises(Cancelled):
-            run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, Cancelled])
+            run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, Cancelled])
         assert not (home / "credentials.toml").exists()
 
     def test_going_back_from_the_verify_question_is_not_an_error(self, home, monkeypatch):
@@ -441,9 +443,9 @@ class TestVerifyIsAskedBeforeAnythingIsWritten:
         args = make_args(skills_dest=str(home / "sk"), verify=True)
         summary, _ = run(
             args,
-            [pick("media-ai-image"), provider_index("openai"), 0, SECRET, GoBack, 0, SECRET, True],
+            [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, GoBack, 0, SECRET, True],
         )
-        assert summary["ok"] is True and summary["verified"] == {"openai": "ok"}
+        assert summary["ok"] is True and summary["verified"] == {"openai/gpt-image-2": "ok"}
 
     def test_a_dry_run_never_probes(self, home, monkeypatch):
         """`probe` makes a real call — a *billed* one for openai — and a dry run is
@@ -452,7 +454,7 @@ class TestVerifyIsAskedBeforeAnythingIsWritten:
 
         monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} on a dry run"))
         args = make_args(skills_dest=str(home / "sk"), verify=True, dry_run=True)
-        summary, _ = run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, True])
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, True])
         assert "verified" not in summary
 
     def test_declining_the_paid_probe_is_recorded_not_run(self, home, monkeypatch):
@@ -460,8 +462,8 @@ class TestVerifyIsAskedBeforeAnythingIsWritten:
 
         monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} without asking"))
         args = make_args(skills_dest=str(home / "sk"), verify=True)
-        summary, _ = run(args, [pick("media-ai-image"), provider_index("openai"), 0, SECRET, False])
-        assert summary["verified"] == {"openai": "skipped"}
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, False])
+        assert summary["verified"] == {"openai/gpt-image-2": "skipped"}
         assert (home / "credentials.toml").is_file(), "declining the probe must not undo the install"
 
 
@@ -606,8 +608,8 @@ def test_pasted_key_lands_in_credentials_toml(home):
     args, answers = image_only_flow(home)
     summary, _ = run(args, answers)
     written = creds(home)
-    assert summary["providers"], "no provider configured"
-    provider = summary["providers"][0]
+    assert summary["bindings"], "no provider configured"
+    provider = summary["bindings"][0]
     assert written[provider]["api_key"] == SECRET
 
 
@@ -620,11 +622,21 @@ def test_credentials_file_is_0600(home):
 
 
 def test_env_reference_mode_keeps_the_key_off_disk(home):
+    """"Off disk" now means the secret file is never created at all.
+
+    Previously credentials.toml was written holding `env://VAR` — the key itself was
+    absent, but the file was there. With the reference stored in the config there is
+    nothing secret left to write, so the wizard writes nothing secret.
+    """
     args = make_args(skills_dest=str(home / "sk"))
     # mode 1 = reference an env var; then accept the suggested variable name
     summary, _ = run(args, [pick("media-ai-image"), [0], 1, None])
-    provider = summary["providers"][0]
-    assert creds(home)[provider]["api_key"].startswith("env://")
+    binding = summary["bindings"][0]
+    assert not (home / "credentials.toml").exists()
+
+    from media_ai.core.config import load_config
+
+    assert load_config(home / "config.toml").bindings[binding].credential.startswith("env://")
 
 
 def test_secret_never_reaches_the_summary(home):
@@ -637,7 +649,7 @@ def test_secret_never_reaches_the_summary(home):
 def test_blank_key_configures_nothing(home):
     args, answers = image_only_flow(home, key="   ")
     summary, _ = run(args, answers)
-    assert summary["providers"] == []
+    assert summary["bindings"] == []
     assert not (home / "credentials.toml").exists()
 
 
@@ -828,60 +840,38 @@ class TestProbeClassification:
 # ------------------------------------------------------- model lifecycle in the UI
 
 
-class TestModelChoicesSurfaceLifecycle:
-    """Discovery still lists deprecated and preview models — withholding them would be
-    worse — so anything offering a model to a human must label it. A user picking a
-    superseded model on setup day should not find out months later."""
+class TestBindingChoicesSurfaceLifecycle:
+    """Discovery lists preview and deprecated bindings — withholding them would be
+    worse — so anything offering one to a human must label it. Somebody picking a
+    superseded model on setup day should not find that out months later."""
 
     @staticmethod
-    def hints(provider, group):
-        from media_ai.cli.init import _models_for
+    def hints(skills=("media-ai-image", "media-ai-video", "media-ai-speech")):
+        from media_ai.cli.init import _binding_choice
 
-        return {o.label: o.hint for o in _models_for(provider, group)}
+        offered = init_mod.bindings_for_skills(list(skills))
+        return {bid: _binding_choice(bid, sk).hint for bid, sk in offered.items()}
 
-    def test_deprecated_model_is_labelled_with_its_replacement(self):
-        hint = self.hints("gemini", "image")["gemini-2.5-flash-image"]
-        assert "deprecated" in hint and "gemini-3.1-flash-image" in hint
+    def test_preview_bindings_are_labelled(self):
+        assert "preview" in self.hints()["gemini/veo-3.1"]
 
-    def test_preview_model_is_labelled(self):
-        assert all("preview" in h for h in self.hints("gemini", "video").values())
+    def test_an_unverified_binding_says_so(self):
+        assert "never live-tested" in self.hints()["gemini/veo-3.1"]
 
-    def test_unverified_model_says_so(self):
-        assert "never live-tested" in self.hints("gemini", "video")["veo-3.1-generate-preview"]
-
-    def test_verified_model_shows_its_date(self):
-        assert "2026-07-12" in self.hints("gemini", "image")["gemini-3.1-flash-image"]
+    def test_a_verified_binding_shows_its_date(self):
+        assert "2026-07-12" in self.hints()["gemini/nano-banana-2"]
 
     def test_every_candidate_carries_a_hint(self):
         """A blank hint would render as an unqualified recommendation."""
-        for provider, group in (("gemini", "image"), ("gemini", "video"), ("openai", "image")):
-            for label, hint in self.hints(provider, group).items():
-                assert hint, f"{provider}/{group}:{label} offered with no lifecycle hint"
+        for bid, hint in self.hints().items():
+            assert hint, f"{bid} offered with no lifecycle hint"
 
-    def test_current_and_verified_sort_ahead_of_deprecated(self):
-        from media_ai.cli.init import _models_for
+    def test_the_hint_names_what_the_binding_unlocks(self):
+        assert "image" in self.hints()["gemini/nano-banana-2"]
 
-        labels = [o.label for o in _models_for("gemini", "image")]
-        assert labels[0] == "gemini-3.1-flash-image"
-        assert labels[-1] == "gemini-2.5-flash-image"
-
-    def test_removed_models_are_never_offered(self):
-        from media_ai.cli.init import _models_for
-
-        for group in ("image", "video"):
-            labels = {o.label for o in _models_for("openai", group)} | {
-                o.label for o in _models_for("gemini", group)
-            }
-            assert not any(x in labels for x in ("dall-e-3", "sora", "imagen-3.0-generate-002"))
-
-    def test_options_carry_the_id_as_their_value(self):
+    def test_options_carry_the_binding_id_as_their_value(self):
         """The wizard writes Option.value into config; a mismatch would write a label."""
-        from media_ai.cli.init import _models_for
+        from media_ai.cli.init import _binding_choice
 
-        for o in _models_for("gemini", "image"):
-            assert o.value == o.label
-
-    def test_unknown_provider_degrades_to_free_text(self):
-        from media_ai.cli.init import _models_for
-
-        assert _models_for("nonexistent-provider", "image") == []
+        for bid, skills in init_mod.bindings_for_skills(["media-ai-image"]).items():
+            assert _binding_choice(bid, skills).value == bid

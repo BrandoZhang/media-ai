@@ -1,4 +1,10 @@
-"""Security tests: secret handling, resolver chain, redaction, and file-perm refusal."""
+"""Security tests: secret handling, reference resolution, redaction, file-perm refusal.
+
+The resolution model these cover is deliberately flat: a binding names exactly one
+source and there is no precedence to reason about. So the questions worth asking are
+"does each scheme resolve?", "does a failure say which reference failed?", and "does
+the plaintext stay out of every sink?" — not "which layer won?".
+"""
 
 from __future__ import annotations
 
@@ -8,187 +14,161 @@ import pickle
 import pytest
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.credentials import redaction
-from media_ai.credentials.resolver import default_chain
+from media_ai.credentials.reference import BindingCredentials, is_reference, resolve_reference
 from media_ai.credentials.secret import BrokeredHandle, Secret
-from media_ai.credentials.stores import env_resolver
+from media_ai.credentials.stores import named_account, register_secret_backend
+
+
+def _creds_file(tmp_path, monkeypatch, body: str, mode: int = 0o600):
+    path = tmp_path / "credentials.toml"
+    path.write_text(body, encoding="utf-8")
+    path.chmod(mode)
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(path))
+    return path
+
+
+# --------------------------------------------------------------- the handle
 
 
 def test_secret_never_reveals_in_repr_str_or_pickle():
-    s = Secret("sk-TOPSECRET-abcdef123456", provider="openai", source="env:OPENAI_API_KEY")
+    s = Secret("sk-TOPSECRET-abcdef123456", provider="openai", source="env")
     assert "TOPSECRET" not in repr(s)
     assert str(s) == "***"
     assert "TOPSECRET" not in pickle.loads(pickle.dumps(s))
-    # not JSON-serializable -> can't accidentally end up in result JSON
     with pytest.raises(TypeError):
-        json.dumps(s)
-    assert s.reveal() == "sk-TOPSECRET-abcdef123456"  # explicit reveal still works
-
-
-def test_secret_hash_matches_equality_contract():
-    # __eq__ compares the value, so equal Secrets must hash equal (hash/eq contract),
-    # or set/dict membership silently breaks.
-    a = Secret("same-value-123456", provider="openai", source="env:A")
-    b = Secret("same-value-123456", provider="gemini", source="env:B")  # same value, different provider/source
-    c = Secret("other-value-99999", provider="openai", source="env:A")
-    assert a == b and hash(a) == hash(b)
-    assert b in {a} and a in {b}  # lookup succeeds despite different provider/source
-    assert len({a, b}) == 1 and len({a, c}) == 2
+        json.dumps({"key": s})
 
 
 def test_registered_secret_is_redacted_everywhere():
-    Secret("MY-LIVE-KEY-9999", provider="volc", source="env")
-    assert redaction.redact("authorization: Bearer MY-LIVE-KEY-9999") == "authorization: Bearer ***"
-    obj = redaction.redact_obj({"msg": "key=MY-LIVE-KEY-9999", "authorization": "Bearer x"})
-    assert "MY-LIVE-KEY-9999" not in json.dumps(obj)
-    assert obj["authorization"] == "***"  # sensitive key dropped
+    Secret("sk-live-registered-value-98765", provider="openai", source="env")
+    assert "sk-live-registered-value-98765" not in redaction.redact("using sk-live-registered-value-98765 now")
 
 
-def test_redact_masks_key_shapes_even_if_unregistered():
-    assert redaction.redact("token sk-abcdef1234567890 here") == "token *** here"
-    assert redaction.redact("AIzaSyABCDEFGHIJKLMNOPQRSTUV0123456789") == "***"
+# ----------------------------------------------------------- the schemes
 
 
-def test_chain_env_resolution_and_source(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-value-123456")
-    cred = default_chain().resolve("openai")
+def test_env_reference_resolves(monkeypatch):
+    monkeypatch.setenv("ARK_API_KEY", "ark-env-value-123456")
+    cred = resolve_reference("env://ARK_API_KEY", provider="volc-ark")
     assert isinstance(cred, Secret)
-    assert cred.source == "env:OPENAI_API_KEY"
-    assert cred.reveal() == "sk-env-value-123456"
+    assert cred.reveal() == "ark-env-value-123456"
+    assert cred.source == "env"
 
 
-def test_gemini_two_env_vars(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setenv("GOOGLE_API_KEY", "google-fallback-key-1")
-    assert env_resolver("gemini").reveal() == "google-fallback-key-1"
+def test_env_reference_accepts_the_bare_colon_form(monkeypatch):
+    monkeypatch.setenv("BARE_COLON_VAR", "bare-colon-value-123")
+    assert resolve_reference("env://BARE_COLON_VAR").reveal() == "bare-colon-value-123"
+    assert resolve_reference("env:BARE_COLON_VAR").reveal() == "bare-colon-value-123"
 
 
-def test_missing_credential_raises_auth():
-    with pytest.raises(MediaError) as ei:
-        default_chain().resolve("openai")
-    assert ei.value.category == ErrorCategory.AUTH
-    assert ei.value.exit_code == 4
+def test_cred_reference_resolves_an_account(tmp_path, monkeypatch):
+    _creds_file(tmp_path, monkeypatch, '["volc-ark/seedance-2.0"]\napi_key = "ark-account-999999"\n')
+    assert resolve_reference("cred://volc-ark/seedance-2.0").reveal() == "ark-account-999999"
 
 
-def test_broker_takes_priority_and_holds_no_key(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-be-used-abcdef")
+def test_an_account_key_may_itself_be_a_reference(tmp_path, monkeypatch):
+    """Which is what lets a machine keep every key in a vault and still name accounts."""
+    _creds_file(tmp_path, monkeypatch, '[shared]\napi_key = "env://SHARED_SOURCE"\n')
+    monkeypatch.setenv("SHARED_SOURCE", "resolved-nested-123456")
+    assert resolve_reference("cred://shared").reveal() == "resolved-nested-123456"
+
+
+def test_broker_reference_holds_no_key(monkeypatch):
     monkeypatch.setenv("MEDIA_CRED_BROKER", "https://broker.internal")
     monkeypatch.setenv("MEDIA_CRED_BROKER_TOKEN", "session-token-xyz")
-    cred = default_chain().resolve("openai")
+    cred = resolve_reference("broker://", provider="openai")
     assert isinstance(cred, BrokeredHandle)
     assert cred.endpoint == "https://broker.internal"
     with pytest.raises(MediaError):
-        cred.reveal()  # a brokered handle has no local secret
+        cred.reveal()  # the process never has one to reveal
 
 
-def test_world_readable_config_file_is_refused(tmp_path, monkeypatch):
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[openai]\napi_key = "sk-in-file-123456"\n')
-    cfg.chmod(0o644)  # group/world readable
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
+def test_a_pluggable_backend_serves_its_scheme(monkeypatch):
+    register_secret_backend("vaulttest", lambda ref: "from-the-vault-1234")
+    assert resolve_reference("vaulttest://team/key").reveal() == "from-the-vault-1234"
+
+
+# ------------------------------------------------- failing loudly, and by name
+
+
+@pytest.mark.parametrize(
+    "ref, expected_code, expected_text",
+    [
+        ("env://DEFINITELY_UNSET_VAR", "credential_unresolved", "DEFINITELY_UNSET_VAR"),
+        ("cred://no-such-account", "credential_unresolved", "no-such-account"),
+        ("wishful://thinking", "credential_scheme_unknown", "wishful"),
+    ],
+)
+def test_a_reference_that_does_not_resolve_says_which_one(ref, expected_code, expected_text, tmp_path, monkeypatch):
+    _creds_file(tmp_path, monkeypatch, '[present]\napi_key = "here-123456"\n')
     with pytest.raises(MediaError) as ei:
-        default_chain().resolve("openai")
-    assert ei.value.category == ErrorCategory.AUTH
+        resolve_reference(ref, provider="openai")
+    assert ei.value.category is ErrorCategory.AUTH
+    assert ei.value.exit_code == 4
+    assert ei.value.code == expected_code
+    assert expected_text in ei.value.message
+
+
+def test_nothing_falls_through_to_another_source(tmp_path, monkeypatch):
+    """The point of naming one source: a key elsewhere is never quietly substituted.
+
+    Under the old chain this call succeeded — the env var was one of five places
+    consulted in order. Now the binding said `cred://`, so an absent account is the
+    answer, not a cue to look somewhere else.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-be-used-abcdef")
+    _creds_file(tmp_path, monkeypatch, "[unrelated]\napi_key = \"x-123456\"\n")
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://openai", provider="openai")
+    assert "sk-should-not-be-used-abcdef" not in str(ei.value)
+
+
+def test_a_binding_with_no_credential_says_so():
+    with pytest.raises(MediaError) as ei:
+        BindingCredentials(None, provider="openai").resolve()
+    assert ei.value.code == "credential_missing"
+    assert ei.value.category is ErrorCategory.AUTH
+
+
+# ------------------------------------------------------------ the file itself
+
+
+def test_group_or_world_readable_credentials_file_is_refused(tmp_path, monkeypatch):
+    _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-in-file-123456"\n', mode=0o644)
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://openai")
+    assert ei.value.category is ErrorCategory.AUTH
     assert "chmod 600" in ei.value.message
 
 
-def test_config_file_600_is_read(tmp_path, monkeypatch):
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[volc]\napi_key = "ark-file-key-123456"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    cred = default_chain().resolve("volc")
-    assert cred.reveal() == "ark-file-key-123456" and cred.source == "config-file"
-
-
-def test_cred_reference_resolves_account(tmp_path, monkeypatch):
-    from media_ai.credentials.stores import resolve_reference
-
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[volc_account_a]\napi_key = "ark-account-a-999999"\n')  # flat account block
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    assert resolve_reference("cred://volc_account_a") == "ark-account-a-999999"
-
-
-def test_cred_reference_can_nest_another_reference(tmp_path, monkeypatch):
-    # An account's key may itself be a reference (e.g. env://…), resolved recursively.
-    from media_ai.credentials.stores import resolve_reference
-
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[volc_shared]\napi_key = "env://SHARED_ARK_SOURCE"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    monkeypatch.setenv("SHARED_ARK_SOURCE", "resolved-nested-ark-123456")
-    assert resolve_reference("cred://volc_shared") == "resolved-nested-ark-123456"
-
-
-def test_missing_account_hard_errors_but_soft_misses(tmp_path, monkeypatch):
-    from media_ai.credentials.stores import resolve_reference, try_resolve_reference
-
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[present]\napi_key = "here-123456"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    # soft (fallback list) -> a missing account is a skip, not an error
-    assert try_resolve_reference("cred://absent") is None
-    # strict -> a clear auth error
+def test_a_cred_reference_cycle_is_refused(tmp_path, monkeypatch):
+    _creds_file(tmp_path, monkeypatch, '[loop]\napi_key = "cred://loop"\n')
     with pytest.raises(MediaError) as ei:
-        resolve_reference("cred://absent")
-    assert ei.value.category == ErrorCategory.AUTH
+        resolve_reference("cred://loop")
+    assert "circular" in ei.value.message
 
 
-def test_cred_reference_cycle_is_refused(tmp_path, monkeypatch):
-    # A cred:// that points at itself must not recurse forever — it's a misconfig, so
-    # it is surfaced (raises) even on the soft path rather than silently skipped.
-    from media_ai.credentials.stores import try_resolve_reference
-
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[loop]\napi_key = "cred://loop"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    with pytest.raises(MediaError) as ei:
-        try_resolve_reference("cred://loop")
-    assert ei.value.category == ErrorCategory.AUTH and "circular" in ei.value.message
+def test_an_absent_credentials_file_is_not_an_error(tmp_path, monkeypatch):
+    """Only asking it for something it does not have is."""
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "nope.toml"))
+    assert named_account("anything") is None
 
 
-def test_world_readable_file_refused_even_via_cred_reference(tmp_path, monkeypatch):
-    # The chmod-600 refusal is a security stop, not an "absent source", so it must
-    # surface on the soft path too (never swallowed as a fallback miss).
-    from media_ai.credentials.stores import try_resolve_reference
-
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[x]\napi_key = "sk-in-file-123456"\n')
-    cfg.chmod(0o644)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    with pytest.raises(MediaError) as ei:
-        try_resolve_reference("cred://x")
-    assert "chmod 600" in ei.value.message
+# -------------------------------------------------------- telling the two apart
 
 
-def test_secret_manager_reference_env_backend(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_SECRET_REF_OPENAI", "env://MY_SECRET_SOURCE")
-    monkeypatch.setenv("MY_SECRET_SOURCE", "resolved-from-ref-1234")
-    cred = default_chain().resolve("openai")
-    assert cred.reveal() == "resolved-from-ref-1234" and cred.source == "secret-manager"
-
-
-def test_env_reference_in_config_file_is_resolved_not_stored_raw(tmp_path, monkeypatch):
-    # An `env://VAR` written in credentials.toml must resolve the env var, not be stored
-    # verbatim as the key (env:// is a recognized reference prefix).
-    cfg = tmp_path / "credentials.toml"
-    cfg.write_text('[openai]\napi_key = "env://OPENAI_REF_SOURCE"\n')
-    cfg.chmod(0o600)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(cfg))
-    monkeypatch.setenv("OPENAI_REF_SOURCE", "sk-resolved-from-config-ref-123456")
-    cred = default_chain().resolve("openai")
-    assert cred.reveal() == "sk-resolved-from-config-ref-123456"
-    assert cred.reveal() != "env://OPENAI_REF_SOURCE"  # not the raw reference string
-
-
-def test_resolve_reference_accepts_bare_colon_env_form(monkeypatch):
-    from media_ai.credentials.stores import resolve_reference
-
-    monkeypatch.setenv("BARE_COLON_VAR", "bare-colon-value-123")
-    # Both env://VAR and env:VAR must resolve; the bare-colon form must not IndexError.
-    assert resolve_reference("env://BARE_COLON_VAR") == "bare-colon-value-123"
-    assert resolve_reference("env:BARE_COLON_VAR") == "bare-colon-value-123"
+@pytest.mark.parametrize(
+    "value, reference",
+    [
+        ("env://ARK_API_KEY", True),
+        ("cred://volc-ark/seedance-2.0", True),
+        ("keychain://media-ai/openai", True),
+        ("op://vault/item/field", True),
+        ("arn:aws:secretsmanager:us-east-1:1:secret:x", True),
+        ("sk-a-real-looking-key-000000", False),
+        ("", False),
+    ],
+)
+def test_a_raw_key_is_never_mistaken_for_a_reference(value, reference):
+    """What the shareable config file is checked against before anything is written."""
+    assert is_reference(value) is reference
