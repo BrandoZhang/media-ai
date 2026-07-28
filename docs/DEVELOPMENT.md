@@ -169,21 +169,52 @@ before the runner ever sees it.
 
 ## Releasing
 
-**Actions → “release” → “Run workflow”**, and give it the new version without the
-leading `v` (e.g. `0.3.0`). That is the whole procedure. The workflow
-([`.github/workflows/release.yml`](../.github/workflows/release.yml)) runs the full
-suite, `shellcheck`, and the installer's own tests *before* it touches anything, then
-bumps the version (via [`scripts/bump_version.py`](../scripts/bump_version.py)),
-commits, tags `v0.3.0`, builds the sdist + wheel, and publishes a GitHub Release with
-generated notes and the distributions attached. Tick **dry run** to see everything
-except the push.
+**Bump the version in a pull request. Merging it releases.**
 
-It refuses to start if the version is malformed, if the tag already exists, or if it
-was launched from a branch other than the default one — it tags whatever ref it runs
-on, so that last one would otherwise release a feature branch.
+```bash
+python scripts/bump_version.py 0.3.0     # no leading v
+```
+
+That is the whole procedure. On every push to the default branch,
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) reads
+`__version__`, and if no tag matches it yet, runs the full suite, `shellcheck` and the
+installer's own tests, then tags `v0.3.0`, builds the sdist + wheel, and publishes a
+GitHub Release with generated notes and the distributions attached. Merge anything that
+does *not* change the version and the workflow exits green having done nothing.
+
+The trigger is “this version has no tag yet”, not “the version line changed in this
+push”. That is idempotent — a re-run, a failed run, a squash merge and a force-push all
+reach the same answer — so a release that failed halfway can simply be re-run.
+
+What stays a human decision is the **number**: nothing can infer from a diff whether a
+change is `0.2.1` or `0.3.0`. The *direction* is not a decision, and CI does not leave
+it to one — `ci.yml` runs
+[`scripts/check_version.py`](../scripts/check_version.py) on every pull request and
+fails if the version is behind a released tag, so a bad merge or a bump written against
+a stale branch is caught while it is still a pull request. Ordering is semver
+precedence, so both `0.2.1` and `0.3.0` are acceptable successors to `0.2.0`, and
+`0.3.0-rc1` sorts below `0.3.0`. Leaving the version alone is always fine; that just
+means the change ships in the next release.
+
+```bash
+python scripts/check_version.py          # what CI will say about this tree
+```
 
 A `0.x` version is published as a **pre-release**. `install.sh` lists releases rather
 than asking for `/releases/latest` precisely so it still finds them.
+
+### Releasing without a pull request
+
+**Actions → “release” → “Run workflow”** takes an optional version. Give it one and the
+job does the bump itself and commits it to the default branch; leave it blank and it
+releases whatever version is already in the repo — the way to retry a release whose job
+failed after the tests. Tick **dry run** to see everything except the tag and the
+publish.
+
+It refuses to start if the version is malformed, if it is behind a release, if the tag
+already exists, or if it was launched from a branch other than the default one — it
+tags whatever ref it runs on, so that last one would otherwise release a feature
+branch.
 
 ### Where the version lives
 

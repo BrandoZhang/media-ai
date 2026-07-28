@@ -1,18 +1,34 @@
 name: release
 
-# Cutting a release by hand means bumping a version, remembering which files carry
-# it, tagging, and writing notes — four chances to get it wrong, and the one that
-# matters (tagging a commit whose tests were never run) is invisible until someone
-# installs it. This does all of it from one button, and refuses to tag a red tree.
+# Releases follow the version in the repo. Merge a pull request that bumps
+# `media_ai.__version__` and this tags it and publishes a pre-release; merge anything
+# else and it exits green having done nothing.
 #
-# Run it from the Actions tab: "release" → "Run workflow" → the new version, e.g.
-# 0.3.0. Tick "dry run" first to see exactly what it would do.
+# The trigger is "the version has no tag yet" rather than "the version line changed in
+# this push". That is idempotent — a re-run, a failed run, a squash merge and a
+# force-push all reach the same answer — and it means a release can also be started by
+# creating the tag, or recovered by re-running the job.
+#
+# What stays a human decision is the *number*: nothing can infer from a diff whether a
+# change is 0.2.1 or 0.3.0. Bump it in the pull request, where it gets reviewed:
+#
+#     python scripts/bump_version.py 0.3.0
+#
+# The *direction* is not a decision — ci.yml fails any pull request whose version is
+# behind a released tag, so a bad merge or a bump written against a stale branch is
+# caught while it is still a pull request rather than after it has been tagged.
+#
+# "Run workflow" in the Actions tab does the bump for you, for a release that does not
+# need a pull request. That path commits to the default branch; the automatic one only
+# ever creates a tag.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: "New version, without the leading v (e.g. 0.3.0)"
-        required: true
+        description: "Bump to this version first, without the leading v (e.g. 0.3.0). Blank = release the version already in the repo."
+        required: false
         type: string
       dry_run:
         description: "Do everything except push the tag and publish the release"
@@ -37,56 +53,71 @@ jobs:
           # previous tag, which a shallow clone does not have.
           fetch-depth: 0
 
-      - name: Check the inputs and the starting state
+      - name: Work out whether there is anything to release
+        id: plan
         env:
-          VERSION: ${{ inputs.version }}
+          REQUESTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # Matches tests/test_version.py, which enforces the same shape in CI.
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
-            echo "::error::'$VERSION' is not MAJOR.MINOR.PATCH — pass 0.3.0, not v0.3.0"
-            exit 1
+          if [ -n "$REQUESTED" ]; then
+            # Shape is not checked here: the next step rejects anything that is not a
+            # version, with one regex living in scripts/check_version.py rather than
+            # a copy of it in every file that handles a version string.
+            version="$REQUESTED"
+          else
+            # The version already committed. sed rather than importing the package,
+            # because nothing is installed yet at this point in the job.
+            version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/media_ai/__init__.py)"
+            if [ -z "$version" ]; then
+              echo "::error::could not read __version__ from src/media_ai/__init__.py"
+              exit 1
+            fi
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            # The ordinary case for a push: this version shipped already, so the merge
+            # was not a release. Not a failure — there is simply nothing to do.
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "v$version is already tagged; nothing to release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      # Also a pull-request check, so on the automatic path this is a formality — but
+      # the dispatch path takes a version straight from a form field, and nothing else
+      # would stop that one from being malformed or going backwards.
+      - name: Check the version only goes forwards
+        if: steps.plan.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: python3 scripts/check_version.py "$VERSION"
+
+      - name: Check the branch
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          set -euo pipefail
           if [ "${{ github.ref_name }}" != "${{ github.event.repository.default_branch }}" ]; then
             echo "::error::run this from ${{ github.event.repository.default_branch }}; it tags whatever ref it runs on"
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-            echo "::error::tag v$VERSION already exists"
-            exit 1
-          fi
 
       - name: Install uv
+        if: steps.plan.outputs.release == 'true'
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
 
       - name: Sync
+        if: steps.plan.outputs.release == 'true'
         run: uv sync
 
-      # The whole point of releasing from CI: the tag can only land on a tree that
-      # passed everything, including the installer's own checks.
-      - name: Lint
-        run: uv run ruff check src tests scripts
-
-      - name: Test (offline — no creds, no network)
-        run: uv run pytest -q -m "not live"
-
-      - name: Lint the workflows
-        run: uv run actionlint
-
-      - name: Lint the installer
-        run: shellcheck install/install.sh install/test_parse.sh
-
-      - name: Installer unit tests
-        run: bash install/test_parse.sh
-
-      - name: Installer smoke test (no network, no install)
-        run: bash install/install.sh --dry-run --version main
-
+      # Bumped before the checks run, so what gets tested is exactly what gets tagged.
+      # A no-op when the version is already in the repo, which is the automatic path.
       - name: Bump the version
+        if: steps.plan.outputs.release == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
           # A script rather than an inline heredoc: this step would otherwise be three
@@ -97,18 +128,45 @@ jobs:
           python scripts/bump_version.py "$VERSION"
           git --no-pager diff --stat
 
-      - name: Check the bump landed everywhere
+      # The whole point of releasing from CI: the tag can only land on a tree that
+      # passed everything, including the installer's own checks.
+      - name: Lint
+        if: steps.plan.outputs.release == 'true'
+        run: uv run ruff check src tests scripts
+
+      - name: Test (offline — no creds, no network)
+        if: steps.plan.outputs.release == 'true'
+        run: uv run pytest -q -m "not live"
+
+      - name: Lint the workflows
+        if: steps.plan.outputs.release == 'true'
+        run: uv run actionlint
+
+      - name: Lint the installer
+        if: steps.plan.outputs.release == 'true'
+        run: shellcheck install/install.sh install/test_parse.sh
+
+      - name: Installer unit tests
+        if: steps.plan.outputs.release == 'true'
+        run: bash install/test_parse.sh
+
+      - name: Installer smoke test (no network, no install)
+        if: steps.plan.outputs.release == 'true'
+        run: bash install/install.sh --dry-run --version main
+
+      - name: Check the version reaches the CLI
+        if: steps.plan.outputs.release == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
-          uv run pytest -q tests/test_version.py
           got="$(uv run media-ai --version)"
           [ "$got" = "media-ai $VERSION" ] || { echo "::error::CLI reports '$got'"; exit 1; }
 
       - name: Build the distributions
+        if: steps.plan.outputs.release == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
           uv build
@@ -116,24 +174,36 @@ jobs:
           # only landed in a comment this is where it shows.
           ls "dist/media_ai-$VERSION-py3-none-any.whl" "dist/media_ai-$VERSION.tar.gz"
 
-      - name: Commit and tag
-        if: ${{ !inputs.dry_run }}
+      - name: Commit the bump
+        # Only the dispatch-with-a-version path has anything to commit. The automatic
+        # path releases a version that is already on the branch, so it never writes to
+        # the default branch — which is also what keeps it clear of branch protection.
+        if: steps.plan.outputs.release == 'true' && !inputs.dry_run && inputs.version != ''
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Release v$VERSION"
-          git tag -a "v$VERSION" -m "v$VERSION"
           git push origin HEAD:"${{ github.ref_name }}"
+
+      - name: Tag
+        if: steps.plan.outputs.release == 'true' && !inputs.dry_run
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
           git push origin "v$VERSION"
 
       - name: Publish the release
-        if: ${{ !inputs.dry_run }}
+        if: steps.plan.outputs.release == 'true' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
           # 0.x is published as a pre-release: the CLI's own setup banner says the
@@ -144,14 +214,15 @@ jobs:
           gh release create "v$VERSION" dist/* "${flags[@]}"
 
       - name: Summary
+        if: steps.plan.outputs.release == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           {
             if [ "${{ inputs.dry_run }}" = "true" ]; then
               echo "### Dry run — nothing was pushed"
               echo
-              echo "\`v$VERSION\` would have been tagged on \`${{ github.sha }}\` and released."
+              echo "v$VERSION would have been tagged on ${{ github.sha }} and released."
             else
               echo "### Released [v$VERSION](${{ github.server_url }}/${{ github.repository }}/releases/tag/v$VERSION)"
               echo
