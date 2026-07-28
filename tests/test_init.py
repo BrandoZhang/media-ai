@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import CATALOG
 from media_ai.cli import init as init_mod
 from media_ai.cli._discovery import core_skills, selectable_skills
 from media_ai.cli._prompt import Cancelled, GoBack, ScriptedPrompter
@@ -427,48 +428,55 @@ def binding_index(name: str, skills=("media-ai-image",)) -> list[int]:
     return [sorted(init_mod.bindings_for_skills(list(skills))).index(name)]
 
 
-class TestVerifyIsAskedBeforeAnythingIsWritten:
-    """`--verify` used to ask its question *after* the apply phase, which made the
-    cancel message ("nothing was written") false and let an Esc escape the driver.
-
-    Only openai is asked about — it is the one with no free probe — so these drive it.
+class TestVerifyProbesAfterTheWritesAndOnlyWhenAsked:
+    """`--verify` used to ask a question *after* the apply phase, which made the cancel
+    message ("nothing was written") false and let an Esc escape the driver. The question
+    is gone now — every probe is a free GET, so the flag is the whole consent — but the
+    ordering it forced is the part that has to hold.
     """
 
-    def test_cancelling_at_the_verify_question_writes_nothing(self, home):
-        args = make_args(skills_dest=str(home / "sk"), verify=True)
-        with pytest.raises(Cancelled):
-            run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, Cancelled])
-        assert not (home / "credentials.toml").exists()
-
-    def test_going_back_from_the_verify_question_is_not_an_error(self, home, monkeypatch):
+    def test_the_flag_probes_every_binding_that_got_a_credential(self, home, monkeypatch):
         import media_ai.cli._verify as verify_mod
 
-        monkeypatch.setattr(verify_mod, "probe", lambda p: "ok")
+        monkeypatch.setattr(verify_mod, "probe", lambda b: f"ok:{b}")
+        args = make_args(skills_dest=str(home / "sk"), verify=True)
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
+        # Probed *by binding id*: the credential belongs to the binding, so verifying
+        # one and reporting for its siblings would clear a key nothing touched.
+        assert summary["verified"] == {"openai/gpt-image-2": "ok:openai/gpt-image-2"}
+        assert (home / "credentials.toml").is_file()
+
+    def test_without_the_flag_nothing_is_probed(self, home, monkeypatch):
+        import media_ai.cli._verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "probe", lambda b: pytest.fail(f"probed {b} without --verify"))
+        args = make_args(skills_dest=str(home / "sk"))
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
+        assert "verified" not in summary
+
+    def test_going_back_over_the_verify_step_is_not_an_error(self, home, monkeypatch):
+        """The step asks nothing, so `run_steps` must skip back *over* it rather than
+        stopping on a screen with no question."""
+        import media_ai.cli._verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "probe", lambda b: "ok")
         args = make_args(skills_dest=str(home / "sk"), verify=True)
         summary, _ = run(
             args,
-            [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, GoBack, 0, SECRET, True],
+            [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, GoBack, 0, SECRET],
         )
         assert summary["ok"] is True and summary["verified"] == {"openai/gpt-image-2": "ok"}
 
     def test_a_dry_run_never_probes(self, home, monkeypatch):
-        """`probe` makes a real call — a *billed* one for openai — and a dry run is
-        documented as reporting what would be written without writing it."""
+        """A probe makes a real network call, and a dry run is documented as reporting
+        what *would* be written. It would also answer the wrong question: nothing was
+        written, so it would report on whatever credentials happened to be there."""
         import media_ai.cli._verify as verify_mod
 
-        monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} on a dry run"))
+        monkeypatch.setattr(verify_mod, "probe", lambda b: pytest.fail(f"probed {b} on a dry run"))
         args = make_args(skills_dest=str(home / "sk"), verify=True, dry_run=True)
-        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, True])
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
         assert "verified" not in summary
-
-    def test_declining_the_paid_probe_is_recorded_not_run(self, home, monkeypatch):
-        import media_ai.cli._verify as verify_mod
-
-        monkeypatch.setattr(verify_mod, "probe", lambda p: pytest.fail(f"probed {p} without asking"))
-        args = make_args(skills_dest=str(home / "sk"), verify=True)
-        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, False])
-        assert summary["verified"] == {"openai/gpt-image-2": "skipped"}
-        assert (home / "credentials.toml").is_file(), "declining the probe must not undo the install"
 
 
 # --------------------------------------------------------------------- receipt
@@ -879,3 +887,69 @@ class TestBindingChoicesSurfaceLifecycle:
 
         for bid, skills in init_mod.bindings_for_skills(["media-ai-image"]).items():
             assert _binding_choice(bid, skills).value == bid
+
+
+# ------------------------------------------------------------- probe strategies
+
+
+class TestEveryProbeStrategyActuallyRuns:
+    """The probes rotted once already, and nothing noticed.
+
+    `probe()` swallows every exception so the wizard cannot be taken down by one — which
+    also means a probe calling a method that no longer exists reports `unreachable` for
+    a perfectly good key, forever, in silence. These drive each strategy against a fake
+    transport so a rename cannot pass unseen again.
+    """
+
+    def _run(self, monkeypatch, binding_id, responses):
+        from conftest import FakeClient, adapter_for
+        import media_ai.cli._verify as verify_mod
+
+        adapter = adapter_for(binding_id)
+        fake = FakeClient(responses)
+        monkeypatch.setattr(adapter, "_prepare", lambda **kw: (fake, {"Authorization": "Bearer test"}))
+        monkeypatch.setattr(verify_mod, "_adapter", lambda b: adapter)
+        return verify_mod.probe(binding_id), fake
+
+    @pytest.mark.parametrize("binding_id", ["openai/gpt-image-2", "gemini/nano-banana-2",
+                                            "elevenlabs/eleven-multilingual-v2", "volc-ark/seedance-2.0"])
+    def test_a_good_key_reads_as_ok(self, monkeypatch, binding_id):
+        verdict, fake = self._run(monkeypatch, binding_id, [{}])
+        assert verdict == "ok"
+        assert fake.calls[0]["method"] == "GET", "a probe must not create anything"
+
+    @pytest.mark.parametrize("binding_id", ["openai/gpt-image-2", "gemini/nano-banana-2",
+                                            "elevenlabs/eleven-multilingual-v2", "volc-ark/seedance-2.0"])
+    def test_the_request_names_no_model(self, monkeypatch, binding_id):
+        """A probe that named a model would test that model, not the credential — and a
+        4xx about the model would be read as a bad key."""
+        _, fake = self._run(monkeypatch, binding_id, [{}])
+        model_id = CATALOG.get(binding_id).model_id
+        assert model_id not in fake.calls[0]["path"]
+
+    def test_a_rejected_key_reads_as_invalid(self, monkeypatch):
+        from media_ai.core.errors import ErrorCategory, MediaError
+
+        verdict, _ = self._run(monkeypatch, "openai/gpt-image-2",
+                               [MediaError("invalid api key", category=ErrorCategory.AUTH)])
+        assert verdict == "invalid"
+
+    def test_a_not_found_still_proves_the_key(self, monkeypatch):
+        """Ark has no listing endpoint: it looks up a task that cannot exist, and the
+        404 only arrives because authentication succeeded first."""
+        from media_ai.core.errors import ErrorCategory, MediaError
+
+        verdict, _ = self._run(monkeypatch, "volc-ark/seedance-2.0",
+                               [MediaError("no such task", category=ErrorCategory.NOT_FOUND)])
+        assert verdict == "ok"
+
+    def test_an_unconfigured_binding_never_raises(self):
+        """`_adapter` is not stubbed here, so this exercises the real lookup failing."""
+        from media_ai.cli._verify import probe
+
+        assert probe("openai/gpt-image-2") == "unreachable"
+
+    def test_a_provider_with_no_strategy_says_so(self):
+        from media_ai.cli._verify import probe
+
+        assert probe("mock/mock") == "unsupported"

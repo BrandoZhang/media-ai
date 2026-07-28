@@ -1,8 +1,17 @@
-"""Optional key probes for ``media-ai init --verify``.
+"""Optional credential probes for ``media-ai init --verify``.
 
-Off by default, because the probes are not uniformly free: three providers expose a
-credential-free or read-only call, but OpenAI has none — verifying it costs a real
-(small) image generation. ``init`` asks separately before spending that.
+**A probe belongs to a binding, not to a provider.** Each binding names its own
+credential, so two bindings on one endpoint can hold different keys — checking one and
+reporting the answer for both is how ``--verify`` would confidently clear a key it
+never touched.
+
+That is also why every probe here is a **model-independent authenticated GET**. A
+probe that generates something has to name a model, which makes it a test of *that*
+binding's model rather than of the key: sending a speech model id to a music endpoint
+earns a 4xx that says nothing about the credential, and reading it as "invalid" sends
+someone to rotate a working key. A listing or a lookup authenticates first and answers
+second, which is exactly the shape a credential check wants — and it is free, so there
+is nothing to ask permission for before running one.
 
 Classifying the outcome takes more than the exit code. A provider's error mapping
 follows the HTTP status it actually returns, and Google answers an invalid API key
@@ -64,83 +73,62 @@ def classify(exc: MediaError | None) -> str:
     return "invalid"
 
 
-def _adapter(provider: str):
-    """The adapter for a provider's first configured binding.
-
-    A probe checks the *credential*, which a binding owns — and every binding on one
-    provider shares an endpoint, so any of them proves the key. Which one is arbitrary
-    and does not need to be a choice.
-    """
+def _adapter(binding: str):
+    """The adapter for exactly this binding — the one holding the credential to check."""
     from ..core.config import load_config
     from ..core.registry import build_adapter, catalog
     from ..core.resolve import available_bindings
 
     for rb in available_bindings(catalog(), load_config()):
-        if rb.provider.name == provider and rb.configured:
+        if rb.id == binding and rb.configured:
             return build_adapter(rb)
-    raise MediaError(f"no configured binding for provider {provider!r}", category=ErrorCategory.AUTH)
+    raise MediaError(f"binding {binding!r} is not configured", category=ErrorCategory.AUTH)
 
 
-def _probe_job_query(provider: str, job_id: str) -> MediaError | None:
-    """Query a job id that cannot exist. Authentication happens before lookup, so a
-    not-found answer proves the key worked — and a GET costs nothing."""
-    from ..core.types import JobRef
+def _authenticated_get(path: str):
+    """A probe that GETs one model-independent path through the binding's own client.
 
-    try:
-        _adapter(provider).query_job(JobRef(id=job_id, provider=provider))
-        return None
-    except MediaError as exc:
-        return exc
+    Goes through ``_prepare`` so the credential is resolved, revealed and redacted by
+    the same code a real call uses — a probe that authenticated some other way would
+    be testing itself.
+    """
 
+    def run(adapter) -> MediaError | None:
+        try:
+            client, headers = adapter._prepare()
+            client.request_json("GET", path, headers=headers)
+            return None
+        except MediaError as exc:
+            return exc
 
-def _probe_elevenlabs() -> MediaError | None:
-    """``music plan`` is credit-free but fully authenticated."""
-    from ..core.types import MusicRequest
-
-    try:
-        _adapter("elevenlabs").plan_music(MusicRequest(prompt="probe", duration=3))
-        return None
-    except MediaError as exc:
-        return exc
+    return run
 
 
-def _probe_openai() -> MediaError | None:
-    """The only paid probe: OpenAI exposes no free authenticated call. Callers must
-    confirm before this runs."""
-    import tempfile
-    from pathlib import Path
-
-    from ..core.types import ImageRequest
-
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            _adapter("openai").generate_image(
-                ImageRequest(prompt="a grey square", model="gpt-image-1-mini",
-                             output=Path(tmp) / "probe.png", options={"quality": "low"})
-            )
-        return None
-    except MediaError as exc:
-        return exc
-
-
+#: Per provider, the cheapest request that authenticates without naming a model.
+#: A 404 counts as success — see :func:`classify`: the lookup happened, which means
+#: the key was accepted first.
 _PROBES = {
-    "gemini": lambda: _probe_job_query("gemini", "models/veo-3.1-generate-preview/operations/probe"),
-    "volc-ark": lambda: _probe_job_query("volc-ark", "probe-nonexistent-task"),
-    "elevenlabs": _probe_elevenlabs,
-    "openai": _probe_openai,
+    # Listing what the key can see: free, and unrelated to any one binding's model.
+    "openai": _authenticated_get("/models"),
+    "gemini": _authenticated_get("/models"),
+    "elevenlabs": _authenticated_get("/user"),
+    # Ark has no listing endpoint; a task id that cannot exist answers 404 *after*
+    # authenticating, which is the same signal.
+    "volc-ark": _authenticated_get("/contents/generations/tasks/probe-nonexistent-task"),
 }
 
 
 def probe(binding: str) -> str:
-    """Check a binding's credential. Never raises — the result is a label.
+    """Check one binding's credential. Never raises — the result is a label.
 
-    Keyed by provider because a probe tests the *endpoint's* credential, which every
-    binding on that provider shares.
+    The *strategy* is chosen per provider, because which request is cheap is a fact
+    about the API surface. It is then run through the binding the caller named, so the
+    key that gets tested is the key that binding would actually use.
     """
-    fn = _PROBES.get(binding.partition("/")[0])
-    if fn is None:
+    strategy = _PROBES.get(binding.partition("/")[0])
+    if strategy is None:
         return "unsupported"
     try:
-        return classify(fn())
+        return classify(strategy(_adapter(binding)))
     except Exception:  # noqa: BLE001 - a probe must never take the wizard down
         return "unreachable"

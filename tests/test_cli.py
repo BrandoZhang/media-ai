@@ -214,6 +214,14 @@ def test_naming_no_binding_with_no_default_refuses_rather_than_guessing(tmp_path
     assert err["details"]["scene"] == "video.text_to_video"
     assert not (tmp_path / "v.mp4").exists()
 
+    # ...and the refusal must not talk the caller into it either. `mock/mock` is the
+    # only thing an unconfigured machine can reach, so it is listed truthfully — but a
+    # hint is read as an instruction, and this one would install the placeholder as the
+    # default for every video this agent ever asks for.
+    assert "mock/mock" in err["details"]["available"]
+    assert err["hint"] == "media-ai bindings available"
+    assert "mock" not in err["hint"]
+
 
 def test_secret_never_appears_in_output(env, tmp_path):
     env = dict(env)

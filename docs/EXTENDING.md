@@ -52,6 +52,10 @@ through in the adapter — one manifest entry plus one line.
 
 Two rules for the data itself:
 
+- **`placeholder = true` only if the binding fabricates output.** It removes the binding
+  from every *recommendation* — a hint after a refusal, a suggested scene default — while
+  leaving it fully callable by name. Only the offline mock carries it, and a real backend
+  that did would quietly stop being offered anywhere.
 - **`verified` is a date or absent.** It records a run against the live API. Filling it
   in to make a table look complete turns "unknown" into "confirmed", which is the one
   thing that field must never do.

@@ -68,7 +68,7 @@ class ResolvedBinding:
         """
         if scene in self.spec.scenes:
             return
-        alternatives = [b.id for b in available if scene in b.spec.scenes and b.id != self.id]
+        alternatives = [b for b in available if scene in b.spec.scenes and b.id != self.id]
         raise MediaError(
             f"binding {self.id!r} does not support {scene.value}",
             category=ErrorCategory.UNSUPPORTED,
@@ -79,15 +79,32 @@ class ResolvedBinding:
                 "binding": self.id,
                 "scene": scene.value,
                 "supported_scenes": sorted(s.value for s in self.spec.scenes),
-                "alternatives": alternatives,
+                "alternatives": [b.id for b in alternatives],
                 "hint": _hint_for_scene(scene, alternatives),
             },
         )
 
 
-def _hint_for_scene(scene: Scene, alternatives: list[str]) -> str:
-    if alternatives:
-        return f"re-run with --binding {alternatives[0]}"
+def _recommendable(bindings: list["ResolvedBinding"]) -> list[str]:
+    """Ids worth *suggesting*, placeholders removed.
+
+    A hint is read as an instruction — the skills tell agents it is usually a command
+    to run verbatim — so suggesting the offline mock would talk a machine with nothing
+    configured into an install that answers every request with a drawing of the prompt,
+    `ok: true`, exit 0. That is the one failure an agent cannot tell from success, and
+    the point of dropping the old `$MEDIA_PROVIDER` default was to make it unreachable
+    by accident. Leaving it in a hint would have put it straight back.
+
+    Placeholders stay in the *listings* beside the hint (`available`, `alternatives`):
+    they are genuinely there, and hiding them would be a different lie.
+    """
+    return [b.id for b in bindings if not b.spec.placeholder]
+
+
+def _hint_for_scene(scene: Scene, alternatives: list["ResolvedBinding"]) -> str:
+    real = _recommendable(alternatives)
+    if real:
+        return f"re-run with --binding {real[0]}"
     return f"no configured binding serves {scene.value}; run `media-ai bindings available` to see what could"
 
 
@@ -286,17 +303,20 @@ def _default_for(scene: Scene, available: list[ResolvedBinding], config: Config)
             },
         )
 
-    serving = [b.id for b in available if scene in b.spec.scenes]
+    serving = [b for b in available if scene in b.spec.scenes]
+    real = _recommendable(serving)
     raise MediaError(
         f"no binding configured for {scene.value}",
         category=ErrorCategory.CLI, code="no_default_binding",
         details={
             "scene": scene.value,
-            "available": serving,
+            "available": [b.id for b in serving],
+            # Only a binding that really generates gets recommended. With none, the next
+            # step is finding one to add — never making the placeholder the default.
             "hint": (
-                f"media-ai config set-default {scene.value} {serving[0]}"
-                if serving
-                else "media-ai init"
+                f"media-ai config set-default {scene.value} {real[0]}"
+                if real
+                else "media-ai bindings available"
             ),
         },
     )

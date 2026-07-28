@@ -278,6 +278,17 @@ class BindingSpec:
     never, and is reported as such. Filling it in with a plausible date would convert
     "unknown" into "confirmed", which is the one thing this field must never do."""
     constraints: Constraints = field(default_factory=Constraints)
+    placeholder: bool = False
+    """This binding fabricates output rather than generating it (the offline mock).
+
+    Declared rather than inferred from the name, because everything that must not
+    *recommend* it needs a machine-readable answer: a suggested scene default, an
+    alternative offered after a refusal, an agent scanning `capabilities` for somewhere
+    to send work. A placeholder returned as `ok: true` is the worst thing this tool can
+    hand an agent, and prose in a manifest comment cannot stop it — only a field can.
+
+    It never makes a binding unreachable. Asking for `--binding mock/mock` by name, or
+    choosing it as a scene default, works exactly as before."""
     usage_unit: str | None = None
     notes: tuple[str, ...] = ()
 
@@ -304,6 +315,7 @@ class BindingSpec:
             "replacement": self.replacement,
             "verified": self.verified,
             "scenes": sorted(s.value for s in self.scenes),
+            "placeholder": self.placeholder,
             "constraints": self.constraints.to_dict(),
             "notes": list(self.notes),
         }
@@ -477,6 +489,7 @@ def _parse_binding(raw: dict, provider: ProviderSpec, source: str) -> BindingSpe
         lifecycle=lifecycle, replacement=replacement, reason=raw.get("reason") or None,
         verified=verified,
         constraints=_parse_constraints(_table(raw, "constraints", source), source),
+        placeholder=bool(raw.get("placeholder", False)),
         usage_unit=raw.get("usage_unit") or None,
         notes=_str_tuple(raw, "notes", source),
     )

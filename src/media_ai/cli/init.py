@@ -612,19 +612,17 @@ def _ask_defaults(args, prompter, answers: _Answers) -> None:
 def _ask_verify(args, prompter, answers: _Answers) -> None:
     """Decide *whether* to probe each key. The probing itself happens after the apply.
 
-    Asked here rather than beside the probe so the rule holds without an exception:
-    a question after the writes have happened would make "cancelled; nothing was
-    written" a lie, and an Esc there would escape the step driver entirely.
+    Now that every probe is a free authenticated GET (see ``_verify``), ``--verify``
+    is the whole answer and there is nothing left to confirm — the flag already *is*
+    the consent. This step therefore asks nothing; ``run_steps`` skips back over it, so
+    it stays invisible rather than becoming an empty screen.
+
+    It remains a step rather than a line inside the apply phase because that is the
+    rule: a question after the writes have happened would make "cancelled; nothing was
+    written" a lie, and an Esc there would escape the step driver entirely. Keeping the
+    seam means restoring a question here later costs nothing.
     """
-    answers.verify = {}
-    if not args.verify:
-        return
-    for bid in sorted(answers.creds):
-        provider = bid.partition("/")[0]
-        answers.verify[bid] = provider != "openai" or prompter.confirm(
-            "openai has no free probe — verifying costs one small image generation. Verify it?",
-            default=False,
-        )
+    answers.verify = {bid: True for bid in sorted(answers.creds)} if args.verify else {}
 
 
 # -- and then the doing ----------------------------------------------------
@@ -755,7 +753,10 @@ def _report(summary: dict, prompter) -> None:
             "\nNo default was set, so every call has to name a binding:\n"
             f"  media-ai config set-default <scene> {summary['bindings'][0]}"
         )
-    prompter.note("\nTry it offline:\n  media-ai image generate --provider mock --prompt hello --output /tmp/x.png")
+    # Named in full, and only here. `mock/mock` draws a picture of the prompt, so the
+    # one safe way to mention it is as something the reader is deliberately asking for.
+    prompter.note("\nTry it offline (draws a placeholder — no key, no network):\n"
+                  "  media-ai image generate --binding mock/mock --prompt hello --output /tmp/x.png")
     prompter.outro(
         "Dry run — nothing was changed."
         if dry

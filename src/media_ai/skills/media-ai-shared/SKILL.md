@@ -149,9 +149,14 @@ media-ai usage                                            # 5. what did it cost?
 
 `media-ai bindings available` lists what could be added and prints the exact
 `media-ai bindings add …` command for each. `media-ai init` is the guided version.
-**Do not fall back to `--binding mock/mock` to make a command succeed** — mock draws
-placeholder files, and a placeholder returned as a deliverable is worse than a
-failure.
+
+**Do not reach for a `placeholder` binding to make a command succeed.** Bindings whose
+`capabilities` entry has `"placeholder": true` fabricate output — the offline mock
+draws the prompt as text on a coloured rectangle — and hand it back as `ok: true`,
+exit 0. A placeholder delivered as a deliverable is worse than a failure, because
+nothing downstream can tell. The CLI never suggests one for this reason: a refusal
+lists it under `available` but never in the `hint`. Use one only when the task you were
+given is explicitly to exercise the pipeline offline.
 
 ## References
 

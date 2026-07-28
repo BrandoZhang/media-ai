@@ -54,7 +54,7 @@ media-ai capabilities --binding <provider>/<model> --pretty     # one, in full
  "bindings": [
    {"binding": "<provider>/<model>", "provider": "…", "model": "…", "model_id": "<wire id>",
     "title": "…", "lifecycle": "ga", "replacement": null, "verified": "2026-05-14",
-    "scenes": ["image.text_to_image", "image.image_to_image"],
+    "scenes": ["image.text_to_image", "image.image_to_image"], "placeholder": false,
     "constraints": {
       "supports": {"seed": false, "negative_prompt": false, "transparency": true},
       "options": ["moderation", "output_compression"],
@@ -78,6 +78,11 @@ media-ai capabilities --binding <provider>/<model> --pretty     # one, in full
   credential resolves, or it needs none); `configured` means the config names it
   explicitly. **Filter on `available` before choosing** — a binding that exists in the
   package but has no key is not a place you can send work.
+- **`placeholder`** — `true` means it *fabricates* output instead of generating it (the
+  offline mock draws the prompt as text on a coloured rectangle). It is always
+  `available`, because it needs no credential. **Never choose one to satisfy a request**:
+  it returns `ok: true` and exit 0, which is the one failure you cannot tell from
+  success. Use it only when the task is explicitly to test the pipeline offline.
 - **`constraints.geometry`** — `mode` is `pixels`, `aspect_ratio`, `both` or `none`,
   plus whichever of `pixel_sizes` / `aspect_ratios` / `named_sizes` / `pixel_min` /
   `pixel_max` / `pixel_multiple` / `ratio_range` that binding actually declares.
@@ -94,8 +99,8 @@ media-ai capabilities --binding <provider>/<model> --pretty     # one, in full
 
 > **An absent field means "not declared", never "zero" or "unlimited".** If
 > `max_count` is missing, the limit is unknown — do not read it as 0 and do not
-> invent one. Nothing here is filled with a placeholder, which is what lets you trust
-> the values that *are* present.
+> invent one. No field here is filled with a stand-in value, which is what lets you
+> trust the ones that *are* present.
 
 ## `lifecycle` and `verified`
 

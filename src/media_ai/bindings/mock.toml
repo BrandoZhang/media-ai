@@ -20,6 +20,9 @@ kind = "none"
 id     = "mock/mock"
 model  = "mock"
 title  = "Mock"
+# Nothing may *recommend* this binding — not a hint after a refusal, not a suggested
+# scene default. Reaching it takes naming it. See BindingSpec.placeholder.
+placeholder = true
 scenes = [
   "image.text_to_image",
   "image.image_to_image",

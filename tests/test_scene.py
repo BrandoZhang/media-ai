@@ -94,3 +94,29 @@ def test_scene_groups_match_cli_command_groups():
 def test_unknown_request_type_is_an_error_not_a_guess():
     with pytest.raises(TypeError):
         derive_scene(object())
+
+
+# --------------------------------------------------------------- placeholders
+
+
+def test_only_the_offline_binding_declares_itself_a_placeholder():
+    """`placeholder` removes a binding from every recommendation, so a real backend
+    carrying it by mistake would silently stop being offered anywhere."""
+    from conftest import CATALOG
+
+    assert {b.id for b in CATALOG.all() if b.placeholder} == {"mock/mock"}
+
+
+def test_a_placeholder_is_never_recommended_but_is_still_reported():
+    """The two halves have to differ: an agent needs to know mock exists, and must not
+    be told to send work to it."""
+    from conftest import CATALOG
+    from media_ai.core.resolve import _recommendable
+
+    class _Fake:
+        def __init__(self, spec):
+            self.spec, self.id = spec, spec.id
+
+    bindings = [_Fake(CATALOG.get("mock/mock")), _Fake(CATALOG.get("openai/gpt-image-2"))]
+    assert _recommendable(bindings) == ["openai/gpt-image-2"]
+    assert _recommendable([_Fake(CATALOG.get("mock/mock"))]) == []
