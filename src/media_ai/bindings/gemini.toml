@@ -27,7 +27,7 @@ id       = "gemini/nano-banana-2"
 model    = "nano-banana-2"
 model_id = "gemini-3.1-flash-image"
 title    = "Nano Banana 2"
-verified = "2026-07-12"
+verified = "2026-07-28"
 scenes   = ["image.text_to_image", "image.image_to_image"]
 notes    = [
   "conversational generate + edit + compose; SynthID watermarking is unconditional",
@@ -65,6 +65,7 @@ model    = "veo-3.1"
 model_id = "veo-3.1-generate-preview"
 title    = "Veo 3.1"
 lifecycle = "preview"
+verified  = "2026-07-28"
 scenes   = [
   "video.text_to_video",
   "video.image_to_video",
@@ -77,6 +78,7 @@ notes = [
   "durationSeconds must be 8 for extension, reference images, 1080p and 4K",
   "jobs cannot be cancelled on the Developer API",
   "audio is native on Veo 3.x; the explicit generateAudio flag is unreliable here",
+  "a job id that does not exist answers PERMISSION_DENIED, not NOT_FOUND, so `job query` on a mistyped id reports auth (exit 4) rather than not-found (exit 9)",
 ]
 
 [binding.constraints]
@@ -114,7 +116,7 @@ model     = "gemini-tts"
 model_id  = "gemini-2.5-flash-preview-tts"
 title     = "Gemini TTS"
 lifecycle = "preview"
-verified  = "2026-07-12"
+verified  = "2026-07-28"
 scenes    = ["speech.text_to_speech", "speech.dialogue"]
 notes     = [
   "style, tone, accent, pace and inline [tags] are directed in the prompt text, not by parameters",

@@ -14,10 +14,15 @@ shapes match the wire format and to surface real bugs.
 | Provider | Paths exercised live | Last run | Result |
 |---|---|---|---|
 | **mock** | n/a — offline by design (no network) | — | — |
-| **gemini** | image (text/edit/compose/geometry/grounding/thinking), Veo video (t2v, first/last-frame, reference-images, extension, async job), TTS (single + multi-speaker) | 2026-07-12 | ✅ all paths; 3 bugs found+fixed |
-| **openai** | image `generate` (gpt-image-2), base64→PNG, usage/meta echo | 2026-07-12 | ✅ |
-| **elevenlabs** | `speech generate` (eleven_multilingual_v2) | 2026-07-12 | ✅ |
+| **gemini** | image (text/edit/compose/geometry/grounding/thinking), Veo video (t2v, first/last-frame, reference-images, extension, async job), TTS (single + multi-speaker) | **2026-07-28** | ✅ all paths; 4 bugs found+fixed |
+| **openai** | image `generate` (gpt-image-2), base64→PNG, usage/meta echo | 2026-07-12 | ✅ (not re-run post-refactor) |
+| **elevenlabs** | `speech generate` (eleven_multilingual_v2) | 2026-07-12 | ✅ (not re-run post-refactor) |
 | **volc** (Ark) | — not yet live-tested (no key available) | — | ⏳ |
+
+Only **gemini** has been re-run since the binding refactor. The openai and elevenlabs
+rows predate it: their adapters are covered offline and by `tests/test_contract.py`,
+but nobody has watched them answer a real request through the new addressing, so treat
+those two `verified` dates as what they say — a real run, on the *old* call path.
 
 Pre-flight validation was also confirmed live: an unsupported request (e.g.
 `gemini-3.1-flash-lite-image --resolution 4K`) fails with **exit 3** and a
@@ -111,8 +116,41 @@ parsed from the mimeType).
   (→ `meta.response_id`), interleaved `text` parts (→ `meta.text`), and
   `groundingMetadata` on grounded requests (→ `meta.grounding`).
 
+### Re-verified 2026-07-28 (post-refactor)
+
+The whole binding path was re-run against the live API after the binding refactor,
+through the new addressing (`--binding gemini/…`) and a `cred://` account:
+
+| Path | Scene | Result |
+|---|---|---|
+| text → image | `image.text_to_image` | ✅ 1024×1024 PNG for `--aspect-ratio 1:1 --resolution 1K` |
+| image → image | `image.image_to_image` | ✅ via `image edit --reference`; same geometry preserved |
+| text → speech | `speech.text_to_speech` | ✅ 24 kHz mono WAV |
+| dialogue | `speech.dialogue` | ✅ two voices + `--instruction` |
+| text → video | `video.text_to_video` | ✅ async submit → `poll` string run **verbatim** → 1280×720, 4.00 s, h264 + AAC |
+| credential probe | — | ✅ `--verify` reports `ok` (`GET /models`) |
+
+Confirmed by that run, and worth keeping:
+
+- **`meta.scene` is absent on `job query`, `meta.binding` is present.** Exactly as
+  designed: the process that finalizes a job never saw the inputs that implied a scene.
+  The ledger line lands under `by_scene["?"]` with the cost still attributed to the
+  right binding.
+- **The `poll` string is runnable as printed** — copied out of the JSON and executed
+  unchanged, it polled and finalized the download.
+- **Pre-flight refusals never reach the network**: an undeclared voice, a duration
+  outside `[4, 6, 8]`, and pixel `--size` on a ratio-only binding all fail at exit 3.
+
 ### Bugs found and fixed
 
+0. **Pixel geometry was unvalidated on the video path** (found 2026-07-28). The video
+   branch of `_check_geometry` returned before comparing the request's geometry *form*
+   against the binding's declared `mode`, so `--size 1280x720` on a ratio-only video
+   binding validated clean, submitted, and came back as a **billed job at the
+   provider's default geometry** — different output than was asked for, reported as
+   success. Both real video bindings are ratio-only, so both were affected. Fixed by
+   hoisting the mode check above the image/video split; `tests/test_contract.py` now
+   asserts it for every binding that declares one form.
 1. **Image output mime/format mismatch.** Gemini 3.x returns JPEG, but the adapter
    wrote raw bytes to the caller's path and hard-coded `image/png`. Fixed:
    `pillow.save_image_bytes` now writes the format the output extension asks for

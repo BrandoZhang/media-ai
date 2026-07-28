@@ -87,13 +87,14 @@ def _check_geometry(geo: GeometrySpec | None, c: Constraints, issues: _Issues, *
         return
     g = c.geometry
 
-    if video:
-        # "adaptive" is Ark asking the model to choose, not a ratio to check.
-        if geo.aspect_ratio != "adaptive":
-            issues.one_of("aspect-ratio", geo.aspect_ratio, g.aspect_ratios, label="ratio")
-        issues.one_of("resolution", geo.resolution, g.resolutions, label="resolution")
-        return
-
+    # --- which *form* of geometry, checked the same way for image and video ---
+    #
+    # This used to sit below the video branch, which returned before reaching it — so
+    # `--size 1280x720` against a ratio-only video binding passed validation, went to
+    # the wire, and came back as a **billed job at the provider's default geometry**
+    # rather than the one that was asked for. Silently getting different output is the
+    # failure mode pre-flight exists to prevent, and the video path is where it costs
+    # the most. Found by running it against the live API.
     if g.mode == "none":
         issues.add("geometry", "this binding does not accept a configurable size")
         return
@@ -101,6 +102,13 @@ def _check_geometry(geo: GeometrySpec | None, c: Constraints, issues: _Issues, *
         issues.add("size", "this binding takes --aspect-ratio, not pixel --size")
     if geo.mode == "ratio" and g.mode == "pixels":
         issues.add("aspect-ratio", "this binding takes pixel --size, not --aspect-ratio")
+
+    if video:
+        # "adaptive" is Ark asking the model to choose, not a ratio to check.
+        if geo.aspect_ratio != "adaptive":
+            issues.one_of("aspect-ratio", geo.aspect_ratio, g.aspect_ratios, label="ratio")
+        issues.one_of("resolution", geo.resolution, g.resolutions, label="resolution")
+        return
 
     issues.one_of("aspect-ratio", geo.aspect_ratio, g.aspect_ratios, label="ratio")
     issues.one_of("resolution", geo.resolution, g.named_sizes or g.resolutions, label="size tier")

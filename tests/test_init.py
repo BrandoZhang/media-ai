@@ -868,10 +868,23 @@ class TestBindingChoicesSurfaceLifecycle:
         assert "preview" in self.hints()["gemini/veo-3.1"]
 
     def test_an_unverified_binding_says_so(self):
-        assert "never live-tested" in self.hints()["gemini/veo-3.1"]
+        """Derived, not hardcoded: `verified` records a real live run, so which binding
+        carries one changes whenever somebody does one. A test naming a specific binding
+        turns "we tested it today" into a build failure."""
+        hints = self.hints()
+        unverified = [bid for bid in hints if CATALOG.get(bid).verified is None]
+        if not unverified:
+            pytest.skip("every offered binding has been live-verified")
+        for bid in unverified:
+            assert "never live-tested" in hints[bid], bid
 
     def test_a_verified_binding_shows_its_date(self):
-        assert "2026-07-12" in self.hints()["gemini/nano-banana-2"]
+        hints = self.hints()
+        verified = [bid for bid in hints if CATALOG.get(bid).verified]
+        if not verified:
+            pytest.skip("no offered binding has been live-verified yet")
+        for bid in verified:
+            assert CATALOG.get(bid).verified in hints[bid], bid
 
     def test_every_candidate_carries_a_hint(self):
         """A blank hint would render as an unqualified recommendation."""
@@ -953,3 +966,32 @@ class TestEveryProbeStrategyActuallyRuns:
         from media_ai.cli._verify import probe
 
         assert probe("mock/mock") == "unsupported"
+
+
+class TestNothingToCheckIsNeverReportedAsABadKey:
+    """Calling an unresolved credential "invalid" sends someone to rotate a working key.
+
+    Found live: a `cred://` account name that does not exist in `credentials.toml`
+    raises `credential_unresolved` with the message "no [openai] account in
+    credentials.toml" — which matched none of the prose markers and so came back as
+    `invalid`. Classification now leads with the error *code*, which is a contract;
+    the sentence is not, and can be reworded by anyone without a thought for this list.
+    """
+
+    @pytest.mark.parametrize("code", ["credential_unresolved", "credential_missing",
+                                      "credential_scheme_unknown", "credential_backend_missing"])
+    def test_every_unresolved_credential_reads_as_missing(self, code):
+        from media_ai.cli._verify import classify
+        from media_ai.core.errors import ErrorCategory, MediaError
+
+        # AUTH is the category all four carry, and AUTH alone would mean "invalid".
+        exc = MediaError("no [openai] account in credentials.toml",
+                         category=ErrorCategory.AUTH, code=code)
+        assert classify(exc) == "missing"
+
+    def test_a_key_the_provider_actually_rejected_still_reads_as_invalid(self):
+        from media_ai.cli._verify import classify
+        from media_ai.core.errors import ErrorCategory, MediaError
+
+        assert classify(MediaError("API key not valid", category=ErrorCategory.VALIDATION)) == "invalid"
+        assert classify(MediaError("Unauthorized", category=ErrorCategory.AUTH)) == "invalid"

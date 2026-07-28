@@ -35,10 +35,22 @@ _BAD_KEY_MARKERS = (
     "permission_denied",
     "invalid_api_key",
 )
-# "There is nothing to check", not "what you gave me was rejected". The env-var
-# markers matter because storing a reference is one of the wizard's two offered modes:
-# the variable is routinely not exported in the shell the wizard itself runs in, and
-# telling that user their key is invalid sends them to rotate a perfectly good one.
+#: Stable error codes meaning "there is nothing to check" — the reference did not
+#: resolve to a value at all. Matched **before** any prose, because these are the cases
+#: where calling a key invalid does real damage: it sends someone to rotate a key that
+#: was never the problem. A live run against a typo'd `cred://` account is what showed
+#: this: the message is "no [openai] account in credentials.toml", which matched none of
+#: the substrings below and so classified as `invalid`.
+#:
+#: Codes, not prose, because the code is a contract and the sentence is not — every one
+#: of these messages can be reworded without anybody thinking to update a marker list.
+_MISSING_CODES = frozenset({
+    "credential_unresolved",      # env var unset, no such cred:// account, empty value
+    "credential_missing",         # the binding names no credential at all
+    "credential_scheme_unknown",  # e.g. op:// with nothing registered to serve it
+    "credential_backend_missing", # keychain:// without the optional extra installed
+})
+# Kept as a fallback for messages that arrive without one of those codes.
 _MISSING_MARKERS = (
     "no credential found for provider",
     "is unset",
@@ -54,6 +66,8 @@ def classify(exc: MediaError | None) -> str:
     message = (str(exc) or "").lower()
     code = (getattr(exc, "code", "") or "").lower()
 
+    if code in _MISSING_CODES:
+        return "missing"
     if any(m in message for m in _MISSING_MARKERS):
         return "missing"
     if any(m in message or m in code for m in _BAD_KEY_MARKERS):

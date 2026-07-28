@@ -156,3 +156,36 @@ def test_a_usage_line_always_names_its_binding(binding_id, tmp_path, monkeypatch
     assert named["model"] == CATALOG.get(binding_id).model_id
     # Absent, not guessed: a wrong scene in a cost report is worse than a missing one.
     assert unnamed["binding"] == binding_id and "scene" not in unnamed
+
+
+@pytest.mark.parametrize("binding_id", BINDING_IDS)
+def test_the_wrong_form_of_geometry_is_refused_for_every_binding(binding_id, tmp_path):
+    """Pixel size against a ratio-only binding (or the reverse) must never reach the wire.
+
+    This escaped once, and only on the video path: the video branch of `_check_geometry`
+    returned before the mode comparison, so `--size 1280x720` on a ratio-only video
+    binding validated clean, submitted, and came back as a **billed job at the
+    provider's default geometry** — different output than was asked for, reported as
+    success. Parametrized over every binding so the next one cannot regress on a path
+    the others cover.
+    """
+    from media_ai.core.geometry import GeometrySpec
+
+    b = CATALOG.get(binding_id)
+    mode = b.constraints.geometry.mode
+    if mode == "both":
+        pytest.skip(f"{binding_id} accepts either form")
+
+    # A binding declaring no configurable geometry must refuse both forms, not just one.
+    wrong = (GeometrySpec(width=1280, height=720) if mode in {"aspect_ratio", "none"}
+             else GeometrySpec(aspect_ratio="16:9", resolution="720p"))
+    for scene in sorted(b.scenes, key=lambda s: s.value):
+        if scene is Scene.VIDEO_CONCAT:
+            continue
+        req = _minimal(scene, tmp_path, voice=(b.constraints.audio.voices or ["v1"])[0])
+        if not hasattr(req, "geometry"):
+            continue
+        req.geometry = wrong
+        with pytest.raises(MediaError) as ei:
+            validate_request(req, b.constraints, binding=binding_id, scene=scene)
+        assert ei.value.exit_code == 3, f"{binding_id}/{scene.value} accepted the wrong geometry form"
