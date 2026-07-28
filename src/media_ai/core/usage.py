@@ -43,8 +43,11 @@ def record_usage(entry: dict) -> None:
 def summarize_usage(path: Path | None = None) -> dict:
     """Aggregate the ledger into totals (the cost metric).
 
-    Tolerates both the new ``provider`` key and the legacy ``backend`` key so a
-    ledger written by an older build still aggregates.
+    Grouped by **binding** and by **scene** — the two things that decide what a call
+    costs. Grouping by provider alone would add up two models with different prices,
+    and a ledger that says "gemini: 40k tokens" cannot tell you which of them to stop
+    calling. A line missing either key (a job finalized by a later process) lands
+    under ``"?"`` rather than being dropped.
     """
     path = path or usage_log_path()
     totals = {
@@ -53,8 +56,8 @@ def summarize_usage(path: Path | None = None) -> dict:
         "video_seconds": 0,
         "speech_characters": 0,
         "total_tokens": 0,
-        "by_tool": {},
-        "by_provider": {},
+        "by_binding": {},
+        "by_scene": {},
     }
     if not path.is_file():
         return totals
@@ -72,8 +75,8 @@ def summarize_usage(path: Path | None = None) -> dict:
         totals["speech_characters"] += int(e.get("characters", 0) or 0)
         tok = int(e.get("total_tokens", 0) or 0)
         totals["total_tokens"] += tok
-        tool = e.get("tool") or e.get("operation") or "?"
-        provider = e.get("provider") or e.get("backend") or "?"
-        totals["by_tool"][tool] = totals["by_tool"].get(tool, 0) + tok
-        totals["by_provider"][provider] = totals["by_provider"].get(provider, 0) + tok
+        binding = e.get("binding") or "?"
+        scene = e.get("scene") or "?"
+        totals["by_binding"][binding] = totals["by_binding"].get(binding, 0) + tok
+        totals["by_scene"][scene] = totals["by_scene"].get(scene, 0) + tok
     return totals

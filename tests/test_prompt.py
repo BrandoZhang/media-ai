@@ -11,6 +11,7 @@ import io
 import json
 import os
 import pty
+import signal
 import sys
 import termios
 import textwrap
@@ -172,7 +173,10 @@ class TestControlsLookDifferent:
         checkbox = {glyph(multi=True, active=a, selected=s) for a in (True, False) for s in (True, False)}
         assert not radio & checkbox
 
-    def test_the_cursor_row_is_the_only_coloured_one(self):
+    def test_the_cursor_row_is_the_only_coloured_one(self, monkeypatch):
+        # Honour NO_COLOR in production, but do not inherit it from a test runner's
+        # environment when this test is specifically asserting the coloured branch.
+        monkeypatch.delenv("NO_COLOR", raising=False)
         p, _ = drawing()
         active = p._option_row(Option("thing"), active=True, selected=False, multi=True)
         inactive = p._option_row(Option("thing"), active=False, selected=False, multi=True)
@@ -511,6 +515,28 @@ def test_get_prompter_force_fallback():
     assert isinstance(get_prompter(force_fallback=True), FallbackPrompter)
 
 
+def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):
+    """Some sandboxes deny /dev/tty but leave stdin/stderr attached to a pty."""
+    class Tty:
+        encoding = "utf-8"
+        buffer = None
+
+        def __init__(self):
+            self.buffer = self
+
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 0
+
+    stdin, stderr = Tty(), Tty()
+    monkeypatch.setattr("builtins.open", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("denied")))
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    assert isinstance(get_prompter(), TerminalPrompter)
+
+
 # ------------------------------------------------------- real terminal, via pty
 
 
@@ -528,38 +554,62 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
         src = "import sys\nsys.path[:0] = %r\n" % (sys.path,) + textwrap.dedent(body)
         os.execv(sys.executable, [sys.executable, "-c", src])
     os.close(w)
+    os.set_blocking(fd, False)
 
-    time.sleep(0.3)
-    for key in keys:
-        os.write(fd, key)
-        time.sleep(0.12)
+    def drain():
+        """Discard whatever the child has drawn. Never blocks; errors are the child
+        having exited, which the caller notices via ``r``."""
         try:
             os.read(fd, 65536)
-        except OSError:
-            break
+        except OSError:  # BlockingIOError is an OSError — nothing to read, or gone
+            pass
 
-    deadline = time.time() + timeout
-    captured = b""
-    os.set_blocking(r, False)
-    while time.time() < deadline:
-        try:
-            chunk = os.read(r, 65536)
-            if not chunk:
-                break
-            captured += chunk
-        except BlockingIOError:
-            time.sleep(0.05)
-        except OSError:
-            break
-        if b"\n" in captured:
-            break
     try:
-        os.read(fd, 65536)
-    except OSError:
-        pass
-    os.close(r)
-    os.waitpid(pid, 0)
-    return captured.decode("utf-8", "replace")
+        time.sleep(0.3)
+        for key in keys:
+            os.write(fd, key)
+            time.sleep(0.12)
+            drain()
+
+        deadline = time.time() + timeout
+        captured = b""
+        os.set_blocking(r, False)
+        while time.time() < deadline:
+            # Keep draining the master while waiting. A prompt that redraws more than
+            # the pty buffer holds after the last key would otherwise block in write(2)
+            # and never reach its result, turning a real UI regression into an opaque
+            # timeout-and-SIGKILL.
+            drain()
+            try:
+                chunk = os.read(r, 65536)
+                if not chunk:
+                    break
+                captured += chunk
+            except BlockingIOError:
+                time.sleep(0.05)
+            except OSError:
+                break
+            if b"\n" in captured:
+                break
+        os.close(r)
+        # The capture loop above is deliberately bounded.  Honour that bound when
+        # reaping the pty child too: otherwise a broken interaction turns one failed
+        # assertion into a permanently hung test run.
+        for _ in range(10):
+            reaped, _status = os.waitpid(pid, os.WNOHANG)
+            if reaped:
+                break
+            time.sleep(0.05)
+        else:
+            # This is a test-child cleanup path after its deadline has already expired.
+            # SIGKILL guarantees a stuck raw-mode process cannot leave the suite waiting.
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        return captured.decode("utf-8", "replace")
+    finally:
+        # One master fd per call, and this helper runs once per prompt test — leaking
+        # them exhausts the process limit partway through a full run.
+        os.close(fd)
 
 
 SELECT_BODY = """

@@ -52,12 +52,13 @@ media-ai/
 ├── src/
 │   └── media_ai/           # the importable package (import name unchanged)
 │       ├── __main__.py     # `media-ai` console entry point
+│       ├── bindings/      # binding manifests (.toml) — what each can do
 │       ├── cli/            # per-group CLI front ends
 │       ├── core/           # provider-agnostic core (never imports providers/)
 │       ├── credentials/    # secret resolution + redaction
 │       ├── media/          # local ffmpeg / Pillow helpers
-│       ├── providers/       # per-provider adapters
-│       └── skills/          # agent skills (shipped as package data)
+│       ├── providers/      # per-provider adapters — the wire, and nothing else
+│       └── skills/         # agent skills (shipped as package data)
 ├── tests/                  # offline test suite
 └── docs/                   # this guide + architecture/credentials/…
 ```
@@ -77,7 +78,7 @@ lint and other path-taking tools at `src` (e.g. `ruff check src tests`).
 | Run one file | `uv run pytest -q tests/test_volc_errors.py` |
 | Lint | `uv run ruff check src tests` |
 | Autofix lint | `uv run ruff check src tests --fix` |
-| Run the CLI (mock by default) | `uv run media-ai image generate --prompt "a red bike" --output /tmp/x.png` |
+| Run the CLI offline | `uv run media-ai image generate --binding mock/mock --prompt "a red bike" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
 
 `uv run` re-syncs the env if `pyproject.toml`/`uv.lock` changed, so after `git pull`
@@ -104,27 +105,40 @@ The `[project.optional-dependencies]` extras remain for the pip / CI path:
 `uv sync --extra keychain` installs the OS-keychain credential source; `--all-extras`
 installs them all.
 
-## Running against a real provider
+## Running against a real backend
 
-The default `mock` provider needs no credentials or network. For a real backend,
-set the provider and its key in the **environment** (never as a CLI flag). The
-fastest way to see every variable is [`.env.example`](../.env.example) — copy it and
-fill in the block for your provider:
+`mock/mock` and `local/ffmpeg` need no credentials or network and are always
+available. A real backend needs a **binding**, which is one command:
 
 ```bash
-cp .env.example .env          # then edit .env (OPENAI_API_KEY=…, ARK_API_KEY=…, etc.)
-uv run --env-file .env media-ai capabilities --provider openai
-uv run --env-file .env media-ai image generate --model gpt-image-2 --prompt "a fox" --output fox.png
+media-ai bindings available          # what could be added, and the command for each
+media-ai bindings add <provider>/<model> --credential env://SOME_API_KEY
+media-ai config set-default image.text_to_image <provider>/<model>
+
+export SOME_API_KEY=…                # or use cred:// / keychain:// and skip the env
+media-ai image generate --prompt "a fox" --output fox.png
 ```
 
-`uv run --env-file .env` loads the file into the process environment; the CLI does
-not read `.env` on its own. (Equivalently: `set -a && . ./.env && set +a`.) Never
-commit your real `.env` — only `.env.example` is committed.
+A default is set **per scene**, not per modality — `image.text_to_image` and
+`image.image_to_image` can point at different bindings, and a request with no binding
+flags uses whichever one its inputs imply.
 
-Credential resolution (env is the last link of a broker → secret-manager → keychain
-→ config-file → env chain), the `credentials.toml` file, and **profiles** (per-
-endpoint/tenant keys) are described in [CREDENTIALS.md](CREDENTIALS.md); per-provider
-setup is in [PROVIDERS.md](PROVIDERS.md).
+**There is no `.env` support and no env-var fallback.** A binding names exactly one
+credential source and nothing else is consulted, so `uv run --env-file .env …` works
+only in the sense that it populates the variable an `env://` reference points at.
+
+To keep a dev config out of your real one, point `$MEDIA_CONFIG_FILE` (and
+`$MEDIA_CREDENTIALS_FILE`) at a scratch directory:
+
+```bash
+export MEDIA_CONFIG_FILE=/tmp/dev/config.toml
+export MEDIA_CREDENTIALS_FILE=/tmp/dev/credentials.toml
+```
+
+Templates: [`config.toml.example`](../config.toml.example) and
+[`credentials.toml.example`](../credentials.toml.example). Reference schemes and the
+trust boundary are in [CREDENTIALS.md](CREDENTIALS.md); binding setup is in
+[BINDINGS.md](BINDINGS.md).
 
 ## Live / regression tests (real APIs)
 
@@ -133,21 +147,24 @@ are **double-gated** so they never run by accident or fail without creds:
 
 ```bash
 # opt in AND provide the key(s); anything unset simply skips
-MEDIA_LIVE_TESTS=1 OPENAI_API_KEY=… uv run --env-file .env pytest -m live -v
+MEDIA_LIVE_TESTS=1 OPENAI_API_KEY=… uv run pytest -m live -v
 ```
 
-Each test skips unless `MEDIA_LIVE_TESTS=1` **and** that provider's key is present
-(Volc also needs `ARK_IMAGE_MODEL`, since Ark model/endpoint ids are account-specific;
-the video smoke needs `MEDIA_LIVE_VIDEO=1` too). Keep them cheap — one small image
-per provider.
+Each test skips unless `MEDIA_LIVE_TESTS=1` **and** the binding it exercises resolves
+its credential (the video smoke needs `MEDIA_LIVE_VIDEO=1` too). Those variables gate
+the *tests*; they are not read by the CLI, which takes everything it knows about a
+call from the binding. Keep them cheap — one small artifact per binding.
 
 **CI:** `.github/workflows/ci.yml` runs the offline suite (`-m "not live"`) on every
 push/PR. `.github/workflows/live.yml` runs `-m live` **manually only** (Actions →
-*live* → *Run workflow*), reading keys from repo **Secrets** (`OPENAI_API_KEY`,
-`GEMINI_API_KEY`, `ARK_API_KEY`, plus optional `*_BASE_URL` / `ARK_IMAGE_MODEL` /
-`ARK_VIDEO_MODEL`). If no provider secret is configured, the live job is a **green
-no-op** (all steps skip), so forks and unconfigured repos never fail. (To run it
-automatically on merge to `main` later, uncomment the `push:` trigger in the file.)
+*live* → *Run workflow*), reading keys from repo **Secrets**.
+
+That job configures itself: it runs `media-ai bindings available`, which reports per
+binding the conventional variables its own manifest declares, and adds every binding
+whose variable actually holds a value ([`.github/scripts/configure_live_bindings.py`](../.github/scripts/configure_live_bindings.py)).
+So a new binding is picked up with no workflow edit, and one whose key is absent is
+never configured — its tests skip. With no secrets at all the job is a **green no-op**,
+so forks never fail. (To run it on merge to `main` later, uncomment the `push:` trigger.)
 
 ## Before you push
 

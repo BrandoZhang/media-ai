@@ -84,11 +84,14 @@ def _emit_table(path: list[str], body: dict, lines: list[str]) -> None:
     ``[a.b]`` line to ``a.b``, so a scalar written later would silently land in the
     sub-table instead of its own — a corruption that still parses.
     """
-    dotted = ".".join(_fmt_key(p) for p in path)
-    lines.append(f"[{dotted}]")
     where = ".".join(path)
     scalars = {k: v for k, v in body.items() if not isinstance(v, dict)}
     subtables = {k: v for k, v in body.items() if isinstance(v, dict)}
+    # A header for a table that holds nothing but sub-tables is noise — `[bindings]`
+    # above `[bindings."volc-ark/seedance-2.0"]` declares nothing the next line does
+    # not. An empty table still gets one: there it is the only evidence it exists.
+    if scalars or not subtables:
+        lines.append(f"[{'.'.join(_fmt_key(p) for p in path)}]")
     for key, value in scalars.items():
         lines.append(f"{_fmt_key(key)} = {_fmt_value(value, where=f'{where}.{key}')}")
     for key, sub in subtables.items():
@@ -99,8 +102,9 @@ def dumps(data: dict, *, header: str | None = None) -> str:
     """Serialize nested tables to TOML.
 
     Values may be ``str``, ``bool``, ``int``, or ``list[str]``; tables nest to any
-    depth. Bare top-level scalars are rejected — they do not appear in the files this
-    writes, and silently mangling one would be worse than refusing it.
+    depth. Top-level scalars are emitted **before** every table header — TOML assigns
+    each key to the most recent header, so ``schema = 2`` written after ``[bindings]``
+    would silently become ``bindings.schema``: still valid TOML, and wrong.
 
     ``header`` is emitted as leading ``#`` comment lines.
     """
@@ -112,11 +116,15 @@ def dumps(data: dict, *, header: str | None = None) -> str:
         lines.extend(f"# {ln}" if ln else "#" for ln in header.splitlines())
         lines.append("")
 
+    scalars = {k: v for k, v in data.items() if not isinstance(v, dict)}
+    for key, value in scalars.items():
+        lines.append(f"{_fmt_key(key)} = {_fmt_value(value, where=key)}")
+    if scalars:
+        lines.append("")
+
     for table, body in data.items():
         if not isinstance(body, dict):
-            raise TomlWriteError(
-                f"top-level key {table!r} must map to a table; bare top-level values are not supported"
-            )
+            continue
         _emit_table([table], body, lines)
         lines.append("")
 
@@ -148,6 +156,30 @@ def atomic_write(path: Path, text: str, *, mode: int) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def backup(path: Path) -> Path | None:
+    """Copy a config file aside before rewriting it, returning the copy (or ``None``).
+
+    :func:`dumps` cannot round-trip comments, so the original file is the only record
+    of anything hand-written in it — why a binding points at a particular endpoint, what
+    a poll timeout was raised for. Every writer of a user-owned TOML file goes through
+    here first, or an edit to one field silently discards the reasoning beside it.
+
+    Created at the *source file's* mode from the start rather than written and then
+    chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
+    order leaves them in a world-readable file for as long as the write takes — and
+    permanently if the process dies in between.
+    """
+    if not path.is_file():
+        return None
+    mode = path.stat().st_mode & 0o777
+    for n in range(1, 1000):
+        candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
+        if not candidate.exists():
+            atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
+            return candidate
+    raise OSError(f"too many backups beside {path}")
 
 
 def write_private(path: Path, text: str) -> None:

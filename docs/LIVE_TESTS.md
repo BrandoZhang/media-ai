@@ -14,10 +14,13 @@ shapes match the wire format and to surface real bugs.
 | Provider | Paths exercised live | Last run | Result |
 |---|---|---|---|
 | **mock** | n/a — offline by design (no network) | — | — |
-| **gemini** | image (text/edit/compose/geometry/grounding/thinking), Veo video (t2v, first/last-frame, reference-images, extension, async job), TTS (single + multi-speaker) | 2026-07-12 | ✅ all paths; 3 bugs found+fixed |
-| **openai** | image `generate` (gpt-image-2), base64→PNG, usage/meta echo | 2026-07-12 | ✅ |
-| **elevenlabs** | `speech generate` (eleven_multilingual_v2) | 2026-07-12 | ✅ |
-| **volc** (Ark) | — not yet live-tested (no key available) | — | ⏳ |
+| **gemini** | image (text/edit/compose/geometry/grounding/thinking), Veo video (t2v, first/last-frame, reference-images, extension, async job), TTS (single + multi-speaker) | **2026-07-28** | ✅ all paths; 4 bugs found+fixed |
+| **openai** | GPT Image 2 text generation + multipart edit, base64→PNG, usage/meta echo | **2026-07-28** | ✅ |
+| **elevenlabs** | TTS + timestamp sidecar, dialogue + timestamp sidecar, Sound v2 | **2026-07-28** | ✅; Music blocked by account entitlement |
+| **volc** (Ark) | Seedance 2.0 + Fast async create/poll/download; Seedream 5.0 single/group/SSE images; Seedream 5.0 Pro multi-reference edit | **2026-07-28** | ✅ all four supplied endpoints; 3 wire bugs found+fixed |
+
+Gemini, OpenAI, ElevenLabs, and the supplied Ark endpoints have now been exercised
+through the binding-addressed CLI.
 
 Pre-flight validation was also confirmed live: an unsupported request (e.g.
 `gemini-3.1-flash-lite-image --resolution 4K`) fails with **exit 3** and a
@@ -111,8 +114,41 @@ parsed from the mimeType).
   (→ `meta.response_id`), interleaved `text` parts (→ `meta.text`), and
   `groundingMetadata` on grounded requests (→ `meta.grounding`).
 
+### Re-verified 2026-07-28 (post-refactor)
+
+The whole binding path was re-run against the live API after the binding refactor,
+through the new addressing (`--binding gemini/…`) and a `cred://` account:
+
+| Path | Scene | Result |
+|---|---|---|
+| text → image | `image.text_to_image` | ✅ 1024×1024 PNG for `--aspect-ratio 1:1 --resolution 1K` |
+| image → image | `image.image_to_image` | ✅ via `image edit --reference`; same geometry preserved |
+| text → speech | `speech.text_to_speech` | ✅ 24 kHz mono WAV |
+| dialogue | `speech.dialogue` | ✅ two voices + `--instruction` |
+| text → video | `video.text_to_video` | ✅ async submit → `poll` string run **verbatim** → 1280×720, 4.00 s, h264 + AAC |
+| credential probe | — | ✅ `--verify` reports `ok` (`GET /models`) |
+
+Confirmed by that run, and worth keeping:
+
+- **`meta.scene` is absent on `job query`, `meta.binding` is present.** Exactly as
+  designed: the process that finalizes a job never saw the inputs that implied a scene.
+  The ledger line lands under `by_scene["?"]` with the cost still attributed to the
+  right binding.
+- **The `poll` string is runnable as printed** — copied out of the JSON and executed
+  unchanged, it polled and finalized the download.
+- **Pre-flight refusals never reach the network**: an undeclared voice, a duration
+  outside `[4, 6, 8]`, and pixel `--size` on a ratio-only binding all fail at exit 3.
+
 ### Bugs found and fixed
 
+0. **Pixel geometry was unvalidated on the video path** (found 2026-07-28). The video
+   branch of `_check_geometry` returned before comparing the request's geometry *form*
+   against the binding's declared `mode`, so `--size 1280x720` on a ratio-only video
+   binding validated clean, submitted, and came back as a **billed job at the
+   provider's default geometry** — different output than was asked for, reported as
+   success. Both real video bindings are ratio-only, so both were affected. Fixed by
+   hoisting the mode check above the image/video split; `tests/test_contract.py` now
+   asserts it for every binding that declares one form.
 1. **Image output mime/format mismatch.** Gemini 3.x returns JPEG, but the adapter
    wrote raw bytes to the caller's path and hard-coded `image/png`. Fixed:
    `pillow.save_image_bytes` now writes the format the output extension asks for
@@ -130,45 +166,78 @@ parsed from the mimeType).
 
 ## openai — GPT Image
 
-Smoke-tested 2026-07-12 against `api.openai.com/v1`.
+Re-verified 2026-07-28 against `api.openai.com/v1`.
 
 | Path | Model | Result |
 |---|---|---|
-| text → image (`image generate`) | `gpt-image-2` | ✅ 1254×1254 PNG |
+| text → image (`image generate`) | `gpt-image-2` | ✅ 1024×1024 PNG, 742,305 bytes |
+| image → image (`image edit`) | `gpt-image-2` | ✅ multipart reference upload, 1024×1024 PNG, 1,018,290 bytes |
 
-- GPT Image returns **base64 only**; the adapter decodes and transcodes to the output
-  extension's format (`pillow.save_image_bytes`), reporting the true mime.
-- The response echoes the settings the model actually used — the result `meta` carried
-  `size: "1254x1254"` (from `size: "auto"`), `output_format: "png"`, `quality: "low"`,
-  `background: "opaque"`, `created` — and `usage` carried
-  `{input_tokens, output_tokens, total_tokens, *_tokens_details}` (token-billed).
+- GPT Image returns **base64 only**; the adapter decodes the returned bytes and reports
+  the response's true mime. Both successful calls echoed `size: "1024x1024"`,
+  `output_format: "png"`, `quality: "low"`, and `background: "opaque"` in `meta`.
+- Generate recorded 214 total tokens; edit recorded 1,246 total tokens, including
+  the 1,024-token input image.
 
-**Not yet exercised live:** `image edit` (multipart references + `--mask`), the fixed-size
-`gpt-image-1.x` tiers, moderation/safety error mapping.
+**Not yet exercised live:** a provider moderation block. It remains covered by the
+offline error-mapping tests; unsupported transparent backgrounds were also confirmed
+to fail locally before any request is made.
 
 ---
 
 ## elevenlabs — text-to-speech + dialogue + music + sound
 
-Smoke-tested 2026-07-12 against `api.elevenlabs.io/v1` (auth via the `xi-api-key`
+Re-verified 2026-07-28 against `api.elevenlabs.io/v1` (auth via the `xi-api-key`
 header).
 
 | Path | Model | Result |
 |---|---|---|
 | text → speech (`speech generate`) | `eleven_multilingual_v2` | ✅ MP3 (`audio/mpeg`), `usage.characters` recorded |
+| text → speech with `--timestamps` | `eleven_multilingual_v2` | ✅ base64 audio + alignment sidecar |
+| dialogue | `eleven_v3` | ✅ MP3 (`audio/mpeg`) |
+| dialogue with `--timestamps` | `eleven_v3` | ✅ base64 audio + alignment/voice-segment sidecar |
+| text → sound | `eleven_text_to_sound_v2` | ✅ MP3 (`audio/mpeg`) |
+| music plan/generate/detailed | `music_v2` | ⚠️ HTTP 402 `paid_plan_required`; account lacks Music API entitlement |
 
-**Not yet exercised live:** `speech dialogue` (`/text-to-dialogue`), `--timestamps`
-sidecars, `music generate`/`plan`, `sound generate`.
+The 402 Music response now maps to non-retryable `auth` / `paid_plan_required` with an
+upgrade hint. A deliberately incomplete composition plan also reached the endpoint
+and returned the expected non-retryable 422 validation error.
 
 ---
 
 ## volc — Volcengine Ark
 
-**Not yet live-tested** (no Ark key was available for these runs). The adapter is
-covered by mocked-API tests (`tests/test_volc_api.py`, request bodies + response
-parse + error mapping) and the parametrized contract suite. Ark model ids are
-account-specific and must be enabled in the console before a live run — see
-[PROVIDERS.md](PROVIDERS.md#volc--volcengine-ark-doubao-seedream--seedance).
+Re-verified 2026-07-28 against the supplied i18n base URL with the corrected
+`sk-…` credential. Each account-specific endpoint was configured as a binding that
+extends the matching shipped model, so the endpoint id is the value on the wire while
+the model's declared scenes and limits remain authoritative.
+
+| Account-specific deployment | Capability binding | Live path and result |
+|---|---|---|
+| Dreamina Seedance 2.0 deployment | `volc-ark/seedance-2.0` | ✅ reference-to-video: 2 remote images + remote video + remote audio, generated audio, 16:9/11s; async create → poll → 4.5 MB MP4 download |
+| Seedance 2.0 Fast deployment | `volc-ark/seedance-2.0-fast` | ✅ separate text-to-video endpoint: 1:1/480p/5s; async create → poll → 673 KB MP4 download |
+| Seedream 5.0 deployment | `volc-ark/seedream-5.0` | ✅ text-to-image, image-to-image with 2 remote references → 3-image group, and streamed text-to-group → 2 ordered JPEG artifacts; 2K PNG also verified |
+| Seedream 5.0 Pro deployment | `volc-ark/seedream-5.0-pro` | ✅ supplied two-remote-reference clothing edit, 2K PNG (2048×2048) |
+
+Live error-path findings and fixes:
+
+- The Fast endpoint rejected a 3-second duration with Ark `InvalidParameter`; this is
+  surfaced as a non-retryable `validation` error. A 5-second retry completed.
+- Pro rejects `sequential_image_generation` even as `disabled`. The adapter now sends
+  that parameter only to bindings declaring `group_output`.
+- Seedream 5.0's `--format` is now sent as Ark `output_format`, and generated artifact
+  MIME type is identified from the returned bytes. A live PNG request now yields PNG,
+  not a JPEG mislabeled by a `.png` filename.
+- Seedream 5.0 `--option stream=true` now consumes Ark's SSE image events, orders them
+  by `image_index`, and returns normal `artifacts[]` after the terminal usage event.
+  `stream=false` is sent only when explicitly requested; otherwise the field is omitted.
+- This Pro endpoint's `response_format=url` consistently disconnects while downloading
+  its signed artifact URL. GET disconnects are now retried and return a retryable,
+  provider-scoped error if exhausted. The binding-gated
+  `--option response_format=b64_json` fallback completed the same multi-reference edit.
+
+The adapter remains covered by mocked request/response and error tests
+(`tests/test_http.py`, `tests/test_volc_api.py`, `tests/test_volc_errors.py`).
 
 ---
 
@@ -176,21 +245,21 @@ account-specific and must be enabled in the console before a live run — see
 
 ```bash
 # Load a key for the process env (the CLI reads the process environment):
-uv run --env-file .env media-ai capabilities --provider gemini   # or set -a && . ./.env && set +a
+media-ai bindings list        # confirm the binding under test is configured
 
 # gemini — cheap image + TTS
-uv run media-ai image generate  --provider gemini --prompt "a green leaf on white" --output /tmp/leaf.png
-uv run media-ai speech generate --provider gemini --text "hello there" --voice Kore --output /tmp/g.wav
+uv run media-ai image generate  --binding gemini/nano-banana-2 --prompt "a green leaf on white" --output /tmp/leaf.png
+uv run media-ai speech generate --binding gemini/gemini-tts --text "hello there" --voice Kore --output /tmp/g.wav
 # gemini — Veo video (async submit → poll; billed + slow)
-uv run media-ai video generate  --provider gemini --wait false --model veo-3.1-lite-generate-preview \
+uv run media-ai video generate  --binding gemini/veo-3.1 --wait false \
   --prompt "a kitten yawns" --first-frame /path/local.png --output /tmp/v.mp4 --duration 4 --resolution 720p
-uv run media-ai job query       --provider gemini --id "<operation-id>" --output /tmp/v.mp4
+uv run media-ai job query       --binding gemini/veo-3.1 --id "<operation-id>" --output /tmp/v.mp4
 
 # openai — image
-uv run media-ai image generate  --provider openai --prompt "a small red cube on white" --output /tmp/o.png
+uv run media-ai image generate  --binding openai/gpt-image-2 --prompt "a small red cube on white" --output /tmp/o.png
 
 # elevenlabs — speech
-uv run media-ai speech generate --provider elevenlabs --text "hello there" --output /tmp/e.mp3
+uv run media-ai speech generate --binding elevenlabs/eleven-multilingual-v2 --text "hello there" --output /tmp/e.mp3
 ```
 
 ## Gated live pytest

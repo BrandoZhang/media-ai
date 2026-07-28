@@ -4,7 +4,7 @@ The CLI parses argv into an :class:`ImageRequest` / :class:`VideoRequest`; the
 registry stamps the resolved ``model`` onto it; the selected provider adapter
 translates it to that provider's wire format. Nothing here is provider-specific —
 concepts that only one provider understands live in the ``options`` dict and are
-capability-gated (see :mod:`media_ai.core.capabilities`).
+capability-gated (see :mod:`media_ai.core.validate`).
 """
 
 from __future__ import annotations
@@ -20,17 +20,6 @@ class Modality(str, Enum):
     AUDIO = "audio"
 
 
-class Operation(str, Enum):
-    IMAGE_GENERATE = "image.generate"
-    IMAGE_EDIT = "image.edit"
-    VIDEO_GENERATE = "video.generate"
-    SPEECH_GENERATE = "speech.generate"
-    SPEECH_DIALOGUE = "speech.dialogue"
-    MUSIC_GENERATE = "music.generate"
-    MUSIC_PLAN = "music.plan"
-    SOUND_GENERATE = "sound.generate"
-
-
 _REMOTE_PREFIXES = ("http://", "https://", "data:", "asset://", "gs://")
 
 
@@ -41,7 +30,7 @@ class MediaRef:
     (multipart bytes, inline base64, a Files-API URI)."""
 
     raw: str
-    role: str | None = None  # reference_image | first_frame | last_frame | mask | ...
+    role: str | None = None  # reference_image | first_frame | last_frame | continue_from | ...
 
     @property
     def is_remote(self) -> bool:
@@ -82,9 +71,7 @@ class GeometrySpec:
 class ImageRequest:
     prompt: str
     output: Path
-    operation: Operation = Operation.IMAGE_GENERATE
     references: list[MediaRef] = field(default_factory=list)  # i2i / edit inputs
-    mask: MediaRef | None = None  # inpaint region (edit)
     geometry: GeometrySpec | None = None
     count: int = 1  # n / sampleCount / candidateCount
     seed: int | None = None
@@ -104,12 +91,16 @@ class ImageRequest:
 class VideoRequest:
     prompt: str
     output: Path
-    operation: Operation = Operation.VIDEO_GENERATE
     first_frame: MediaRef | None = None
     last_frame: MediaRef | None = None
     reference_images: list[MediaRef] = field(default_factory=list)
     reference_videos: list[MediaRef] = field(default_factory=list)
     reference_audios: list[MediaRef] = field(default_factory=list)
+    # Distinct from `reference_videos` on purpose: a reference is material the model
+    # draws on, while this is a clip the model continues from its final frame (Veo's
+    # extension, which takes the URI of a prior Veo output). Same file type, different
+    # role — and the role is what picks the scene. See core/scene.py.
+    continue_from: MediaRef | None = None
     geometry: GeometrySpec | None = None
     duration: int | None = None  # seconds
     seed: int | None = None
@@ -125,15 +116,6 @@ class VideoRequest:
     def modality(self) -> Modality:
         return Modality.VIDEO
 
-    def all_references(self) -> list[MediaRef]:
-        refs: list[MediaRef] = []
-        if self.first_frame:
-            refs.append(self.first_frame)
-        if self.last_frame:
-            refs.append(self.last_frame)
-        refs += self.reference_images + self.reference_videos + self.reference_audios
-        return refs
-
 
 @dataclass
 class SpeechRequest:
@@ -143,7 +125,6 @@ class SpeechRequest:
 
     text: str
     output: Path
-    operation: Operation = Operation.SPEECH_GENERATE
     voice: str | None = None  # provider voice id (falls back to a provider default)
     output_format: str | None = None  # e.g. mp3_44100_128 (provider wire format)
     language_code: str | None = None  # ISO 639-1
@@ -176,7 +157,6 @@ class DialogueRequest:
     turns: list[DialogueTurn]
     output: Path
     cast: dict[str, str] = field(default_factory=dict)  # speaker name -> voice id
-    operation: Operation = Operation.SPEECH_DIALOGUE
     instruction: str | None = None  # global director note (provider-gated)
     output_format: str | None = None
     language_code: str | None = None
@@ -212,7 +192,6 @@ class MusicRequest:
     output: Path
     prompt: str | None = None
     composition_plan: dict | None = None  # loaded from a --plan JSON file
-    operation: Operation = Operation.MUSIC_GENERATE
     duration_ms: int | None = None  # song length (prompt mode only)
     output_format: str | None = None  # e.g. mp3_44100_128, or "auto"
     seed: int | None = None  # plan mode only
@@ -232,7 +211,6 @@ class MusicPlanRequest:
 
     prompt: str
     output: Path  # the plan JSON is written here
-    operation: Operation = Operation.MUSIC_PLAN
     duration_ms: int | None = None
     source_plan: dict | None = None  # optional source composition plan to refine
     model: str | None = None
@@ -250,7 +228,6 @@ class SoundEffectRequest:
 
     text: str
     output: Path
-    operation: Operation = Operation.SOUND_GENERATE
     duration_seconds: float | None = None
     output_format: str | None = None
     model: str | None = None

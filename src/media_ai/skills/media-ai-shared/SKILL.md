@@ -2,123 +2,164 @@
 name: media-ai-shared
 description: >-
   Foundation for driving the media-ai generation CLI (images, video, audio —
-  speech/music/sound — concat, async jobs) from an agent. Read this FIRST before
+  speech/music/sound — clip joining, async jobs) from an agent. Read this FIRST before
   using any media-ai-* skill. Covers the machine contract (one JSON object on stdout,
-  category exit codes), provider/model selection (volc, openai, gemini, elevenlabs),
-  the discover-before-you-generate rule via `media-ai capabilities`, and the
-  secret-safe credential model. Use when running any `media-ai` command, wiring up
-  provider credentials, interpreting its JSON output or exit codes, or deciding which
-  provider/model to use.
-version: 1.0.0
+  category exit codes, a stable error code and an executable hint), how a binding is
+  addressed, the ask-the-CLI-what-exists rule, and the secret-safe credential model.
+  Use when running any `media-ai` command, wiring up credentials, interpreting its
+  JSON output or exit codes, or deciding which binding to send work to.
+version: 2.0.0
 metadata:
   requires:
     bins: ["media-ai"]
-  cliHelp: "media-ai capabilities"
+  cliHelp: "media-ai bindings list"
   install:
     tier: core
     summary: >-
       The contract every other media-ai skill builds on: one JSON object on stdout,
-      exit codes by category, how to pick a provider/model, and how credentials stay
-      out of the agent's context.
+      exit codes by category, how a binding is named, and how credentials stay out of
+      the agent's context.
 ---
 
 # media-ai-shared — foundation for the media-ai CLI
 
-`media-ai` is a provider- and model-agnostic multimodal generation CLI spanning
-three modalities — **image**, **video**, and **audio** (speech / music / sound). One
-normalized interface drives multiple backends (`volc`, `openai`, `gemini`,
-`elevenlabs`) plus an offline `mock` default. **Read this skill first** — every
-`media-ai-*` skill (`media-ai-image`, `media-ai-video`, `media-ai-speech`,
-`media-ai-music`, `media-ai-sound`, `media-ai-concat`, `media-ai-job`,
-`media-ai-capabilities`, `media-ai-usage`) relies on the contract and rules below.
+`media-ai` generates images, video and audio through one normalized interface.
+**Read this skill first** — every `media-ai-*` skill relies on the contract below.
 
-## The one rule that prevents most failures
+## The unit you address is a **binding**
 
-> **Discover before you generate.** Run `media-ai capabilities --provider <p>`
-> (or `--model <m>`) and pick a request that fits the model's reported
-> operations / geometry / options. Guessing an unsupported option fails
-> deterministically with **exit 3** *before any network call*. See the
-> `media-ai-capabilities` skill.
+A binding is one callable `(provider, model)` pair, addressed as `<provider>/<model>`.
+The same model reached through two providers is **two bindings**, each with its own
+endpoint, credential, scenes and limits — so "which one am I billing?" is answered by
+the id alone. Run `media-ai bindings list` for the ones this machine has.
+
+## Two rules that prevent most failures
+
+> **1. Ask what exists; never assume.** Model lineups change faster than any document.
+> Run `media-ai bindings list` for what this machine can call right now, and
+> `media-ai capabilities --binding <id>` for what one of them accepts. **Do not
+> hardcode model ids from memory** — the manifests are the only source of truth, and
+> this skill deliberately does not list them.
+
+> **2. Nothing falls back.** A missing, ambiguous or unsuitable binding raises; the
+> CLI never quietly substitutes another. Choosing again after a failure is *your*
+> decision — every refusal hands you the candidates and a command that fixes it.
 
 ## Machine contract (never break these assumptions)
 
-- **stdout is exactly one JSON object** — for success *and* failure. Parse the
-  whole of stdout as a single JSON object (it spans multiple lines under
-  `--pretty`); do **not** parse stderr.
+- **stdout is exactly one JSON object** — for success *and* failure. Parse the whole
+  of stdout as one object (it spans lines under `--pretty`); do **not** parse stderr.
 - **stderr is redacted human logs only.**
 - **Exit code encodes the failure category** — branch on `$?` without parsing:
 
   | code | meaning | what to do |
   |---|---|---|
   | 0 | success | read `artifacts[]` |
-  | 2 | CLI misuse (bad flags) | fix the invocation |
-  | 3 | validation / unsupported option | fix the request (run `capabilities`) |
-  | 4 | auth / missing credentials | set the provider's API key in the env |
+  | 2 | CLI misuse, or nothing configured for this scene | read `error.hint` and run it |
+  | 3 | the request does not fit the binding | read `error.details.unsupported[]` |
+  | 4 | auth: no credential, or the binding is not configured | read `error.hint` |
   | 5 | rate limit / quota | retry with backoff |
   | 6 | provider / upstream error | maybe retry |
   | 7 | timeout | retry / poll the job |
   | 8 | safety / moderation block | change the prompt |
-  | 9 | not found (job / model) | — |
+  | 9 | not found (unknown binding / job) | run `media-ai bindings available` |
 
-Success carries `artifacts[]` + `usage` + `meta` (+ compat aliases `path`,
-`extra_paths`, `bytes`). Failure is `{"ok": false, "error": {...}}`. Full JSON
-shapes → `references/machine-contract.md`.
+Success carries `artifacts[]` + `usage` + `meta`, and `meta` records **which binding
+ran and what scene it was asked for** — keep it, and "what produced this file?" stays
+answerable later.
 
-## Selecting a provider and model
+Failure carries a stable `error.code`, an `error.hint` that is usually a command you
+can run verbatim, and `error.details` naming candidates or alternatives:
 
-Every generation command accepts these global flags (from `add_global_args`):
+```json
+{"ok": false, "error": {
+  "category": "cli", "code": "ambiguous_model",
+  "message": "model '<model>' is served by 2 configured bindings; say which one",
+  "hint": "re-run with --binding <provider-a>/<model>",
+  "details": {"candidates": ["<provider-a>/<model>", "<provider-b>/<model>"]}}}
+```
+
+Full JSON shapes → `references/machine-contract.md`.
+
+## Naming a binding
 
 | Flag | Meaning |
 |---|---|
-| `--provider {mock,volc,openai,gemini,elevenlabs}` | backend; default `$MEDIA_PROVIDER` else `mock` |
-| `--model <id>` | model id; **a model id can imply the provider** (e.g. `--model gpt-image-2` ⇒ openai) |
-| `--provider-profile <name>` | a named profile (provider + model + endpoint + credential ref) from `~/.config/media-ai/config.toml` |
-| `--on-unsupported {error,warn,ignore}` | how to handle unsupported options (default `error` → exit 3) |
-| `--pretty` | pretty-print the JSON result |
-| `--metadata-out <path>` | also write the (secret-free) result JSON to a file |
-| `--log-level {debug,info,warning,error}` | stderr verbosity |
+| `--binding <provider>/<model>` | exact, and always unambiguous — prefer this when you know it |
+| `--provider P` `--model M` | the same thing in two parts |
+| `--model M` | only when one configured binding serves M; otherwise `ambiguous_model` |
+| *(omit all three)* | use the configured default for the scene this request implies |
 
-Model-id → provider routing (bare `--model`): `doubao*`/`seedream*`/`seedance*` ⇒
-`volc`; `gpt-image*` ⇒ `openai`; `gemini-*` (incl. `*-tts`)/`veo-*` ⇒ `gemini`;
-`eleven_*`/`eleven-*` ⇒ `elevenlabs`. (Retired `dall-e*`/`sora*` ids still route to
-`openai` only to return a clear unsupported/removal error — DALL·E and Sora are gone.)
-Provider/model selection detail and per-provider matrices → `references/providers.md`.
+**A call with no binding flags is the normal case.** Setup names a default per scene,
+so `media-ai video generate --prompt "…" --output clip.mp4` works. Reach for
+`--binding` when you need a *specific* one — a second account, a different model, a
+region.
+
+Other global flags: `--on-unsupported {error,warn,ignore}` (default `error`),
+`--pretty`, `--metadata-out <path>`, `--log-level`.
+
+## Scenes
+
+The CLI derives a **scene** from the inputs you pass — no flag selects one:
+
+| what you pass | scene |
+|---|---|
+| just `--prompt` | `image.text_to_image` / `video.text_to_video` |
+| `--reference` (image) | `image.image_to_image` |
+| `--first-frame` | `video.image_to_video` |
+| `--first-frame` + `--last-frame` | `video.keyframe_to_video` |
+| `--reference-image/-video/-audio` | `video.reference_to_video` |
+| `--continue-from` | `video.extend` |
+
+A binding declares which scenes it serves, and one it does not is refused *before the
+call*, naming alternatives you have configured.
+
+> **`--reference-video` and `--continue-from` are different requests.** A reference is
+> material the model draws on; continue-from is a clip it carries on from the final
+> frame of. Passing the wrong one either changes the scene or gets refused.
 
 ## Credentials — keys never touch argv
 
-Set the provider's key in the **environment** (or a broker/keychain/secret-manager);
-there is **no `--api-key` flag**. The CLI resolves keys lazily at HTTP-call time and
-redacts them from every sink.
+There is **no `--api-key` flag**. Each binding names one source in the config and the
+CLI resolves it at call time:
 
-| provider | env var(s) |
-|---|---|
-| `volc` | `ARK_API_KEY` (or `VOLC_API_KEY`) |
-| `openai` | `OPENAI_API_KEY` |
-| `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) |
-| `elevenlabs` | `ELEVENLABS_API_KEY` (or `ELEVEN_API_KEY`) |
-| `mock` | none (offline) |
+```toml
+credential = "env://ARK_API_KEY"      # or cred:// keychain:// broker:// op:// …
+```
 
-Full resolution chain, profiles, and secret rules → `references/credentials.md`.
+There is no fallback between sources: if that one does not resolve, the call fails
+saying which reference failed. Setting some *other* provider's key will not help.
+Full rules → `references/credentials.md`.
 
-## Recommended flow (discover → generate → poll → account)
+## Recommended flow
 
 ```bash
-# per-task dir isolates concurrent runs on a shared filesystem
-export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
+export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl   # per-task, so concurrent runs don't mix
 
-media-ai capabilities --provider gemini --pretty          # 1. discover
-media-ai image generate --provider gemini --prompt "..." \
-    --aspect-ratio 16:9 --resolution 2K --output /tmp/run/ref.png   # 2. generate
-media-ai video generate --provider gemini --first-frame /tmp/run/ref.png \
-    --prompt "..." --output /tmp/run/clip.mp4 --wait false          # 3. async submit → JobHandle
+media-ai bindings list                                    # 1. what can I call?
+media-ai capabilities --scene video.image_to_video        # 2. what accepts this work?
+media-ai image generate --prompt "…" --output /tmp/run/ref.png          # 3. generate
+media-ai video generate --first-frame /tmp/run/ref.png --prompt "…" \
+    --output /tmp/run/clip.mp4 --wait false                             # 4. submit
 # poll the `poll` string it returned until status == succeeded
-media-ai usage                                            # 4. account
+media-ai usage                                            # 5. what did it cost?
 ```
+
+## If nothing is configured
+
+`media-ai bindings available` lists what could be added and prints the exact
+`media-ai bindings add …` command for each. `media-ai init` is the guided version.
+
+**Do not reach for a `placeholder` binding to make a command succeed.** Bindings whose
+`capabilities` entry has `"placeholder": true` fabricate output — the offline mock
+draws the prompt as text on a coloured rectangle — and hand it back as `ok: true`,
+exit 0. A placeholder delivered as a deliverable is worse than a failure, because
+nothing downstream can tell. The CLI never suggests one for this reason: a refusal
+lists it under `available` but never in the `hint`. Use one only when the task you were
+given is explicitly to exercise the pipeline offline.
 
 ## References
 
-- `references/machine-contract.md` — full success / JobHandle / JobStatus / error JSON shapes, exit codes, `--metadata-out`, JSON-array list flags.
-- `references/credentials.md` — env vars, resolution chain, profiles, broker, secret-safety rules.
-- `references/providers.md` — provider/model routing, the capability matrix per provider, base_url + tuning env vars.
-
-Repo docs (deeper): `../../docs/AGENT_SKILLS.md`, `../../docs/CREDENTIALS.md`, `../../docs/PROVIDERS.md`.
+- `references/machine-contract.md` — success / JobHandle / JobStatus / error shapes, exit codes.
+- `references/credentials.md` — reference schemes, per-binding config, secret-safety rules.
+- `references/bindings.md` — how to read `bindings list` / `capabilities` output.

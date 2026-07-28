@@ -1,52 +1,61 @@
 ---
 name: media-ai-video
 description: >-
-  Generate video from a text prompt, a first/last frame image, or multimodal
-  references (images/videos/audio) via the media-ai CLI, across Volcengine Seedance
-  and Google Veo. Handles the async job flow (blocking or --wait false + poll). Use
-  when asked to create, generate, make, or animate a video / clip / movie /
-  animation from text or an image on the command line.
-version: 1.0.0
+  Generate video from a text prompt, a first/last frame image, multimodal references
+  (images/videos/audio), or by continuing an existing clip — and join finished clips
+  into one film. Handles the async job flow (blocking or --wait false + poll). Use
+  when asked to create, generate, make, animate, extend, stitch, concatenate or join
+  a video / clip / movie / animation on the command line.
+version: 2.0.0
 metadata:
   requires:
     bins: ["media-ai"]
-  cliHelp: "media-ai capabilities --model veo-3.1-generate-preview"
+  cliHelp: "media-ai capabilities --scene video.text_to_video"
   install:
     tier: optional
     # Generation is asynchronous on every real backend, so the poll/finalize/cancel
     # skill is part of using this one, not a separate decision.
     needs: ["media-ai-job"]
     summary: >-
-      Turn a prompt, a first/last frame, or reference media into a clip, with
-      Seedance and Veo. Generation is asynchronous — this covers both waiting and
-      polling.
+      Turn a prompt, a first/last frame, reference media, or an existing clip into
+      video — and join the results into one film. Generation is asynchronous, so this
+      covers both waiting and polling.
 ---
 
 # media-ai-video — generate video
 
-> **Read `../media-ai-shared/SKILL.md` first** for the machine contract, provider
-> selection, and credentials. **Video is async on every real provider** — see the
-> `--wait` behavior below and the `media-ai-job` skill for polling/cancelling.
+> **Read `../media-ai-shared/SKILL.md` first** for the machine contract, how a
+> binding is named, and credentials. **Video generation is asynchronous on every real
+> backend** — see `--wait` below and the `media-ai-job` skill for polling/cancelling.
 
-One command, `media-ai video generate`, covers three input modes via one normalized request:
+`media-ai video generate` covers five scenes through one normalized request. **What
+you pass decides the scene** — no flag selects one:
 
-1. **text → video** — just `--prompt`.
-2. **image → video** — `--first-frame` (and optional `--last-frame`) to animate stills.
-3. **references → video** — `--reference-image` / `--reference-video` / `--reference-audio`.
+| you pass | scene | meaning |
+|---|---|---|
+| just `--prompt` | `video.text_to_video` | generate from nothing but words |
+| `--first-frame` | `video.image_to_video` | animate a still |
+| `--first-frame` + `--last-frame` | `video.keyframe_to_video` | move between two stills |
+| `--reference-image/-video/-audio` | `video.reference_to_video` | material to draw on |
+| `--continue-from <uri>` | `video.extend` | carry on from a clip's final frame |
 
-## Discover first
+> **`--reference-video` is not `--continue-from`.** A reference is *material the model
+> draws on* — content, style, a character to keep. Continue-from is *a clip it carries
+> on from*. They are different scenes and rarely served by the same binding. Some
+> backends also require the continue-from clip to be a URI they produced earlier, not
+> a local file.
 
-Durations, resolutions, audio, and frame/reference support differ sharply per model
-(and per tier). Check before you submit:
+`media-ai video concat` joins finished clips locally — see `references/concat.md`.
+
+## Ask before you submit
+
+Durations, resolutions, audio and frame support differ sharply between bindings, and
+this skill deliberately does not list them:
 
 ```bash
-media-ai capabilities --provider gemini --model veo-3.1-generate-preview --pretty
-media-ai capabilities --provider volc --pretty
+media-ai capabilities --scene video.image_to_video   # who can do this at all?
+media-ai capabilities --binding <id> --pretty        # what does that one accept?
 ```
-
-Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
-`supports_first_frame` / `supports_last_frame`, `supports_reference_*`,
-`supports_audio`, `supports_watermark_control`, `supports_cancel`, and `options[]`.
 
 ## Async: `--wait`
 
@@ -56,13 +65,16 @@ Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
   `poll` command. Finalize with the `media-ai-job` skill (`media-ai job query --output`).
 
 ```json
-{"status":"queued","job":{"provider":"gemini","id":"<op>"},
- "poll":"media-ai job query --provider gemini --id <op> --output clip.mp4"}
+{"status":"queued","job":{"binding":"<provider>/<model>","id":"<job-id>"},
+ "poll":"media-ai job query --binding <provider>/<model> --id <job-id> --output clip.mp4"}
 ```
 
-> **Cancel support:** `volc` (Seedance) supports `job cancel`; **Gemini/Veo cannot be
-> cancelled** (exit 3). With `--wait true`, `volc` also cancels the *billed* task if
-> the process is killed (SIGTERM/SIGINT/timeout). (OpenAI has no video model — Sora retired.)
+> **Run the `poll` string verbatim** — it names the binding that submitted the job,
+> which matters because one provider can serve several bindings.
+
+> **Cancellation is per binding**: read `constraints.supports.cancel`. Where it is
+> supported, a blocking `--wait true` also cancels the *billed* task if the process is
+> killed (SIGTERM/SIGINT/timeout), so a killed call leaves nothing running.
 
 ## Core flags
 
@@ -80,29 +92,37 @@ Read `video.is_async`, `resolutions`, `durations`, `aspect_ratios`,
 | `--negative-prompt TEXT` | what to avoid |
 | `--return-last-frame {true,false}` | also return the final frame as an artifact |
 | `--wait {true,false}` | block+poll (default) vs async submit |
-| `--option key=value` | provider-specific, capability-gated (e.g. volc `camera_fixed`) |
+| `--continue-from URI` | carry on from this clip's final frame (`video.extend`) |
+| `--option key=value` | binding-specific; only keys in its `constraints.options` are accepted |
 
 ## Quick starts
 
+No binding flag: the configured default for the scene runs. Add `--binding <id>` only
+when you need a *specific* one.
+
 ```bash
-# text → video, blocking (Seedance)
-media-ai video generate --provider volc \
+# text → video, blocking
+media-ai video generate \
     --prompt "a paper boat sailing down a rain gutter, cinematic" \
     --resolution 720p --aspect-ratio 16:9 --duration 5 --output boat.mp4
 
-# image → video with audio (Veo), async submit
-media-ai video generate --provider gemini --model veo-3.1-generate-preview \
-    --first-frame hero.png --prompt "she turns and smiles" \
+# image → video with audio, async submit
+media-ai video generate --first-frame hero.png --prompt "she turns and smiles" \
     --resolution 1080p --duration 6 --audio true --wait false --output hero.mp4
 
-# references → video (Seedance)
-media-ai video generate --provider volc \
+# references → video, on a binding you name (see `media-ai capabilities --scene
+# video.reference_to_video` for which ones serve it)
+media-ai video generate --binding <provider>/<model> \
     --prompt "keep this character in a neon night market" \
     --reference-image '["char1.png","char2.png"]' \
     --resolution 720p --duration 5 --output market.mp4
+
+# join the finished shots
+media-ai video concat --inputs '["s1.mp4","s2.mp4","s3.mp4"]' --output film.mp4
 ```
 
 ## References
 
-- `references/generate.md` — full flag semantics + the three input modes with examples.
-- `references/providers.md` — video model matrix (Seedance / Veo tiers): durations, resolutions, audio, frames, references, cancel, options. (OpenAI has no video model — Sora retired.)
+- `references/generate.md` — full flag semantics and the five scenes with examples.
+- `references/concat.md` — joining clips locally (free, offline, no credential).
+- `references/bindings/` — per-binding notes: what each one is good at, and its traps.

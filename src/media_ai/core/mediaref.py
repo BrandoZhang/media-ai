@@ -52,8 +52,3 @@ def to_data_uri(ref: MediaRef, media: str = "image") -> str:
     data, mime = read_bytes(ref, media=media)
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
-
-def to_base64(ref: MediaRef, media: str = "image") -> tuple[str, str]:
-    """Return ``(base64_str, mime)`` for a local file (Gemini/Veo inline inputs)."""
-    data, mime = read_bytes(ref, media=media)
-    return base64.b64encode(data).decode("ascii"), mime

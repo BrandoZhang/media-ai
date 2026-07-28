@@ -39,8 +39,11 @@ where = ["src"]
 # Agent Skills ship *inside* the package so `uv tool install git+https://…` carries
 # them; `media-ai init` copies them out to the user's agent directory. Without this
 # they'd be repo-only files and an installed CLI could not offer skill installation.
+# Binding manifests ship the same way for a stronger reason: they *are* the
+# capability declaration the CLI reads at runtime, so an install without them knows
+# about no models at all.
 [tool.setuptools.package-data]
-media_ai = ["skills/**/*.md"]
+media_ai = ["skills/**/*.md", "bindings/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

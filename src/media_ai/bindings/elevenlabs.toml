@@ -1,0 +1,156 @@
+# ElevenLabs — speech, multi-voice dialogue, music, sound effects. All synchronous.
+#
+# Four bindings under one key because they are four different models on four
+# endpoints, each with its own formats and knobs — not one model with modes.
+
+[provider]
+name       = "elevenlabs"
+title      = "ElevenLabs"
+transport  = "http"
+adapter    = "media_ai.providers.elevenlabs:ElevenLabsAdapter"
+docs       = "https://elevenlabs.io/docs/api-reference"
+setup_hint = "Create a key at https://elevenlabs.io/app/settings/api-keys"
+
+[provider.auth]
+kind   = "api_key"
+header = "xi-api-key"
+env    = ["ELEVENLABS_API_KEY", "ELEVEN_API_KEY"]
+
+[provider.base_url]
+# Regional residency endpoints (api.us / api.eu.residency / api.in.residency /
+# api.sg.residency) are selected by overriding this per binding.
+default      = "https://api.elevenlabs.io/v1"
+configurable = true
+
+# --------------------------------------------------------------------- speech (TTS)
+
+[[binding]]
+id       = "elevenlabs/eleven-multilingual-v2"
+model    = "eleven-multilingual-v2"
+model_id = "eleven_multilingual_v2"
+title    = "Eleven Multilingual v2"
+verified = "2026-07-28"
+scenes   = ["speech.text_to_speech"]
+notes    = [
+  "timestamps switch to the /with-timestamps endpoint and write a sidecar as a second artifact",
+  "mp3_44100_192 needs Creator tier or above; PCM/WAV at 44.1 kHz needs Pro or above",
+]
+
+[binding.constraints]
+options = [
+  "stability", "similarity_boost", "style", "speed", "use_speaker_boost",
+  "previous_text", "next_text", "apply_text_normalization", "apply_language_text_normalization",
+  "optimize_streaming_latency", "enable_logging",
+]
+
+[binding.constraints.supports]
+seed          = true
+language_code = true
+timestamps    = true
+dialogue      = false
+
+[binding.constraints.audio]
+formats = [
+  "alaw_8000", "mp3_22050_32", "mp3_24000_48", "mp3_44100_128", "mp3_44100_192",
+  "mp3_44100_32", "mp3_44100_64", "mp3_44100_96", "opus_48000_128", "opus_48000_192",
+  "opus_48000_32", "opus_48000_64", "opus_48000_96", "pcm_16000", "pcm_22050",
+  "pcm_24000", "pcm_32000", "pcm_44100", "pcm_48000", "pcm_8000", "ulaw_8000",
+  "wav_16000", "wav_22050", "wav_24000", "wav_32000", "wav_44100", "wav_48000", "wav_8000",
+]
+
+# ------------------------------------------------------------------------- dialogue
+
+[[binding]]
+id       = "elevenlabs/eleven-v3"
+model    = "eleven-v3"
+model_id = "eleven_v3"
+title    = "Eleven v3"
+verified = "2026-07-28"
+scenes   = ["speech.dialogue"]
+notes    = [
+  "no global director instruction — that is Gemini TTS only",
+  "keep total text around 2000 characters; the API is the authority",
+]
+
+[binding.constraints]
+options = [
+  "stability", "similarity_boost", "style", "speed", "use_speaker_boost",
+  "previous_text", "next_text", "apply_text_normalization", "apply_language_text_normalization",
+  "optimize_streaming_latency", "enable_logging",
+]
+
+[binding.constraints.supports]
+seed          = true
+language_code = true
+timestamps    = true
+dialogue      = true
+instruction   = false
+
+[binding.constraints.audio]
+max_dialogue_voices = 10
+formats = [
+  "alaw_8000", "mp3_22050_32", "mp3_24000_48", "mp3_44100_128", "mp3_44100_192",
+  "mp3_44100_32", "mp3_44100_64", "mp3_44100_96", "opus_48000_128", "opus_48000_192",
+  "opus_48000_32", "opus_48000_64", "opus_48000_96", "pcm_16000", "pcm_22050",
+  "pcm_24000", "pcm_32000", "pcm_44100", "pcm_48000", "pcm_8000", "ulaw_8000",
+  "wav_16000", "wav_22050", "wav_24000", "wav_32000", "wav_44100", "wav_48000", "wav_8000",
+]
+
+# ---------------------------------------------------------------------------- music
+
+[[binding]]
+id       = "elevenlabs/music-v2"
+model    = "music-v2"
+model_id = "music_v2"
+title    = "ElevenLabs Music v2"
+scenes   = ["music.text_to_music", "music.plan_to_music", "music.plan"]
+notes    = [
+  "music.plan is credit-free: it returns an editable composition plan to feed back in",
+  "seed applies in plan mode only",
+  "--detailed uses the multipart /music/detailed endpoint and writes a metadata sidecar",
+]
+
+[binding.constraints]
+options = [
+  "force_instrumental", "respect_sections_durations", "store_for_inpainting",
+  "sign_with_c2pa", "with_timestamps",
+]
+
+[binding.constraints.supports]
+seed             = true
+composition_plan = true
+
+[binding.constraints.audio]
+duration_ms = [3000, 600000]
+formats = [
+  "auto", "mp3_48000_128", "mp3_48000_192", "mp3_48000_240", "mp3_48000_320",
+  "mp3_22050_32", "mp3_24000_48", "mp3_44100_32", "mp3_44100_64", "mp3_44100_96",
+  "mp3_44100_128", "mp3_44100_192", "pcm_8000", "pcm_16000", "pcm_22050", "pcm_24000",
+  "pcm_32000", "pcm_44100", "pcm_48000", "ulaw_8000", "alaw_8000",
+  "opus_48000_32", "opus_48000_64", "opus_48000_96", "opus_48000_128", "opus_48000_192",
+]
+
+# -------------------------------------------------------------------- sound effects
+
+[[binding]]
+id       = "elevenlabs/sound-v2"
+model    = "sound-v2"
+model_id = "eleven_text_to_sound_v2"
+title    = "ElevenLabs Text to Sound v2"
+verified = "2026-07-28"
+scenes   = ["sound.text_to_sound"]
+
+[binding.constraints]
+options = ["loop", "prompt_influence"]
+
+[binding.constraints.supports]
+seed = false
+
+[binding.constraints.audio]
+duration_s = [0.5, 30.0]
+formats = [
+  "mp3_22050_32", "mp3_24000_48", "mp3_44100_32", "mp3_44100_64", "mp3_44100_96",
+  "mp3_44100_128", "mp3_44100_192", "pcm_8000", "pcm_16000", "pcm_22050", "pcm_24000",
+  "pcm_32000", "pcm_44100", "pcm_48000", "ulaw_8000", "alaw_8000",
+  "opus_48000_32", "opus_48000_64", "opus_48000_96", "opus_48000_128", "opus_48000_192",
+]

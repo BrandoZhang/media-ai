@@ -21,27 +21,23 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import re
 import time
 from pathlib import Path
 
-from ..core.capabilities import AudioCaps, GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
-from ..core.modelspec import ModelStatus, apply_spec
 from ..core.mediaref import read_bytes
+from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, Modality, SpeechRequest, VideoRequest
-from ..core.usage import record_usage
+from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, SpeechRequest, VideoRequest
 from ..media import ffmpeg, pillow
 from ..media.audio import write_pcm_wav
 from . import _gemini_files
-from ._base import HttpProvider
-from ._catalog import GEMINI
+from ._base import HttpAdapter
 
 # The 30 prebuilt TTS voices (style/tone/pace are directed via the prompt text /
 # --instruction, not a parameter). Which models exist, and their aspect-ratio sets,
-# live in the catalogue — see providers/_catalog.py.
+# live in the binding manifests — see bindings/gemini.toml.
 _GEMINI_VOICES = (
     "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
     "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
@@ -50,137 +46,40 @@ _GEMINI_VOICES = (
 )
 
 
-def _family(model: str) -> str:
-    """Which capability builder a model uses, from the catalogue rather than its name.
+class GeminiAdapter(HttpAdapter):
 
-    A ``veo-`` prefix or a ``tts`` substring used to decide this. That guessed right
-    for the ids that existed when it was written and silently wrong for anything else;
-    the catalogue says so explicitly instead.
-    """
-    spec = GEMINI.get(model)
-    if spec is None:
-        return "native"
-    if spec.status is ModelStatus.REMOVED:
-        return "removed"
-    kind = spec.caps.get("kind")
-    if kind == "tts":
-        return "tts"
-    if "resolutions" in spec.caps:
-        return "veo"
-    return "native"
+    def honoured_flags(self) -> frozenset[str]:
+        # `candidateCount` and the Search grounding tool.
+        return frozenset({"group_output", "grounding"})
 
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset({
+            Scene.IMAGE_TEXT_TO_IMAGE, Scene.IMAGE_IMAGE_TO_IMAGE,
+            Scene.VIDEO_TEXT_TO_VIDEO, Scene.VIDEO_IMAGE_TO_VIDEO,
+            Scene.VIDEO_KEYFRAME_TO_VIDEO, Scene.VIDEO_REFERENCE_TO_VIDEO, Scene.VIDEO_EXTEND,
+            Scene.SPEECH_TEXT_TO_SPEECH, Scene.SPEECH_DIALOGUE,
+        })
 
-class GeminiProvider(HttpProvider):
-    name = "gemini"
-    catalog = GEMINI
-    auth_scheme = "x-goog"
+    @property
+    def poll_interval(self) -> float:
+        return self.float_option("poll_interval", 10.0)
 
-    def __init__(self, *, credentials=None, config=None) -> None:
-        super().__init__(credentials=credentials, config=config)
-        self.base_url = (self.config.get("base_url") or os.getenv("GEMINI_BASE_URL")
-                         or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-        # Nano Banana 2 (gemini-3.1-flash-image) is Google's recommended go-to image
-        # model; Veo 3.1 supersedes the deprecated Veo 2/3.0 line.
-        self.image_model = self.config.get("image_model") or os.getenv("GEMINI_IMAGE_MODEL") or "gemini-3.1-flash-image"
-        self.video_model = self.config.get("video_model") or os.getenv("GEMINI_VIDEO_MODEL") or "veo-3.1-generate-preview"
-        self.tts_model = self.config.get("tts_model") or os.getenv("GEMINI_TTS_MODEL") or "gemini-2.5-flash-preview-tts"
-        self.poll_interval = float(os.getenv("GEMINI_POLL_INTERVAL", "10") or 10)
-        self.poll_timeout = float(os.getenv("GEMINI_POLL_TIMEOUT", "1200") or 1200)
-        # generateContent references up to this many raw bytes (summed) are inlined as
-        # base64; anything beyond is uploaded via the Files API and referenced by URI,
-        # keeping the request under the ~20 MB inline cap. Kept well below 20 MB to
-        # leave room for base64 inflation (~4/3) and the JSON envelope.
-        self.inline_max_bytes = int(os.getenv("GEMINI_INLINE_MAX_BYTES") or 12 * 1024 * 1024)
+    @property
+    def poll_timeout(self) -> float:
+        return self.float_option("poll_timeout", 1200.0)
 
-    # ---- discovery -------------------------------------------------------
-    def models(self) -> list[str]:
-        # Deprecated snapshots (veo-2.0 / veo-3.0) still resolve via --model and
-        # capabilities(); the catalogue marks them undiscoverable so they aren't
-        # offered to new callers.
-        return GEMINI.discoverable_ids()
+    @property
+    def inline_max_bytes(self) -> int:
+        """Above this, a local reference is uploaded via the Files API and passed by URI.
 
-    def default_model(self, modality: Modality | None) -> str:
-        if modality == Modality.VIDEO:
-            return self.video_model
-        if modality == Modality.AUDIO:
-            return self.tts_model
-        return self.image_model
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        if model is None:
-            model = self.tts_model if modality == Modality.AUDIO else self.image_model
-        spec = GEMINI.require(model)   # raises for a removed model, naming its replacement
-        fam = _family(model)
-        if fam == "tts":
-            return apply_spec(self._audio_caps(model), spec)
-        if fam == "veo":
-            return apply_spec(self._veo_caps(model, spec), spec)
-        return apply_spec(self._native_caps(model, spec), spec)
-
-    def _audio_caps(self, model: str) -> ModelCapabilities:
-        return ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.AUDIO}),
-            experimental="preview" in model,
-            audio=AudioCaps(
-                operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE}),
-                voices=_GEMINI_VOICES, default_voice="Kore", output_formats=("wav",),
-                supports_seed=False, supports_language_code=False, supports_timestamps=False,
-                supports_dialogue=True, supports_instruction=True, max_dialogue_voices=2,
-                max_characters=None, options=(),
-            ),
-            notes=("style/tone/accent/pace and inline [tags] are directed via the prompt text and "
-                   "--instruction, not parameters; language is auto-detected; output is 24kHz WAV",),
-        )
-
-    def _veo_caps(self, model: str, spec) -> ModelCapabilities:
-        """Veo capabilities, with the per-generation differences read from the catalogue.
-
-        These used to be re-derived from the id on every call (``startswith("veo-3.1")``,
-        ``"lite" in m``), which meant a new Veo id silently inherited whichever branch
-        it happened to fall into.
+        Per binding rather than global: the inline ceiling is a property of the endpoint
+        being called, and a deployment behind a proxy with a smaller body limit needs to
+        say so without changing anyone else's.
         """
-        c = spec.caps
-        refs = bool(c.get("references"))
-        return ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
-            video=VideoCaps(
-                is_async=True, aspect_ratios=("16:9", "9:16"),
-                resolutions=tuple(c.get("resolutions", ())),
-                durations=tuple(c.get("durations", ())),
-                supports_first_frame=True, supports_last_frame=bool(c.get("last_frame")),
-                supports_reference_images=refs, supports_reference_videos=refs,
-                supports_seed=True, supports_negative_prompt=True,
-                supports_audio=bool(c.get("audio")), audio_default=c.get("audio") or None,
-                supports_cancel=False, options=("person_generation",),
-            ),
-            notes=("SynthID watermark is unconditional; on the Developer API generateAudio is "
-                   "unreliable (Veo 3.x audio is native, Veo 2 is silent); jobs cannot be cancelled",),
-        )
+        return self.int_option("inline_max_bytes", 12 * 1024 * 1024)
 
-    def _native_caps(self, model: str, spec) -> ModelCapabilities:
-        """Nano Banana capabilities, with per-tier differences read from the catalogue."""
-        c = spec.caps
-        return ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(
-                operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.ASPECT_RATIO,
-                aspect_ratios=tuple(c.get("aspect_ratios", ())),
-                named_sizes=tuple(c.get("named_sizes", ())),
-                max_count=4, output_formats=("png", "jpeg", "webp"),
-                max_references=int(c.get("max_references", 3)),
-                options=tuple(c.get("options", ())),
-            ),
-            notes=("native conversational image gen/edit; SynthID watermark is unconditional",),
-        )
-
-    # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        model = req.model or self.image_model
-        # Refuse a retired model here as well as in capabilities(), so the two agree:
-        # a caller must never be able to send a request for something discovery says
-        # is gone.
-        GEMINI.require(model)
+        model = req.model or self.model_id
         return self._native(model, req)
 
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:
@@ -225,9 +124,9 @@ class GeminiProvider(HttpProvider):
                                         source_mime=mime, role="group"))
         usage = data.get("usageMetadata") or {}
         used_model = data.get("modelVersion") or model  # the model that actually served the request
-        record_usage({"tool": req.operation.value, "operation": req.operation.value, "provider": self.name,
-                      "model": used_model, "kind": "image", "generated_images": len(images),
-                      "output_tokens": usage.get("candidatesTokenCount", 0), "total_tokens": usage.get("totalTokenCount", 0)})
+        self.record(derive_scene(req), model=used_model, kind="image", generated_images=len(images),
+                    output_tokens=usage.get("candidatesTokenCount", 0),
+                    total_tokens=usage.get("totalTokenCount", 0))
         meta: dict = {"prompt": req.prompt}
         if uploaded:
             meta["uploaded_refs"] = uploaded  # references sent via the Files API
@@ -239,29 +138,29 @@ class GeminiProvider(HttpProvider):
         grounding = _grounding_metadata(data)
         if grounding:
             meta["grounding"] = grounding  # search suggestions (display per ToS) + citations
-        return GenerationResult(modality="image", operation=req.operation.value, provider=self.name, model=used_model,
+        return GenerationResult(modality="image", provider=self.name, model=used_model,
                                 artifacts=artifacts, usage=usage, meta=meta)
 
     # ---- speech / dialogue (TTS via generateContent) ---------------------
     def generate_speech(self, req: SpeechRequest) -> GenerationResult:
-        model = req.model or self.tts_model
+        model = req.model or self.model_id
         voice = req.voice or "Kore"
         speech_cfg = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-        return self._tts(model, req.text, speech_cfg, Path(req.output), "speech.generate", {"voice": voice})
+        return self._tts(model, req.text, speech_cfg, Path(req.output), Scene.SPEECH_TEXT_TO_SPEECH, {"voice": voice})
 
     def generate_dialogue(self, req: DialogueRequest) -> GenerationResult:
         if not req.turns or not req.cast:
             raise MediaError("dialogue requires turns and a cast", category=ErrorCategory.VALIDATION, provider=self.name)
-        model = req.model or self.tts_model
+        model = req.model or self.model_id
         configs = [{"speaker": spk, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
                    for spk, voice in req.cast.items()]
         speech_cfg = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": configs}}
         script = "\n".join(f"{t.speaker}: {t.text}" for t in req.turns)
         prompt = f"{req.instruction}\n\n{script}" if req.instruction else script
-        return self._tts(model, prompt, speech_cfg, Path(req.output), "speech.dialogue",
+        return self._tts(model, prompt, speech_cfg, Path(req.output), Scene.SPEECH_DIALOGUE,
                          {"voices": req.voices(), "instruction": req.instruction})
 
-    def _tts(self, model: str, prompt: str, speech_cfg: dict, out: Path, operation: str, meta: dict) -> GenerationResult:
+    def _tts(self, model: str, prompt: str, speech_cfg: dict, out: Path, scene: Scene, meta: dict) -> GenerationResult:
         client, headers = self._prepare()
         # TTS models produce audio only — responseModalities MUST be ["AUDIO"] (adding
         # "TEXT", as the image path does, makes the model reject the request with a 400).
@@ -275,18 +174,17 @@ class GeminiProvider(HttpProvider):
         write_pcm_wav(out, base64.b64decode(b64), rate=_pcm_rate(mime))  # headerless PCM -> WAV
         usage = data.get("usageMetadata") or {}
         used_model = data.get("modelVersion") or model
-        record_usage({"tool": operation, "operation": operation, "provider": self.name,
-                      "model": used_model, "kind": "audio", "characters": len(prompt),
-                      "total_tokens": usage.get("totalTokenCount", 0)})
+        self.record(scene, model=used_model, kind="audio", characters=len(prompt),
+                    total_tokens=usage.get("totalTokenCount", 0))
         if data.get("responseId"):
             meta["response_id"] = data["responseId"]
-        return GenerationResult(modality="audio", operation=operation, provider=self.name, model=used_model,
+        return GenerationResult(modality="audio", provider=self.name, model=used_model,
                                 artifacts=[Artifact.from_path(out, "audio", mime="audio/wav")], usage=usage, meta=meta)
 
     # ---- video (Veo long-running op) -------------------------------------
     def generate_video(self, req: VideoRequest):
         client, headers = self._prepare()
-        model = req.model or self.video_model
+        model = req.model or self.model_id
         instance: dict = {"prompt": req.prompt}
         if req.first_frame:
             instance["image"] = _veo_media(req.first_frame)
@@ -331,20 +229,23 @@ class GeminiProvider(HttpProvider):
             raise MediaError("Veo returned no operation name", category=ErrorCategory.PROVIDER, provider=self.name)
         if not req.wait:
             return JobHandle(provider=self.name, model=model, id=op_name, output=str(req.output))
-        return self._poll_operation(client, headers, op_name, Path(req.output), model, seconds=req.duration or 0)
+        return self._poll_operation(client, headers, op_name, Path(req.output), model,
+                                    seconds=req.duration or 0, scene=derive_scene(req))
 
-    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str, *, seconds: int = 0) -> GenerationResult:
+    def _poll_operation(self, client, headers, op_name: str, out: Path, model: str, *,
+                        seconds: int = 0, scene: Scene | None = None) -> GenerationResult:
         deadline = time.monotonic() + self.poll_timeout
         while time.monotonic() < deadline:
             res = client.request_json("GET", f"/{op_name}", headers=headers)
             if res.get("done"):
-                return self._finalize_video(client, headers, op_name, out, model, res, seconds=seconds)
+                return self._finalize_video(client, headers, op_name, out, model, res,
+                                            seconds=seconds, scene=scene)
             time.sleep(self.poll_interval)
         raise MediaError(f"Veo operation {op_name} timed out after {self.poll_timeout}s",
                          category=ErrorCategory.TIMEOUT, provider=self.name)
 
     def _finalize_video(self, client, headers, op_name: str, out: Path, model: str, res: dict,
-                        *, seconds: int = 0) -> GenerationResult:
+                        *, seconds: int = 0, scene: Scene | None = None) -> GenerationResult:
         if res.get("error"):
             raise _operation_error(res["error"], op_name, self.name)
         uri = _veo_video_uri(res)
@@ -356,9 +257,8 @@ class GeminiProvider(HttpProvider):
         # which the requested duration would undercount). Fall back to the requested
         # duration only if the probe can't read it (missing ffmpeg / unreadable file).
         secs = int(round(ffmpeg.probe_duration(out))) or seconds
-        record_usage({"tool": "video.generate", "operation": "video.generate", "provider": self.name,
-                      "model": model, "kind": "video", "seconds": secs})
-        return GenerationResult(modality="video", operation="video.generate", provider=self.name, model=model,
+        self.record(scene, model=model, kind="video", seconds=secs)
+        return GenerationResult(modality="video", provider=self.name, model=model,
                                 artifacts=[Artifact.from_path(out, "video", mime="video/mp4")], usage={},
                                 meta={"operation": op_name, "seconds": secs})
 
@@ -371,7 +271,7 @@ class GeminiProvider(HttpProvider):
             raise _operation_error(res["error"], ref.id, self.name)
         result = None
         if done and output is not None:
-            result = self._finalize_video(client, headers, ref.id, Path(output), ref.model or self.video_model, res)
+            result = self._finalize_video(client, headers, ref.id, Path(output), ref.model or self.model_id, res)
         return JobStatus(provider=self.name, model=ref.model, id=ref.id,
                          status="succeeded" if done else "running", op="query", result=result)
 

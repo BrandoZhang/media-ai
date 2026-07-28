@@ -1,0 +1,25 @@
+# Local media processing — the bundled ffmpeg. No network, no credential, no cost.
+#
+# Declaring it as a binding rather than treating it as a special case is what keeps
+# "does this need a key?" derived (auth.kind == "none") instead of declared per skill,
+# and gives video.concat a provider like every other scene has. Local operations added
+# later (trim, mux, transcode) are extra scenes here, not a new provider.
+
+[provider]
+name      = "local"
+title     = "Local (bundled ffmpeg)"
+transport = "local"
+adapter   = "media_ai.providers.local:LocalAdapter"
+
+[provider.auth]
+kind = "none"
+
+[[binding]]
+id     = "local/ffmpeg"
+model  = "ffmpeg"
+title  = "ffmpeg"
+scenes = ["video.concat"]
+notes  = ["clips are normalized to a common size before joining"]
+
+[binding.constraints.output]
+formats = ["mp4"]

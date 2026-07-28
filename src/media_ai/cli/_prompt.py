@@ -1043,5 +1043,14 @@ def get_prompter(*, force_fallback: bool = False) -> Prompter:
         for handle in (tty_in, tty_out):
             if handle is not None:
                 handle.close()
+        # Sandboxed terminals can expose usable tty stdio while denying ``/dev/tty``.
+        # Keep the interaction on stderr so stdout remains the one-JSON-object
+        # machine channel even in this fallback-to-stdio case.
+        stdin = getattr(sys.stdin, "buffer", sys.stdin)
+        if getattr(stdin, "isatty", lambda: False)() and getattr(sys.stderr, "isatty", lambda: False)():
+            try:
+                return TerminalPrompter(stdin, sys.stderr)
+            except (OSError, ValueError, AttributeError):
+                pass
         return FallbackPrompter()
     return TerminalPrompter(tty_in, tty_out)

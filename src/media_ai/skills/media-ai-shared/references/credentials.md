@@ -1,89 +1,78 @@
-# media-ai credentials — secret-safe setup
+# Credentials — one binding, one named source
 
-**The CLI never accepts a key as a flag.** There is no `--api-key`. Keys are
-resolved lazily at HTTP-call time, held as a reveal-only `Secret`, and redacted
-from stdout, stderr, and `--metadata-out`. Set them in the environment (or a
-broker / keychain / secret-manager).
+The design rule, borrowed from Anthropic's managed-agents guidance: **if you don't
+want your AI agent to reveal a secret, don't give it the secret.** A raw key must
+never reach an agent's context, the CLI's argv, logs, or generated metadata.
 
-> Rule of thumb: if you don't want the agent to leak a secret, don't put it in the
-> agent's context or argv — put it in the environment and let the CLI resolve it.
+## What an agent may and may not do
 
-## Environment variables per provider
-
-| provider | env var(s) (first non-empty wins) |
+| | |
 |---|---|
-| `volc` | `ARK_API_KEY`, `VOLC_API_KEY` |
-| `openai` | `OPENAI_API_KEY` (+ optional `OPENAI_ORG`, `OPENAI_PROJECT`) |
-| `gemini` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
-| `elevenlabs` | `ELEVENLABS_API_KEY`, `ELEVEN_API_KEY` (audio; base URL via `ELEVENLABS_BASE_URL`) |
-| `mock` | none (offline default) |
-| any other provider | `<PROVIDER>_API_KEY` (e.g. a custom `acme` ⇒ `ACME_API_KEY`) |
+| **Never** | pass a key as a flag — there is no `--api-key`, and argv is world-readable via `ps` |
+| **Never** | echo, log, or write a key into a file the agent can read back |
+| **Never** | put a raw key in `config.toml` — the CLI refuses it, because that file is the shareable one |
+| Do | name a binding and let the CLI resolve its credential |
+| Do | read `error.hint` when resolution fails and run it, or tell the user what to set |
 
-```bash
-export OPENAI_API_KEY=sk-...        # then: media-ai image generate --provider openai ...
-export GEMINI_API_KEY=...           # or GOOGLE_API_KEY
-export ARK_API_KEY=...              # volc / Volcengine Ark
-export ELEVENLABS_API_KEY=...       # elevenlabs / audio (or ELEVEN_API_KEY)
-```
-
-A missing/invalid key surfaces as **exit 4** (`auth`) — fix the environment, not the request.
-
-## Resolution chain (most-secure first, first hit wins, re-resolved per call)
-
-1. **Broker** — `$MEDIA_CRED_BROKER` (+ `$MEDIA_CRED_BROKER_TOKEN`): the CLI holds
-   only a session token; the broker injects the real key at egress. Ideal for hosted
-   agents (the key never reaches the sandbox).
-2. **Secret-manager reference** — `$MEDIA_SECRET_REF_<PROVIDER>` (e.g.
-   `MEDIA_SECRET_REF_OPENAI`) or a config value prefixed `op://` / `vault://` /
-   `gcp-sm://` / `aws-sm://` / `arn:aws:secretsmanager:` (only `env://VAR` is built in;
-   others need `register_secret_backend`).
-3. **OS keychain** — with the `keychain` extra installed (`pip install -e ".[keychain]"`),
-   service `media-ai`, username = provider name. Disable with `$MEDIA_DISABLE_KEYCHAIN`.
-4. **Config file** — `~/.config/media-ai/credentials.toml` (override `$MEDIA_CREDENTIALS_FILE`);
-   must be `chmod 600` or it is refused. A flat namespace of **accounts**:
-   `[<name>].api_key` (or `.key`); an account named after a provider is that provider's
-   default.
-5. **Environment** — the table above.
-
-## Accounts (multiple keys per provider / per model)
-
-For several keys under one provider — different accounts/tenants or per model/endpoint
-— add more accounts in `credentials.toml` and reference one from a profile as
-`cred://<name>`:
+## Each binding names exactly one source
 
 ```toml
-# ~/.config/media-ai/credentials.toml  (chmod 600 — the secrets, one block per account)
-[volc_account_a]
-api_key = "..."
-[volc_account_b]
-api_key = "op://vault/volc/account-b"   # an account's key may itself be a reference
+# ~/.config/media-ai/config.toml — non-secret, safe to share
+[bindings."volc-ark/seedance-2.0"]
+credential = "env://ARK_API_KEY"
 ```
 
-## Profiles (multiple accounts / endpoints / tenants)
+| reference | resolves from |
+|---|---|
+| `env://VAR` | an environment variable |
+| `cred://<account>` | a `[<account>]` block in `~/.config/media-ai/credentials.toml` (chmod 600) |
+| `keychain://<service>/<account>` | the OS keychain (needs the `keychain` extra) |
+| `broker://<host>` | a credential broker — this process holds only a session token |
+| `op://…`, `vault://…`, … | a registered secret-manager backend |
 
-A profile binds `provider` + default `model` + optional `base_url` + a **credential
-reference** (never a raw key), in `~/.config/media-ai/config.toml` (override
-`$MEDIA_CONFIG_FILE`). Select with `--provider-profile <name>` or `$MEDIA_PROFILE`.
+**There is no fallback between them.** If `env://ARK_API_KEY` is unset, the call fails
+naming that reference. Setting a different provider's key, or the same key somewhere
+else, will not rescue it — that is the point. "Which key did this call use?" has a
+one-line answer.
+
+## When resolution fails
+
+```json
+{"ok": false, "error": {
+  "category": "auth", "code": "credential_unresolved",
+  "message": "credential 'env://ARK_API_KEY' did not resolve: environment variable ARK_API_KEY is unset or empty"}}
+```
+
+Exit 4. Two distinct causes worth telling apart:
+
+| code | meaning |
+|---|---|
+| `credential_unresolved` | the binding is configured; its source is empty |
+| `binding_not_configured` | the binding is declared but this machine has no entry for it — `error.hint` is the `bindings add` command |
+| `credential_is_raw_key` | someone put a key where a reference belongs |
+
+## Storing a key
+
+`media-ai bindings add <id> --credential env://VAR` writes the reference only.
+`media-ai init` also offers to store the key itself in `credentials.toml`
+(chmod 600, refused if group- or world-readable). Choosing the `env://` route means
+**no secret file is written at all**.
+
+## Sharing one key between bindings
+
+Two bindings on one account each name the key. That repetition is deliberate: the
+config states outright which key every call uses. If you would rather rotate in one
+place, point both at the same account:
 
 ```toml
-# ~/.config/media-ai/config.toml  (shareable — references + routing, no secrets)
-[profiles.prod-openai]
-provider = "openai"
-model = "gpt-image-2"
-base_url = "https://api.openai.com/v1"
-credential = "cred://openai_prod"           # or env://VAR / op://…; a raw key is refused (exit 4)
-
-[profiles.prod-video-ha]
-provider = "volc"
-model = "ep-video-B"
-# Ordered fallback: the first reference that resolves at call time wins.
-credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
+[bindings."volc-ark/seedream-4.5"]
+credential = "cred://shared-ark"
+[bindings."volc-ark/seedance-2.0"]
+credential = "cred://shared-ark"
 ```
 
-```bash
-media-ai image generate --provider-profile prod-openai --prompt "..." --output o.png
-```
+## Redaction
 
-A single reference is strict (an absent source is exit 4, never a silent switch); a
-list is the explicit opt-in to fall through absent sources. Deeper detail (trust
-boundary, redaction, broker headers): `../../../docs/CREDENTIALS.md`.
+Every sink — stdout JSON, stderr logs, error messages — passes through a redactor that
+masks live secret values and key-shaped tokens. A `Secret` is reveal-only and is not
+JSON-serializable, so it cannot reach the result by accident.

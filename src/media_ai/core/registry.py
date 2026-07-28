@@ -1,269 +1,140 @@
-"""Provider + model registry — the extension point for custom providers.
+"""The binding catalog and adapter construction — the extension point.
 
-Resolves ``(--provider, --model)`` (or a bare model id) to a constructed adapter.
-Providers are looked up in a dynamic registry rather than a hardcoded table, so a
-third party can add a backend **without editing this file**, two ways:
+A backend is added by shipping a **manifest** (what it can do) and an **adapter**
+(how to talk to it). Neither requires editing this file, two ways:
 
-1. **In-process** — call :func:`register_provider` (e.g. at import time)::
-
-       from media_ai import register_provider, Provider
-       register_provider("acme", lambda **kw: AcmeProvider(**kw),
-                         model_hints=("acme-",))
-
-2. **As an installed package** — expose an entry point in the
-   ``media_ai.providers`` group pointing at a :class:`Provider` subclass::
+1. **As an installed package** — an entry point in the ``media_ai.bindings`` group
+   resolving to a manifest, either as a string of TOML or a path to one::
 
        # pyproject.toml of the plugin package
-       [project.entry-points."media_ai.providers"]
-       acme = "acme_media:AcmeProvider"
+       [project.entry-points."media_ai.bindings"]
+       acme = "acme_media:MANIFEST"
 
-   The entry-point *name* becomes the provider name; the class's ``model_hints``
-   attribute routes bare ``--model`` ids to it. Entry points are discovered lazily
-   and a broken plugin is skipped (logged) rather than breaking the whole CLI.
+   The manifest's ``[provider].adapter`` names the class to import, so the adapter
+   can live anywhere — including a private package wrapping an internal RPC
+   platform, which is the case a declarative-only design could never serve.
 
-Built-in providers (mock/volc/openai/gemini) are registered the same way, with
-factory closures that import the adapter lazily so the CLI only loads what it uses.
+2. **In-process** — :func:`register_manifest`, for tests and embedding.
+
+A broken plugin is logged and skipped rather than breaking the CLI; a broken
+built-in raises, because that is a packaging bug the test suite must catch.
+
+Note what is *not* here any more. There is no provider-name→factory table, no
+``model_hints`` substring routing (``"seedance" in model`` picked a provider, which
+stops being answerable the moment a model has two), and no ``$MEDIA_PROVIDER``
+default. Which binding to call is :mod:`media_ai.core.resolve`'s job, decided from
+configuration and explicit flags.
 """
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-from typing import Callable
+from importlib import import_module
 
-from ..credentials.profile import Profile, ProfileCredentialProvider, load_profile
-from ..credentials.resolver import CredentialProvider, default_chain
+from .binding import BindingCatalog, ManifestError, builtin_catalog, load_manifest
 from .errors import ErrorCategory, MediaError
-from .provider import Provider
-from .types import Modality
+from .logging import get_logger
 
-# A factory builds a provider: factory(credentials=..., config=...) -> Provider.
-ProviderFactory = Callable[..., Provider]
+__all__ = ["build_adapter", "catalog", "load_adapter_class", "register_manifest", "reset_catalog"]
 
-
-@dataclass
-class ProviderSpec:
-    name: str
-    factory: ProviderFactory
-    model_hints: tuple[str, ...] = ()
+_CATALOG: BindingCatalog | None = None
+_EXTRA: list[tuple[str, str]] = []  # (source, toml text) registered in-process
 
 
-_REGISTRY: dict[str, ProviderSpec] = {}
-_BUILTINS_LOADED = False
-_ENTRYPOINTS_LOADED = False
+def register_manifest(text: str, *, source: str = "<registered>") -> None:
+    """Add a manifest in-process. Takes effect on the next :func:`catalog` call."""
+    load_manifest(text, source=source)  # fail here, not at some later lookup
+    _EXTRA.append((source, text))
+    reset_catalog()
 
 
-# --------------------------------------------------------------------------
-# public registration API
-# --------------------------------------------------------------------------
+def unregister_manifest(source: str) -> None:
+    global _EXTRA
+    _EXTRA = [(s, t) for s, t in _EXTRA if s != source]
+    reset_catalog()
 
 
-def register_provider(name: str, factory: ProviderFactory, *, model_hints: tuple[str, ...] = ()) -> str:
-    """Register (or replace) a provider adapter under ``name``.
-
-    ``factory(credentials=None, config=None)`` must return a :class:`Provider`.
-    ``model_hints`` are lowercase substrings that route a bare ``--model`` id to
-    this provider (so ``--model`` alone selects it). Idempotent; last wins.
-    """
-    key = name.lower()
-    _REGISTRY[key] = ProviderSpec(key, factory, tuple(h.lower() for h in model_hints))
-    return key
+def reset_catalog() -> None:
+    """Drop the memoized catalog. For tests, and after registering a manifest."""
+    global _CATALOG
+    _CATALOG = None
 
 
-def unregister_provider(name: str) -> None:
-    _REGISTRY.pop(name.lower(), None)
+def catalog() -> BindingCatalog:
+    """Every declared binding: built-in manifests, entry points, then in-process ones."""
+    global _CATALOG
+    if _CATALOG is None:
+        cat = builtin_catalog()
+        _load_entry_points(cat)
+        for source, text in _EXTRA:
+            cat.add(*load_manifest(text, source=source), source=source)
+        _CATALOG = cat
+    return _CATALOG
 
 
-def is_registered(name: str) -> bool:
-    _ensure_loaded()
-    return name.lower() in _REGISTRY
+def _load_entry_points(cat: BindingCatalog) -> None:
+    from importlib.metadata import entry_points
 
-
-def provider_names() -> list[str]:
-    """All registered provider names (built-ins + plugins), sorted."""
-    _ensure_loaded()
-    return sorted(_REGISTRY)
-
-
-# --------------------------------------------------------------------------
-# discovery / loading
-# --------------------------------------------------------------------------
-
-
-def _ensure_loaded() -> None:
-    _register_builtins()
-    _load_entry_points()
-
-
-def _register_builtins() -> None:
-    global _BUILTINS_LOADED
-    if _BUILTINS_LOADED:
-        return
-    _BUILTINS_LOADED = True
-
-    def _mock(**kw):
-        from ..providers.mock import MockProvider
-
-        return MockProvider(**kw)
-
-    def _volc(**kw):
-        from ..providers.volc import VolcProvider
-
-        return VolcProvider(**kw)
-
-    def _openai(**kw):
-        from ..providers.openai import OpenAIProvider
-
-        return OpenAIProvider(**kw)
-
-    def _gemini(**kw):
-        from ..providers.gemini import GeminiProvider
-
-        return GeminiProvider(**kw)
-
-    def _elevenlabs(**kw):
-        from ..providers.elevenlabs import ElevenLabsProvider
-
-        return ElevenLabsProvider(**kw)
-
-    register_provider("mock", _mock, model_hints=("mock",))
-    register_provider("volc", _volc, model_hints=("doubao", "seedream", "seedance"))
-    # `dall-e`/`sora` route here so a request for a (dropped) DALL·E or the
-    # unsupported Sora model gets a clear error instead of silently falling back to
-    # mock — the catalogue marks them REMOVED/unsupported and the adapter raises on
-    # them, rather than name-matching in code. Likewise `imagen-`
-    # routes to gemini for a clear "use Nano Banana" removal error.
-    register_provider("openai", _openai, model_hints=("gpt-image", "dall-e", "sora"))
-    register_provider("gemini", _gemini, model_hints=("gemini-", "imagen-", "veo-"))
-    register_provider("elevenlabs", _elevenlabs, model_hints=("eleven_", "eleven-"))
-
-
-def _load_entry_points() -> None:
-    global _ENTRYPOINTS_LOADED
-    if _ENTRYPOINTS_LOADED:
-        return
-    _ENTRYPOINTS_LOADED = True
     try:
-        from importlib.metadata import entry_points
-    except Exception:  # pragma: no cover - importlib.metadata always present on 3.11
-        return
-    try:
-        eps = entry_points(group="media_ai.providers")
-    except TypeError:  # pragma: no cover - very old API
-        eps = entry_points().get("media_ai.providers", [])  # type: ignore[attr-defined]
+        eps = entry_points(group="media_ai.bindings")
+    except TypeError:  # pragma: no cover - very old importlib API
+        eps = entry_points().get("media_ai.bindings", [])  # type: ignore[attr-defined]
     for ep in eps:
         try:
-            obj = ep.load()
-            _register_entry_point(ep.name, obj)
-        except Exception as exc:  # noqa: BLE001 - a broken plugin must not break the CLI
-            from .logging import get_logger
-
-            get_logger().warning("skipping provider plugin %r: %s", getattr(ep, "name", "?"), exc)
+            cat.add(*load_manifest(_manifest_text(ep.load()), source=ep.name), source=ep.name)
+        except Exception as exc:  # noqa: BLE001 - one broken plugin must not break the CLI
+            get_logger().warning("skipping binding plugin %r: %s", getattr(ep, "name", "?"), exc)
 
 
-def _register_entry_point(name: str, obj) -> None:
-    """An entry point resolves to a Provider subclass (preferred) or a factory."""
-    if isinstance(obj, type) and issubclass(obj, Provider):
-        hints = tuple(getattr(obj, "model_hints", ()) or ())
-        register_provider(name, lambda **kw: obj(**kw), model_hints=hints)
-    elif callable(obj):
-        register_provider(name, obj, model_hints=tuple(getattr(obj, "model_hints", ()) or ()))
-    else:
-        raise TypeError(f"entry point {name!r} is not a Provider subclass or factory")
+def _manifest_text(obj) -> str:
+    """An entry point resolves to TOML text, a path to a manifest, or a callable returning either."""
+    if callable(obj):
+        obj = obj()
+    if isinstance(obj, str):
+        if obj.lstrip().startswith(("[", "#")):
+            return obj
+        from pathlib import Path
+
+        return Path(obj).read_text(encoding="utf-8")
+    read = getattr(obj, "read_text", None)  # a Path or Traversable
+    if callable(read):
+        return read(encoding="utf-8")
+    raise ManifestError(f"entry point resolved to {type(obj).__name__}, not manifest text or a path")
 
 
 # --------------------------------------------------------------------------
-# resolution
+# adapters
 # --------------------------------------------------------------------------
 
 
-def provider_for_model(model: str | None) -> str | None:
-    if not model:
-        return None
-    _ensure_loaded()
-    m = model.lower()
-    for spec in _REGISTRY.values():
-        if any(h in m for h in spec.model_hints):
-            return spec.name
-    return None
+def load_adapter_class(reference: str):
+    """Import the ``module:Class`` an adapter reference names.
 
-
-def default_provider_name() -> str:
-    return os.getenv("MEDIA_PROVIDER") or "mock"
-
-
-def _resolve_profile(name: str | None) -> Profile | None:
-    name = name or os.getenv("MEDIA_PROFILE")
-    return load_profile(name) if name else None
-
-
-def _profile_credentials(profile: Profile | None, credentials: CredentialProvider | None) -> CredentialProvider | None:
-    if credentials is not None or profile is None:
-        return credentials
-    return ProfileCredentialProvider(profile, default_chain())
-
-
-def _profile_config(profile: Profile | None, config: dict | None, name: str | None = None) -> dict | None:
-    """Merge the config an adapter sees, most-specific first.
-
-    Explicit ``config=`` beats a profile's ``base_url``, which beats the file-level
-    ``[providers.<name>]`` defaults. Adapters then prefer what they get here over their
-    environment variables, so precedence end-to-end is:
-    explicit → profile → ``[providers.<name>]`` → env var → built-in default.
+    Imported on use, never at startup: a manifest for a provider whose adapter lives
+    in another package costs nothing until something asks to call it.
     """
-    cfg = dict(config or {})
-    if profile is not None and profile.base_url:
-        cfg.setdefault("base_url", profile.base_url)
-    if name:
-        from ..credentials.profile import provider_defaults
-
-        for key, value in provider_defaults(name).items():
-            cfg.setdefault(key, value)
-    return cfg or None
-
-
-def _construct(name: str, credentials: CredentialProvider | None, config: dict | None) -> Provider:
-    _ensure_loaded()
-    spec = _REGISTRY.get(name.lower())
-    if spec is None:
+    module_name, _, class_name = reference.partition(":")
+    try:
+        module = import_module(module_name)
+    except ImportError as exc:
         raise MediaError(
-            f"unknown provider {name!r}; registered: {', '.join(provider_names())}",
-            category=ErrorCategory.CLI,
-        )
-    return spec.factory(credentials=credentials, config=config)
+            f"adapter {reference!r} could not be imported: {exc}",
+            category=ErrorCategory.NOT_FOUND, code="adapter_not_importable",
+        ) from exc
+    try:
+        return getattr(module, class_name)
+    except AttributeError:
+        raise MediaError(
+            f"adapter {reference!r}: {module_name} has no {class_name}",
+            category=ErrorCategory.NOT_FOUND, code="adapter_not_importable",
+        ) from None
 
 
-def build(
-    provider: str | None = None,
-    model: str | None = None,
-    modality: Modality | None = None,
-    *,
-    profile: str | None = None,
-    credentials: CredentialProvider | None = None,
-    config: dict | None = None,
-) -> tuple[Provider, str | None]:
-    """Return ``(provider_instance, resolved_model_id)``.
+def build_adapter(rb):
+    """Construct the adapter for a :class:`~media_ai.core.resolve.ResolvedBinding`.
 
-    Provider precedence: explicit ``--provider`` → profile → inferred from
-    ``--model`` → ``$MEDIA_PROVIDER`` → ``mock``. Model precedence: explicit
-    ``--model`` → profile → the provider's default for the modality. A profile
-    (``--provider-profile`` / ``$MEDIA_PROFILE``) also binds the credential source
-    and an optional base URL.
+    The adapter gets the binding and nothing else: the endpoint, the wire id, the
+    per-binding options, and a credential scoped to it. Nothing is assembled from the
+    environment on the way in, so a binding's behaviour is fully described by the
+    config entry that names it.
     """
-    prof = _resolve_profile(profile)
-    name = (provider or (prof.provider if prof else None) or provider_for_model(model) or default_provider_name()).lower()
-    inst = _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config, name))
-    resolved = model or (prof.model if prof else None) or (inst.default_model(modality) if modality else None)
-    return inst, resolved
-
-
-def get_provider(
-    name: str | None = None,
-    *,
-    profile: str | None = None,
-    credentials: CredentialProvider | None = None,
-    config: dict | None = None,
-) -> Provider:
-    prof = _resolve_profile(profile)
-    name = (name or (prof.provider if prof else None) or default_provider_name()).lower()
-    return _construct(name, _profile_credentials(prof, credentials), _profile_config(prof, config, name))
+    return load_adapter_class(rb.provider.adapter)(rb)

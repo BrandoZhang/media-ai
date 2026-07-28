@@ -33,7 +33,7 @@ from functools import partial
 from pathlib import Path
 
 from ..core.result import SCHEMA_VERSION
-from ..credentials.profile import config_path
+from ..core.config import config_path
 from ..credentials.stores import credentials_path
 from . import common
 from ._prompt import Cancelled, Option, get_prompter, run_steps
@@ -186,7 +186,7 @@ def _uninstall(args, prompter) -> dict:
     """
     prompter.intro("media-ai uninstall")
     summary: dict = {
-        "ok": True, "schema_version": SCHEMA_VERSION, "operation": "uninstall",
+        "ok": True, "schema_version": SCHEMA_VERSION, "command": "uninstall",
         "skills": [], "removed": [], "kept": [], "dry_run": bool(args.dry_run),
     }
     choices = _Choices()

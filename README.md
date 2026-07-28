@@ -3,20 +3,28 @@
 Provider- and model-agnostic multimodal generation CLI — **no agent-framework
 dependency**. Drop it into any agent sandbox (uni-agent, Claude Code, Codex,
 OpenCode, a plain shell, …) and an Agent Skill generates images, video, and speech
-by running ordinary commands. One normalized interface drives multiple backends:
+by running ordinary commands.
 
-| Provider | Images | Video | Speech | Auth env |
-|---|---|---|---|---|
-| **`mock`** (default, offline) | ✓ Pillow placeholders | ✓ ffmpeg clips | ✓ WAV placeholders | — |
-| **`volc`** — Volcengine Ark (Doubao Seedream/Seedance) | ✓ | ✓ (async) | — | `ARK_API_KEY` |
-| **`openai`** — GPT Image | ✓ | — (image-only) | — | `OPENAI_API_KEY` |
-| **`gemini`** — Gemini native image (Nano Banana) / Veo / TTS | ✓ | ✓ (async) | ✓ (+ multi-speaker) | `GEMINI_API_KEY` |
-| **`elevenlabs`** — TTS + dialogue + music + sound effects | — | — | ✓ (+ music/sfx) | `ELEVENLABS_API_KEY` |
+The unit you configure and address is a **binding** — one callable
+`(provider, model)` pair such as `volc-ark/seedance-2.0` or `gemini/veo-3.1`. The
+same model reached through two providers is two bindings, each with its own endpoint,
+credential and limits, because that is what they actually are.
 
-Highlights: **capability discovery** (`media-ai capabilities`), **deterministic
-structured errors** (JSON + category exit codes), **secret-safe credentials**
-(keys never touch argv, logs, metadata, or model-visible output), and a
-**token-cost ledger**.
+```bash
+media-ai bindings list        # what this machine can call right now
+media-ai bindings available   # what could be added, and the command to add it
+```
+
+Backends ship as **manifests** (`src/media_ai/bindings/*.toml`) declaring scenes,
+constraints, lifecycle and auth, paired with an adapter holding the wire. One
+declaration is read by discovery, by pre-flight validation, by the setup wizard and
+by the packaged skills — so what `capabilities` prints is what actually gates a call.
+
+Highlights: **capability discovery** that cannot drift from enforcement,
+**deterministic structured errors** (JSON, category exit codes, a stable `code` and a
+runnable `hint`), **no silent fallback** — a missing or ambiguous binding refuses
+rather than substituting — **secret-safe credentials** (keys never touch argv, logs,
+metadata, or model-visible output), and a **token-cost ledger**.
 
 ## Install
 
@@ -31,7 +39,7 @@ offline self-test, then hands over to the setup wizard. Options: `--version REF`
 Already installed, or configuring a second machine:
 
 ```bash
-media-ai init                 # pick skills, providers, keys, model defaults
+media-ai init                 # pick skills, bindings, keys, scene defaults
 media-ai init --skills-only   # just install the Agent Skills
 ```
 
@@ -62,9 +70,16 @@ media-ai init --skills-only   # just install the Agent Skills
 
 The wizard is skill-first — you choose what you want to do ("generate images"), each
 option described in plain language as you move through it, and it works out which
-providers that needs, then asks for one key per provider. Only genuine choices are
-offered: the shared contract, capability discovery and cost accounting always install,
-and the async-job skill comes along with video. It writes
+**bindings** could serve that, straight from the manifests. It then asks for one
+credential per binding and ends by naming a default per capability, so a later call
+that names no binding still works.
+
+Per binding, not per provider: three Seedream models are three questions. That is the
+price of a config that says outright which key each call uses — and adding a binding
+to a manifest makes it appear here with no change to the wizard.
+
+Only genuine choices are offered: the shared contract, capability discovery and cost
+accounting always install, and the async-job skill comes along with video. It writes
 `~/.config/media-ai/credentials.toml` (chmod 600) and `config.toml`, merging into
 whatever is already there rather than overwriting it.
 
@@ -85,7 +100,7 @@ leaves the filesystem byte-identical.
 ### Checking and removing
 
 ```bash
-media-ai doctor                        # offline check: PATH, ffmpeg, file modes, which keys resolve, skill drift
+media-ai doctor                        # offline check: PATH, ffmpeg, file modes, whether each binding resolves, skill drift
 media-ai uninstall                     # remove the skills and the configuration
 media-ai uninstall --keep-credentials  # …but hold on to the API keys
 media-ai --version
@@ -130,78 +145,98 @@ backend — no system packages needed. Real providers use only the stdlib.
 media-ai image generate --prompt "a red bicycle" --output bike.png
 media-ai image edit     --reference bike.png --prompt "make it blue" --output blue.png
 media-ai video generate --prompt "twin suns setting" --output clip.mp4 --resolution 480p
-media-ai speech generate --text "the first move sets everything in motion" --output vo.mp3 --provider elevenlabs
+media-ai speech generate --text "the first move sets everything in motion" --output vo.mp3
 media-ai speech dialogue --speaker Joe=<voiceA> --speaker Jane=<voiceB> --turn Joe "knock knock" --turn Jane "who is there?" --output d.mp3
-media-ai music generate --prompt "upbeat lofi hip hop" --output song.mp3 --provider elevenlabs
-media-ai sound generate --text "a spacious cinematic braam" --output sfx.mp3 --provider elevenlabs
-media-ai concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
-media-ai job    query   --provider gemini --id <op> --output clip.mp4
-media-ai capabilities   [--provider P] [--model M]
+media-ai music generate --prompt "upbeat lofi hip hop" --output song.mp3
+media-ai sound generate --text "a spacious cinematic braam" --output sfx.mp3
+media-ai video generate --continue-from <uri> --prompt "she keeps walking" --output next.mp4
+media-ai video concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
+media-ai job    query   --binding <id> --id <op> --output clip.mp4
+media-ai bindings       list | available | add <id> --credential env://VAR
+media-ai config         show | set-default <scene|group> <binding>
+media-ai capabilities   [--binding ID] [--scene S] [--configured]
 media-ai usage
 media-ai init           [--skills-only] [--advanced] [--verify]
 media-ai doctor
 media-ai uninstall      [--keep-skills] [--keep-config] [--keep-credentials] [--yes] [--dry-run]
 ```
 
-Speech works on `gemini` (Gemini 2.5/3.1 TTS — style directed in the prompt text, 30
-named voices, ≤2-speaker dialogue) and `elevenlabs` (voice settings + `--timestamps`
-alignment, ≤10-voice dialogue). `elevenlabs` also does **music** (`media-ai music
-generate/plan`) and **sound effects** (`media-ai sound generate`). Pick a backend with
-`--provider {mock,volc,openai,gemini,elevenlabs}` (or `$MEDIA_PROVIDER`,
-default `mock`) and a model with `--model`. A model id can imply its provider
-(`--model gpt-image-2` ⇒ openai).
+**Notice what the generation commands do not carry: a `--provider` flag.** Each call
+derives a *scene* from the inputs you passed (`--first-frame` ⇒ image-to-video,
+`--continue-from` ⇒ extend) and runs the binding configured as that scene's default.
+Name one explicitly with `--binding <provider>/<model>` when you need a specific
+account, model or region. `--model M` alone works when exactly one configured binding
+serves it, and refuses with both candidates when two do.
 
 ### Normalized geometry
 
-Ask for size two ways; each adapter maps/validates it against the model:
+Ask for size two ways; each adapter maps it to its wire format and the binding's
+declared constraints are what validate it:
 
 ```bash
 --size 1024x1536                       # explicit pixels
 --aspect-ratio 16:9 --resolution 2K    # ratio + named tier (1K/2K/4K, or 480p/720p/1080p for video)
 ```
 
-### Provider-specific options
+### Binding-specific options
 
 Cross-provider concepts are first-class flags (`--seed`, `--negative-prompt`,
-`--background`, `--quality`, `--audio`, `--duration`). Anything provider-specific
-goes through `--option key=value` and is **capability-gated**:
+`--background`, `--quality`, `--audio`, `--duration`). Anything one backend alone
+understands goes through `--option key=value`, and only keys the binding declares are
+accepted:
 
 ```bash
-media-ai video generate --provider volc --prompt "..." --output c.mp4 --option camera_fixed=true
-media-ai image generate --provider openai --model gpt-image-2 --prompt "..." --output o.png --option moderation=low
+media-ai video generate --binding volc-ark/seedance-2.0 --prompt "..." --output c.mp4 --option camera_fixed=true
+media-ai image generate --binding openai/gpt-image-2   --prompt "..." --output o.png --option moderation=low
 ```
+
+Knobs belonging to the *integration* rather than the call — poll intervals, an org id,
+an inline-upload ceiling — live on the binding in `config.toml`, not in the
+environment. Two bindings on one provider can differ.
 
 ## Machine contract (for Agent Skills)
 
 - **stdout** is exactly one JSON object — success *or* failure — so a Skill parses
-  one line. Success carries `artifacts[]`, `usage`, `meta`, `provider`, `model`.
-  Failure is `{"ok": false, "error": {"category", "code", "retryable", …}}`.
+  one line. Success carries `artifacts[]`, `usage`, and a `meta` recording **which
+  binding ran and what scene it was asked for**. Failure is `{"ok": false, "error":
+  {"category", "code", "hint", "details", …}}`, where `hint` is usually a command to
+  run verbatim.
+- **Every produced file is an entry in `artifacts[]`**, each with its `path`, `kind`,
+  `mime`, `bytes` and `role`. There is no flatter alias beside it: one call can produce
+  several files (`--count 3`, a timestamps sidecar, a returned last frame), and a short
+  path exposing only the first is how the rest get dropped without anyone noticing.
 - **stderr** is redacted human logs only (never part of the contract).
 - **Exit codes** map to the error category so a Skill can branch on `$?` alone:
   `0` ok · `2` CLI misuse · `3` validation/unsupported · `4` auth · `5`
   rate-limit/quota · `6` provider · `7` timeout · `8` safety · `9` not-found.
-- **Discover before you ask:** `media-ai capabilities --provider openai` reports
-  which operations/options/geometry each model supports, so a Skill can pick a
-  valid request. Unsupported requests fail with exit 3 and a machine-readable
-  reason (override with `--on-unsupported warn|ignore`).
+- **Ask what exists:** `media-ai bindings list` and `media-ai capabilities --scene S`
+  report what this machine can call and what each accepts, read from the same
+  declaration that enforces it. Unsupported requests fail with exit 3 and a
+  machine-readable reason (override with `--on-unsupported warn|ignore`).
+- **Nothing falls back.** A missing, ambiguous or unsuitable binding refuses and names
+  the candidates. An unconfigured machine never quietly produces a mock placeholder —
+  the one failure an agent cannot tell from success.
 
 See **[docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md)** for the full integration guide.
 
 ## Credentials
 
-Keys are resolved through a chain (broker → secret-manager reference → OS keychain
-→ `chmod 600` config file → env var), returned as a **reveal-only `Secret`** used
-only at HTTP-call time, and **redacted from every log/output**. The CLI never
-accepts a key as a flag. For hosted/managed agents, a broker injects the key at
-egress so the CLI holds only a session token. See
+Each binding names **one** source — `env://`, `cred://` (a `chmod 600` account file),
+`keychain://`, `broker://`, or a registered secret-manager scheme — and there is no
+fallback between them, so "which key did this call use?" has a one-line answer. The
+value is returned as a **reveal-only `Secret`** used only at call time and **redacted
+from every log and output**. The CLI never accepts a key as a flag. For hosted agents
+a broker injects the key at egress, so the CLI holds only a session token. See
 **[docs/CREDENTIALS.md](docs/CREDENTIALS.md)**.
 
 ## Usage ledger
 
 Every generation appends a line to `$MEDIA_USAGE_LOG` (default
-`./media_usage.jsonl`). `media-ai usage` aggregates token/artifact cost. Point
-`MEDIA_USAGE_LOG` and each `--output` at a per-task directory to isolate
-concurrent runs on a shared filesystem.
+`./media_usage.jsonl`). `media-ai usage` aggregates token/artifact cost **per binding
+and per scene** — not per provider, because two models behind one provider cost
+different amounts and a provider total cannot tell you which to stop calling. Point
+`MEDIA_USAGE_LOG` and each `--output` at a per-task directory to isolate concurrent
+runs on a shared filesystem.
 
 ## Example
 
@@ -211,28 +246,39 @@ media-ai image generate --prompt "silver astronaut on a red dune" --output /tmp/
 media-ai video generate --first-frame /tmp/run/ref.png --prompt "he turns to camera" \
     --output /tmp/run/s1.mp4 --duration 3 --resolution 480p
 media-ai video generate --prompt "twin suns setting" --output /tmp/run/s2.mp4 --duration 3 --resolution 480p
-media-ai concat --inputs '["/tmp/run/s1.mp4","/tmp/run/s2.mp4"]' --output /tmp/run/final.mp4
+media-ai video concat --inputs '["/tmp/run/s1.mp4","/tmp/run/s2.mp4"]' --output /tmp/run/final.mp4
 media-ai usage
 ```
 
 ## Docs
 
-- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per CLI functionality (image, video, speech, music, sound, concat, job, capabilities, usage)
+- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per command group (image, video, speech, music, sound, job, capabilities, usage) plus the shared contract
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
-- [docs/PROVIDERS.md](docs/PROVIDERS.md) — per-provider setup + capability matrix
-- [docs/MODELS.md](docs/MODELS.md) — the model catalogue: lifecycle, retirement, live verification
+- [docs/BINDINGS.md](docs/BINDINGS.md) — what a binding is, configuring one, `extends`, per-binding options
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker
 - [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) — invocation contract for Agent Skills
-- [docs/EXTENDING.md](docs/EXTENDING.md) — add a custom provider (no core changes)
+- [docs/EXTENDING.md](docs/EXTENDING.md) — add a model or a whole backend (no core changes)
 - [docs/LIVE_TESTS.md](docs/LIVE_TESTS.md) — real-API validation log (all providers)
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — unresolved provider-specific items
 
-## Custom providers
+## Adding a model, or a whole backend
 
-Adding a backend requires **no changes to core**. Subclass `Provider` /
-`HttpProvider`, declare a `ModelCapabilities` schema per model (which drives
-discovery + validation), expose provider-specific functions via capability-gated
-`--option`, and register it — in-process with `register_provider(...)` or as an
-installed package via a `media_ai.providers` entry point. See
+**No changes to core.** A backend is a **manifest** (what it can do) plus an
+**adapter** (how to call it):
+
+- A sibling model on an existing provider is usually one `[[binding]]` entry and no
+  code — the wire is already implemented.
+- A new provider is a manifest plus an `Adapter` subclass, registered in-process with
+  `register_manifest(...)` or shipped as a `media_ai.bindings` entry point. The
+  manifest's `adapter` field is an import path, so the code may live in a private
+  package.
+- `transport = "rpc"` gets no base URL, no HTTP client and no status mapping — an
+  internal gRPC or Thrift platform registers on exactly the same terms, which is why
+  the wire stayed in code rather than becoming a DSL.
+
+Every new model arrives with four answers, because they are the manifest's required
+fields and `tests/test_manifests.py` enforces them: which provider, which model and
+its wire id, what it supports, and how to authenticate. The tests also check the named
+adapter imports and implements every scene declared. See
 [docs/EXTENDING.md](docs/EXTENDING.md).

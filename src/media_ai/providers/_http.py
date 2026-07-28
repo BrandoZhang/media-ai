@@ -17,6 +17,7 @@ Response/error bodies are redacted before they enter any exception message.
 from __future__ import annotations
 
 import json
+import http.client
 import random
 import socket
 import time
@@ -63,6 +64,41 @@ class HttpClient:
         hdrs = {"Content-Type": "application/json", **(headers or {})}
         raw = self._send(method, self._url(path), data=data, headers=hdrs)
         return json.loads(raw) if raw else {}
+
+    def request_sse_json(self, method: str, path: str, *, body: dict | None = None, headers: dict | None = None) -> list[dict]:
+        """Return JSON payloads from a completed server-sent-event response.
+
+        The request keeps the same retry/idempotency rules as ``request_json``.  In
+        particular, an interrupted POST is not replayed: it may already have started
+        a billed generation.  Providers that expose a synchronous streaming response
+        can consume the ordered events once the server sends its final ``[DONE]``.
+        """
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        hdrs = {"Content-Type": "application/json", "Accept": "text/event-stream", **(headers or {})}
+        raw = self._send(method, self._url(path), data=data, headers=hdrs)
+        events: list[dict] = []
+        for line in raw.splitlines():
+            if not line.startswith("data:"):
+                continue
+            item = line.removeprefix("data:").strip()
+            if not item or item == "[DONE]":
+                continue
+            try:
+                payload = json.loads(item)
+            except json.JSONDecodeError as exc:
+                raise MediaError(
+                    f"{self.provider} returned malformed SSE JSON",
+                    category=ErrorCategory.PROVIDER,
+                    provider=self.provider,
+                ) from exc
+            if not isinstance(payload, dict):
+                raise MediaError(
+                    f"{self.provider} returned an SSE event that is not an object",
+                    category=ErrorCategory.PROVIDER,
+                    provider=self.provider,
+                )
+            events.append(payload)
+        return events
 
     def request_multipart(
         self, method: str, path: str, *, fields: dict, files: list[tuple], headers: dict | None = None
@@ -120,7 +156,7 @@ class HttpClient:
                     self._sleep(e, attempt)
                     continue
                 raise self.error_mapper(status, redact(raw[:800]))
-            except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+            except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, http.client.HTTPException) as exc:
                 is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
                     getattr(exc, "reason", None), (socket.timeout, TimeoutError)
                 )

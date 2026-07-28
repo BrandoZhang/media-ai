@@ -1,8 +1,17 @@
-"""Optional key probes for ``media-ai init --verify``.
+"""Optional credential probes for ``media-ai init --verify``.
 
-Off by default, because the probes are not uniformly free: three providers expose a
-credential-free or read-only call, but OpenAI has none — verifying it costs a real
-(small) image generation. ``init`` asks separately before spending that.
+**A probe belongs to a binding, not to a provider.** Each binding names its own
+credential, so two bindings on one endpoint can hold different keys — checking one and
+reporting the answer for both is how ``--verify`` would confidently clear a key it
+never touched.
+
+That is also why every probe here is a **model-independent authenticated GET**. A
+probe that generates something has to name a model, which makes it a test of *that*
+binding's model rather than of the key: sending a speech model id to a music endpoint
+earns a 4xx that says nothing about the credential, and reading it as "invalid" sends
+someone to rotate a working key. A listing or a lookup authenticates first and answers
+second, which is exactly the shape a credential check wants — and it is free, so there
+is nothing to ask permission for before running one.
 
 Classifying the outcome takes more than the exit code. A provider's error mapping
 follows the HTTP status it actually returns, and Google answers an invalid API key
@@ -26,10 +35,22 @@ _BAD_KEY_MARKERS = (
     "permission_denied",
     "invalid_api_key",
 )
-# "There is nothing to check", not "what you gave me was rejected". The env-var
-# markers matter because storing a reference is one of the wizard's two offered modes:
-# the variable is routinely not exported in the shell the wizard itself runs in, and
-# telling that user their key is invalid sends them to rotate a perfectly good one.
+#: Stable error codes meaning "there is nothing to check" — the reference did not
+#: resolve to a value at all. Matched **before** any prose, because these are the cases
+#: where calling a key invalid does real damage: it sends someone to rotate a key that
+#: was never the problem. A live run against a typo'd `cred://` account is what showed
+#: this: the message is "no [openai] account in credentials.toml", which matched none of
+#: the substrings below and so classified as `invalid`.
+#:
+#: Codes, not prose, because the code is a contract and the sentence is not — every one
+#: of these messages can be reworded without anybody thinking to update a marker list.
+_MISSING_CODES = frozenset({
+    "credential_unresolved",      # env var unset, no such cred:// account, empty value
+    "credential_missing",         # the binding names no credential at all
+    "credential_scheme_unknown",  # e.g. op:// with nothing registered to serve it
+    "credential_backend_missing", # keychain:// without the optional extra installed
+})
+# Kept as a fallback for messages that arrive without one of those codes.
 _MISSING_MARKERS = (
     "no credential found for provider",
     "is unset",
@@ -45,6 +66,8 @@ def classify(exc: MediaError | None) -> str:
     message = (str(exc) or "").lower()
     code = (getattr(exc, "code", "") or "").lower()
 
+    if code in _MISSING_CODES:
+        return "missing"
     if any(m in message for m in _MISSING_MARKERS):
         return "missing"
     if any(m in message or m in code for m in _BAD_KEY_MARKERS):
@@ -64,65 +87,89 @@ def classify(exc: MediaError | None) -> str:
     return "invalid"
 
 
-def _probe_job_query(provider: str, job_id: str) -> MediaError | None:
-    """Query a job id that cannot exist. Authentication happens before lookup, so a
-    not-found answer proves the key worked — and a GET costs nothing."""
-    from ..core import registry
-    from ..core.types import JobRef
+def _adapter(binding: str):
+    """The adapter for exactly this binding — the one holding the credential to check."""
+    from ..core.config import load_config
+    from ..core.registry import build_adapter, catalog
+    from ..core.resolve import available_bindings
 
-    try:
-        registry.get_provider(provider).query_job(JobRef(id=job_id, provider=provider))
-        return None
-    except MediaError as exc:
-        return exc
-
-
-def _probe_elevenlabs() -> MediaError | None:
-    """``music plan`` is credit-free but fully authenticated."""
-    from ..core import registry
-    from ..core.types import MusicRequest
-
-    try:
-        registry.get_provider("elevenlabs").plan_music(MusicRequest(prompt="probe", duration=3))
-        return None
-    except MediaError as exc:
-        return exc
+    for rb in available_bindings(catalog(), load_config()):
+        if rb.id == binding and rb.configured:
+            return build_adapter(rb)
+    raise MediaError(f"binding {binding!r} is not configured", category=ErrorCategory.AUTH)
 
 
-def _probe_openai() -> MediaError | None:
-    """The only paid probe: OpenAI exposes no free authenticated call. Callers must
-    confirm before this runs."""
-    import tempfile
-    from pathlib import Path
+def _authenticated_get(path: str):
+    """A probe that GETs one model-independent path through the binding's own client.
 
-    from ..core import registry
-    from ..core.types import ImageRequest
+    Goes through ``_prepare`` so the credential is resolved, revealed and redacted by
+    the same code a real call uses — a probe that authenticated some other way would
+    be testing itself.
+    """
 
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            registry.get_provider("openai").generate_image(
-                ImageRequest(prompt="a grey square", model="gpt-image-1-mini",
-                             output=Path(tmp) / "probe.png", options={"quality": "low"})
-            )
-        return None
-    except MediaError as exc:
-        return exc
+    def run(adapter) -> MediaError | None:
+        try:
+            client, headers = adapter._prepare()
+            client.request_json("GET", path, headers=headers)
+            return None
+        except MediaError as exc:
+            return exc
+
+    return run
 
 
+#: Per provider, the cheapest request that authenticates without naming a model.
+#: A 404 counts as success — see :func:`classify`: the lookup happened, which means
+#: the key was accepted first.
 _PROBES = {
-    "gemini": lambda: _probe_job_query("gemini", "models/veo-3.1-generate-preview/operations/probe"),
-    "volc": lambda: _probe_job_query("volc", "probe-nonexistent-task"),
-    "elevenlabs": _probe_elevenlabs,
-    "openai": _probe_openai,
+    # Listing what the key can see: free, and unrelated to any one binding's model.
+    "openai": _authenticated_get("/models"),
+    "gemini": _authenticated_get("/models"),
+    "elevenlabs": _authenticated_get("/user"),
+    # Ark has no listing endpoint; a task id that cannot exist answers 404 *after*
+    # authenticating, which is the same signal.
+    "volc-ark": _authenticated_get("/contents/generations/tasks/probe-nonexistent-task"),
 }
 
 
-def probe(provider: str) -> str:
-    """Check a provider's configured credential. Never raises — the result is a label."""
-    fn = _PROBES.get(provider)
-    if fn is None:
+def probe(binding: str) -> str:
+    """Check one binding's credential. Never raises — the result is a label.
+
+    The *strategy* is chosen per provider, because which request is cheap is a fact
+    about the API surface. It is then run through the binding the caller named, so the
+    key that gets tested is the key that binding would actually use.
+
+    The provider comes from the resolved adapter, not from the id's prefix. A binding
+    id is a name the user chose: the documented multi-account form
+    ``[bindings."volc-ark-sg/seedance-2.0"] extends = "volc-ark/seedance-2.0"`` has the
+    prefix ``volc-ark-sg``, which no strategy is keyed on — so ``--verify`` used to
+    report "unsupported" and skip the check for precisely the second-account and
+    second-region bindings ``extends`` exists to serve.
+    """
+    strategy = _PROBES.get(_provider_of(binding))
+    if strategy is None:
         return "unsupported"
     try:
-        return classify(fn())
+        return classify(strategy(_adapter(binding)))
     except Exception:  # noqa: BLE001 - a probe must never take the wizard down
         return "unreachable"
+
+
+def _provider_of(binding: str) -> str:
+    """The provider a binding really belongs to, falling back to its id prefix.
+
+    Read from the declaration rather than from the adapter, so "is there a probe for
+    this?" stays answerable for a binding that is declared but not yet configured —
+    which is the difference between "unsupported" and "unreachable".
+    """
+    from ..core.config import load_config
+    from ..core.registry import catalog
+    from ..core.resolve import available_bindings
+
+    try:
+        for rb in available_bindings(catalog(), load_config()):
+            if rb.id == binding:
+                return rb.provider.name
+    except Exception:  # noqa: BLE001 - a probe must never take the wizard down
+        pass
+    return binding.partition("/")[0]

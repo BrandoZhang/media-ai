@@ -12,11 +12,10 @@ import argparse
 import json
 from pathlib import Path
 
-from ..core import registry
-from ..core.capabilities import validate_request
+from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..core.types import Modality, MusicPlanRequest, MusicRequest
+from ..core.types import MusicPlanRequest, MusicRequest
 from . import common
 
 
@@ -68,10 +67,10 @@ def _do_generate(args) -> object:
         duration_ms=args.duration_ms, output_format=args.output_format, seed=args.seed,
         detailed=args.detailed, model=args.model, options=common.parse_options(args.option),
     )
-    provider = _provider(args)
-    for w in validate_request(req, provider.capabilities(args.model, Modality.AUDIO), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_music(req)
+    return common.stamp(adapter.generate_music(req), rb, scene)
 
 
 def _do_plan(args) -> object:
@@ -80,18 +79,10 @@ def _do_plan(args) -> object:
         source_plan=_load_json(args.source_plan, "--source-plan") if args.source_plan else None,
         model=args.model, options=common.parse_options(args.option),
     )
-    provider = _provider(args)
-    for w in validate_request(req, provider.capabilities(args.model, Modality.AUDIO), common.policy(args)):
+    adapter, rb, scene = common.bind(args, req)
+    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
         get_logger().warning("unsupported (proceeding): %s", w)
-    return provider.generate_music_plan(req)
-
-
-def _provider(args):
-    # Resolve only the provider; the request keeps its own model (adapter picks the
-    # music default when --model is omitted, not the speech default).
-    provider, _ = registry.build(common.provider_name(args), args.model, Modality.AUDIO,
-                                 profile=args.provider_profile)
-    return provider
+    return common.stamp(adapter.generate_music_plan(req), rb, scene)
 
 
 def main() -> int:

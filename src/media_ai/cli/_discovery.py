@@ -6,22 +6,22 @@ that, and this module answers both: *what can be picked* — each skill's blurb,
 install tier, and what it drags in with it, read from the skill's own frontmatter —
 and *what a pick costs*, i.e. the set of providers then worth asking about.
 
-The provider mapping is **derived, never hardcoded** — :data:`~media_ai.core.types.Operation`
-and each model's ``ModelCapabilities`` are the single source of truth (the same rule
-``media-ai capabilities`` follows), so a new provider or a new model shows up here
-without touching this file.
+The mapping is **derived, never hardcoded** — a skill's name gives its command
+group, the group gives its :class:`~media_ai.core.scene.Scene` set, and the manifests
+say which bindings serve those scenes. So a new binding appears in setup without
+touching this file, which is the same rule ``media-ai capabilities`` follows.
 
 Two consequences fall out of deriving it, both load-bearing for the wizard's size:
 
-- A skill maps to providers by **union, not product**. Credentials live per provider
-  in one flat namespace, so picking image + video + speech asks for four keys, not
-  3x2x2 combinations. Four is also the ceiling: it is how many credentialed
-  providers exist.
-- Skills with no matching operation contribute nothing. ``media-ai-concat`` runs on
-  local ffmpeg, ``media-ai-capabilities``/``-usage`` are offline, ``media-ai-shared``
-  is documentation, and ``media-ai-job`` polls a job some *other* skill created — so
-  none of them widens the credential ask. That falls out of the derivation rather
-  than needing a maintained exclusion list.
+- A skill maps to bindings by **union, not product**. Picking image + video + speech
+  asks about every binding serving any of those scenes, once each — not once per
+  combination.
+- Skills driving no scene contribute nothing. ``media-ai-capabilities``/``-usage``
+  are offline, ``media-ai-shared`` is documentation, and ``media-ai-job`` polls a job
+  some *other* skill created — so none of them widens the credential ask. That falls
+  out of the derivation rather than needing a maintained exclusion list. So does the
+  free local backend: ``video.concat`` is served by a binding with
+  ``auth.kind = "none"``, and nothing with nothing to ask gets asked about.
 """
 
 from __future__ import annotations
@@ -30,19 +30,18 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 
-from ..core import registry
-from ..core.logging import get_logger
-from ..core.types import Operation
+from ..core.config import Config
+from ..core.registry import catalog
+from ..core.scene import Scene, scenes_for_group
 from ._frontmatter import parse as parse_frontmatter
 
 __all__ = [
     "SKILL_PREFIX",
     "SkillInfo",
     "available_skills",
+    "bindings_for_skills",
     "core_skills",
-    "operations_for_skill",
-    "provider_matrix",
-    "providers_for_skills",
+    "scenes_for_skill",
     "resolve_selection",
     "selectable_skills",
     "skill_info",
@@ -83,15 +82,19 @@ def skill_root(skill: str):
     return files("media_ai") / "skills" / skill
 
 
-def operations_for_skill(skill: str) -> frozenset[Operation]:
-    """Operations a skill drives, from its ``media-ai-<group>`` name.
+def group_of(skill: str) -> str:
+    return skill[len(SKILL_PREFIX):] if skill.startswith(SKILL_PREFIX) else skill
 
-    Returns an empty set for skills that drive no provider operation at all; callers
-    treat that as "needs no credentials" rather than as an error, because that is
-    exactly what it means for concat/capabilities/usage/shared/job.
+
+def scenes_for_skill(skill: str) -> frozenset[Scene]:
+    """Scenes a skill drives, from its ``media-ai-<group>`` name.
+
+    Empty for a skill that drives no generation at all; callers read that as "needs no
+    credential" rather than as an error, because that is exactly what it means for
+    capabilities/usage/shared/job. Deriving it is what keeps the wizard honest — a new
+    skill or a new binding shows up here without an edit.
     """
-    group = skill[len(SKILL_PREFIX) :] if skill.startswith(SKILL_PREFIX) else skill
-    return frozenset(op for op in Operation if op.value.split(".", 1)[0] == group)
+    return scenes_for_group(group_of(skill))
 
 
 # ------------------------------------------------------------------ self-description
@@ -202,44 +205,33 @@ def resolve_selection(picked: list[str]) -> tuple[list[str], dict[str, str]]:
     return sorted(chosen), reasons
 
 
-def provider_matrix() -> dict[Operation, dict[str, tuple[str, ...]]]:
-    """``{operation: {provider: (model, …)}}`` over every credentialed provider.
+def bindings_for_skills(skills: list[str], config: Config | None = None) -> dict[str, list[str]]:
+    """``{binding id: [skill, …]}`` — which bindings to offer, and what each unlocks.
 
-    ``mock`` and anything else declaring ``requires_credentials = False`` is left out:
-    it is a real provider but never something to ask a user for a key for.
+    Offered per *binding* rather than per provider, because that is the unit a
+    credential attaches to now: picking three Seedream models means three entries, and
+    the wizard asks about each. The skill list beside each one is what a user declining
+    it gives up.
 
-    A provider that fails to introspect is logged and skipped rather than aborting
-    discovery — one broken adapter should not stop the wizard from configuring the
-    rest, which is the same tradeoff ``cli/capabilities.py`` makes.
+    Bindings needing no credential are left out — there is nothing to ask about a
+    local backend, and offering one alongside a question about API keys is what made
+    the old wizard treat two very different decisions identically.
     """
-    matrix: dict[Operation, dict[str, list[str]]] = {}
-    for name in registry.provider_names():
-        try:
-            prov = registry.get_provider(name)
-            if not getattr(prov, "requires_credentials", True):
-                continue
-            for model in prov.models():
-                caps = prov.capabilities(model)
-                for block in (caps.image, caps.video, caps.audio):
-                    if block is None:
-                        continue
-                    for op in block.operations:
-                        matrix.setdefault(op, {}).setdefault(name, []).append(model)
-        except Exception as exc:  # noqa: BLE001 - a misconfigured provider shouldn't hide the rest
-            get_logger().warning("could not introspect provider %s: %s", name, exc)
-    return {op: {prov: tuple(models) for prov, models in provs.items()} for op, provs in matrix.items()}
+    from ..core.binding import AuthKind
 
-
-def providers_for_skills(skills: list[str]) -> dict[str, list[str]]:
-    """``{provider: [skill, …]}`` — which providers to ask about, and what each unlocks.
-
-    The skill list is what the wizard shows beside each provider so a user declining
-    one can see what they give up. Providers are returned in a stable sorted order.
-    """
-    matrix = provider_matrix()
-    served: dict[str, set[str]] = {}
+    cat = catalog()
+    wanted: set[Scene] = set()
+    per_scene: dict[Scene, set[str]] = {}
     for skill in skills:
-        for op in operations_for_skill(skill):
-            for provider in matrix.get(op, {}):
-                served.setdefault(provider, set()).add(skill)
-    return {prov: sorted(served[prov]) for prov in sorted(served)}
+        for scene in scenes_for_skill(skill):
+            wanted.add(scene)
+            per_scene.setdefault(scene, set()).add(skill)
+
+    served: dict[str, set[str]] = {}
+    for spec in cat.all():
+        if cat.providers[spec.provider].auth.kind is AuthKind.NONE:
+            continue
+        for scene in spec.scenes & wanted:
+            served.setdefault(spec.id, set()).update(per_scene[scene])
+    return {bid: sorted(served[bid]) for bid in sorted(served)}
+

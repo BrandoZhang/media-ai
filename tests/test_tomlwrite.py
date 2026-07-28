@@ -127,10 +127,20 @@ def test_header_does_not_leak_into_values():
     assert tomllib.loads(out)["t"]["k"] == "not # a comment"
 
 
+def test_top_level_scalars_are_emitted_before_any_table():
+    """`schema = 2` has to precede `[bindings]`.
+
+    TOML assigns every key after a header to that table, so a top-level scalar written
+    later silently becomes `bindings.schema` — valid TOML, wrong document.
+    """
+    text = dumps({"schema": 2, "bindings": {"a/b": {"credential": "env://X"}}})
+    assert text.index("schema = 2") < text.index("[bindings")
+    assert tomllib.loads(text) == {"schema": 2, "bindings": {"a/b": {"credential": "env://X"}}}
+
+
 @pytest.mark.parametrize(
     "bad",
     [
-        {"top_level_scalar": "x"},          # value must be a table
         {"t": {"k": 1.5}},                  # float unsupported
         {"t": {"k": None}},                 # None unsupported
         {"t": {"k": [1, 2]}},               # non-str list
@@ -169,7 +179,7 @@ def test_written_file_is_readable_by_the_credential_store(tmp_path, monkeypatch)
     dest = tmp_path / "credentials.toml"
     write_private(dest, dumps({"openai": {"api_key": "sk-round-trip"}}))
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(dest))
-    assert stores._config_value("openai") == "sk-round-trip"
+    assert stores.named_account("openai") == "sk-round-trip"
 
 
 def test_write_private_overwrites_preserving_mode(tmp_path):

@@ -9,6 +9,7 @@ idempotent GET/DELETE are retried.
 from __future__ import annotations
 
 import io
+import http.client
 import urllib.error
 
 import pytest
@@ -88,6 +89,22 @@ def test_delete_retried_on_urlerror(client, monkeypatch):
     assert count["n"] == 2
 
 
+def test_get_retried_on_remote_disconnect(client, monkeypatch):
+    # A signed artifact URL may close the connection before a response status. It is
+    # still a transient network failure and a GET is safe to retry.
+    count = _install(monkeypatch, [http.client.RemoteDisconnected("closed"), b'{"status": "succeeded"}'])
+    assert client.request_json("GET", "/tasks/abc")["status"] == "succeeded"
+    assert count["n"] == 2
+
+
+def test_post_not_retried_on_remote_disconnect(client, monkeypatch):
+    count = _install(monkeypatch, [http.client.RemoteDisconnected("closed")])
+    with pytest.raises(MediaError) as ei:
+        client.request_json("POST", "/tasks", body={"x": 1})
+    assert ei.value.category == ErrorCategory.PROVIDER and ei.value.provider == "test"
+    assert count["n"] == 1
+
+
 def test_get_retried_on_408(client, monkeypatch):
     # 408 REQUEST_TIMEOUT is transient (per the Gemini troubleshooting guide) and
     # safe to retry on an idempotent GET.
@@ -134,3 +151,18 @@ def test_error_mapper_categorizes(monkeypatch):
     with pytest.raises(MediaError) as ei:
         c.request_json("GET", "/x")
     assert ei.value.category == ErrorCategory.AUTH and calls == [401]
+
+
+def test_sse_json_parses_data_events_and_ignores_done(client, monkeypatch):
+    raw = b'event: message\ndata: {"image_index":0,"url":"https://example.test/a.jpg"}\n\ndata: [DONE]\n'
+    _install(monkeypatch, [raw])
+    assert client.request_sse_json("POST", "/images", body={"stream": True}) == [
+        {"image_index": 0, "url": "https://example.test/a.jpg"}
+    ]
+
+
+def test_sse_json_rejects_malformed_events(client, monkeypatch):
+    _install(monkeypatch, [b"data: not-json\n"])
+    with pytest.raises(MediaError) as ei:
+        client.request_sse_json("POST", "/images", body={"stream": True})
+    assert ei.value.category == ErrorCategory.PROVIDER

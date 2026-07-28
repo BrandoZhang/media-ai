@@ -8,7 +8,7 @@ before relying on them in production; the adapters are written to fail safely
 ## OpenAI
 
 - **Image-only.** OpenAI no longer exposes a public video API, so this adapter
-  drops video entirely; `video generate --provider openai` fails pre-flight with a
+  drops video entirely; no OpenAI binding declares a video scene, so such a request fails pre-flight with a
   deterministic `unsupported` error (exit 3).
 - **`input_fidelity`** is scoped to `gpt-image-1` / `gpt-image-1.5` only. Per the
   docs, `gpt-image-2` always processes inputs at high fidelity and rejects the

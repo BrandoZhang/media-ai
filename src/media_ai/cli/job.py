@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core import registry
 from ..core.types import JobRef
 from . import common
 
@@ -28,12 +27,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _do(args):
-    provider = registry.get_provider(common.provider_name(args), profile=getattr(args, "provider_profile", None))
-    ref = JobRef(provider=provider.name, id=args.id, model=args.model)
+    from ..core.registry import build_adapter
+    from ..core.resolve import resolve
+
+    # No scene to default from — a job is identified by the binding that created it,
+    # which is why a JobHandle's `poll` command names one.
+    rb = resolve(binding=args.binding, provider=args.provider, model=args.model)
+    adapter = build_adapter(rb)
+    ref = JobRef(provider=rb.provider.name, id=args.id, model=rb.model_id)
     if args.op == "cancel":
-        return provider.cancel_job(ref)
+        return adapter.cancel_job(ref)
     out = Path(args.output) if getattr(args, "output", None) else None
-    return provider.get_job(ref, output=out)
+    status = adapter.get_job(ref, output=out)
+    if status.result is not None:
+        common.stamp(status.result, rb)  # no scene: the request that implied one is gone
+    return status
 
 
 def main() -> int:

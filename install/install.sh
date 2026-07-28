@@ -14,7 +14,7 @@ set -euo pipefail
 
 REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 # Fallback when the releases API is unreachable or rate-limited. Bump on release.
-DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.3.0}"
+DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.4.0}"
 
 main() {
   local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
@@ -164,8 +164,9 @@ check_path() {
 }
 
 self_test() {
-  # The mock provider runs entirely locally, so this exercises the CLI, Pillow and
-  # ffmpeg without a key or a network call.
+  # The mock binding runs entirely locally, so this exercises the CLI, Pillow and
+  # ffmpeg without a key or a network call. It is named explicitly: mock is a normal
+  # binding, never a fallback, and a fresh install has no scene default yet.
   #
   # MEDIA_USAGE_LOG is redirected into the scratch directory along with the output:
   # every generation appends a line to the ledger, which defaults to
@@ -173,7 +174,7 @@ self_test() {
   # run from, and adds a line to it every time it is re-run.
   local tmp status=0
   tmp="$(mktemp -d)"
-  MEDIA_USAGE_LOG="$tmp/usage.jsonl" media-ai image generate --provider mock --prompt "install check" \
+  MEDIA_USAGE_LOG="$tmp/usage.jsonl" media-ai image generate --binding mock/mock --prompt "install check" \
     --output "$tmp/probe.png" >/dev/null 2>"$tmp/err" || status=$?
   if [ "$status" -eq 0 ]; then
     say "self-test passed (offline, no key needed)"

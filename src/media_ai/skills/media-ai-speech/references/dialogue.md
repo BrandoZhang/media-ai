@@ -9,7 +9,7 @@ The CLI hides that split behind a single **cast + turns** model.
 **1. Flags** — a cast, then ordered turns:
 
 ```bash
-media-ai speech dialogue --provider elevenlabs \
+media-ai speech dialogue --binding <provider>/<model> \
     --speaker Ana=EXAVITQu4vr4xnSDxMaL \
     --speaker Ben=JBFqnCBsd6RMkjVDRZzb \
     --turn Ana "Ready for the demo?" \
