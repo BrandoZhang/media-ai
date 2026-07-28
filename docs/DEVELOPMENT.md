@@ -152,12 +152,56 @@ automatically on merge to `main` later, uncomment the `push:` trigger in the fil
 ## Before you push
 
 ```bash
-uv run ruff check src tests
+uv run ruff check src tests scripts
 uv run pytest -q
+uv run actionlint          # only if you touched .github/workflows/
 ```
 
-Both must be green. The suite is fully **offline** — no credentials, no network —
-and CI runs the same `ruff` + `pytest`.
+All must be green. The suite is fully **offline** — no credentials, no network —
+and CI runs the same checks.
+
+`actionlint` is worth the extra command when you edit a workflow: a file GitHub
+rejects does not fail a *step*, it fails as a run with **no jobs**, named after the
+file path instead of the workflow — and nothing else here catches it, because the
+file is still valid YAML. The usual cause is a literal `$`+`{{` appearing anywhere in
+the file, comments included: GitHub evaluates its own expressions on the raw text
+before the runner ever sees it.
+
+## Releasing
+
+**Actions → “release” → “Run workflow”**, and give it the new version without the
+leading `v` (e.g. `0.3.0`). That is the whole procedure. The workflow
+([`.github/workflows/release.yml`](../.github/workflows/release.yml)) runs the full
+suite, `shellcheck`, and the installer's own tests *before* it touches anything, then
+bumps the version (via [`scripts/bump_version.py`](../scripts/bump_version.py)),
+commits, tags `v0.3.0`, builds the sdist + wheel, and publishes a GitHub Release with
+generated notes and the distributions attached. Tick **dry run** to see everything
+except the push.
+
+It refuses to start if the version is malformed, if the tag already exists, or if it
+was launched from a branch other than the default one — it tags whatever ref it runs
+on, so that last one would otherwise release a feature branch.
+
+A `0.x` version is published as a **pre-release**. `install.sh` lists releases rather
+than asking for `/releases/latest` precisely so it still finds them.
+
+### Where the version lives
+
+One place: `__version__` in [`src/media_ai/__init__.py`](../src/media_ai/__init__.py).
+`pyproject.toml` declares `dynamic = ["version"]` and reads that attribute, so there
+is no second copy to keep in step, and `media-ai --version`, `doctor`, and the install
+receipt all report the same string.
+
+The one exception is `DEFAULT_VERSION` in
+[`install/install.sh`](../install/install.sh) — the git ref the installer falls back
+to when the GitHub releases API is unreachable or rate-limited. It is a *tag name*,
+not a package version, so it cannot be derived; the release workflow bumps it, and
+[`tests/test_version.py`](../tests/test_version.py) fails in CI if the two ever
+disagree. A stale pin silently installs an old CLI for exactly the people whose
+network made them fall back to it.
+
+If you ever need to release by hand, bump those two, commit, tag, and push — but
+prefer the workflow, which cannot tag a tree whose tests it did not run.
 
 ## The lockfile
 

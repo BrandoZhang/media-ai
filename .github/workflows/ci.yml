@@ -15,9 +15,12 @@ jobs:
       - name: Sync
         run: uv sync
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
       - name: Test (offline — no creds, no network)
         run: uv run pytest -q -m "not live"
+      - name: Lint the workflows
+        run: uv run actionlint
+
       - name: Lint the installer
         run: shellcheck install/install.sh install/test_parse.sh
       - name: Installer unit tests
