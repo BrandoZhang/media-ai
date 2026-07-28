@@ -23,7 +23,7 @@ id       = "openai/gpt-image-2"
 model    = "gpt-image-2"
 model_id = "gpt-image-2"
 title    = "GPT Image 2"
-verified = "2026-07-12"
+verified = "2026-07-28"
 scenes   = ["image.text_to_image", "image.image_to_image"]
 notes    = [
   "returns base64 — there is no hosted URL to download",
