@@ -1,0 +1,142 @@
+# Google Gemini Developer API — Nano Banana (image), Veo (video), Gemini TTS (speech).
+#
+# One key, three disjoint model families, three command groups. SynthID watermarking
+# is unconditional on this API for both image and video.
+
+[provider]
+name       = "gemini"
+title      = "Google Gemini"
+transport  = "http"
+adapter    = "media_ai.providers.gemini:GeminiAdapter"
+docs       = "https://ai.google.dev/gemini-api/docs"
+setup_hint = "Create a key at https://aistudio.google.com/apikey"
+
+[provider.auth]
+kind   = "api_key"
+header = "x-goog-api-key"
+env    = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+
+[provider.base_url]
+default      = "https://generativelanguage.googleapis.com/v1beta"
+configurable = true
+
+# ------------------------------------------------------------- Nano Banana 2 (image)
+
+[[binding]]
+id       = "gemini/nano-banana-2"
+model    = "nano-banana-2"
+model_id = "gemini-3.1-flash-image"
+title    = "Nano Banana 2"
+verified = "2026-07-12"
+scenes   = ["image.text_to_image", "image.image_to_image"]
+notes    = [
+  "conversational generate + edit + compose; SynthID watermarking is unconditional",
+  "references past GEMINI_INLINE_MAX_BYTES upload via the Files API and are passed by URI",
+  "models return JPEG by default; output is written in whatever format --output asks for",
+]
+
+[binding.constraints]
+options = ["grounding", "thinking_level"]
+
+[binding.constraints.supports]
+seed         = false
+group_output = true
+
+[binding.constraints.geometry]
+mode          = "aspect_ratio"
+named_sizes   = ["512", "1K", "2K", "4K"]
+aspect_ratios = [
+  "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9",
+  "1:4", "4:1", "1:8", "8:1",
+]
+
+[binding.constraints.output]
+formats   = ["png", "jpeg", "webp"]
+max_count = 4
+
+[binding.constraints.references]
+max = 14
+
+# ---------------------------------------------------------------------- Veo (video)
+
+[[binding]]
+id       = "gemini/veo-3.1"
+model    = "veo-3.1"
+model_id = "veo-3.1-generate-preview"
+title    = "Veo 3.1"
+lifecycle = "preview"
+scenes   = [
+  "video.text_to_video",
+  "video.image_to_video",
+  "video.keyframe_to_video",
+  "video.reference_to_video",
+  "video.extend",
+]
+notes = [
+  "extension continues a prior Veo clip and takes its URI — a local file is refused by the API",
+  "durationSeconds must be 8 for extension, reference images, 1080p and 4K",
+  "jobs cannot be cancelled on the Developer API",
+  "audio is native on Veo 3.x; the explicit generateAudio flag is unreliable here",
+]
+
+[binding.constraints]
+options = ["person_generation"]
+
+[binding.constraints.supports]
+seed              = true
+audio             = true
+negative_prompt   = true
+first_frame       = true
+last_frame        = true
+reference_images  = true
+reference_videos  = true
+reference_audios  = false
+watermark_control = false
+cancel            = false
+
+[binding.constraints.geometry]
+mode          = "aspect_ratio"
+resolutions   = ["720p", "1080p", "4k"]
+aspect_ratios = ["16:9", "9:16"]
+
+[binding.constraints.video]
+durations = [4, 6, 8]
+async     = true
+
+[binding.constraints.references]
+max = 3
+
+# -------------------------------------------------------------- Gemini TTS (speech)
+
+[[binding]]
+id        = "gemini/gemini-tts"
+model     = "gemini-tts"
+model_id  = "gemini-2.5-flash-preview-tts"
+title     = "Gemini TTS"
+lifecycle = "preview"
+verified  = "2026-07-12"
+scenes    = ["speech.text_to_speech", "speech.dialogue"]
+notes     = [
+  "style, tone, accent, pace and inline [tags] are directed in the prompt text, not by parameters",
+  "language is auto-detected; output is 24 kHz WAV",
+  "a 200 OK carrying no audio is a safety drop and is surfaced as such",
+]
+
+[binding.constraints.supports]
+seed          = false
+language_code = false
+timestamps    = false
+dialogue      = true
+instruction   = true
+
+[binding.constraints.audio]
+default_voice       = "Kore"
+formats             = ["wav"]
+max_dialogue_voices = 2
+voices = [
+  "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe",
+  "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome",
+  "Algenib", "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux",
+  "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager",
+  "Sulafat",
+]

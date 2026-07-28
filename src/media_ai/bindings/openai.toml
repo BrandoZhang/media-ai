@@ -1,0 +1,57 @@
+# OpenAI — GPT Image. Image only and synchronous; there is no video model here.
+
+[provider]
+name       = "openai"
+title      = "OpenAI"
+transport  = "http"
+adapter    = "media_ai.providers.openai:OpenAIAdapter"
+docs       = "https://platform.openai.com/docs/guides/image-generation"
+setup_hint = "Create a key at https://platform.openai.com/api-keys. GPT Image may require org verification."
+
+[provider.auth]
+kind   = "api_key"
+header = "Authorization"
+scheme = "Bearer"
+env    = ["OPENAI_API_KEY"]
+
+[provider.base_url]
+default      = "https://api.openai.com/v1"
+configurable = true
+
+[[binding]]
+id       = "openai/gpt-image-2"
+model    = "gpt-image-2"
+model_id = "gpt-image-2"
+title    = "GPT Image 2"
+verified = "2026-07-12"
+scenes   = ["image.text_to_image", "image.image_to_image"]
+notes    = [
+  "returns base64 — there is no hosted URL to download",
+  "arbitrary sizes: both edges divisible by 16, max edge 3840, edge ratio <= 3:1",
+  "inputs are always processed at high fidelity; the input_fidelity knob is rejected here",
+  "transparent backgrounds are not supported on this tier",
+  "a moderation block is reported as a safety error carrying the stable error code",
+]
+
+[binding.constraints]
+options = ["moderation", "output_compression"]
+
+[binding.constraints.supports]
+seed         = false
+quality      = true
+transparency = false
+group_output = true
+
+[binding.constraints.geometry]
+mode           = "both"
+pixel_multiple = 16
+pixel_max_edge = 3840
+pixel_total    = [655360, 8294400]
+max_edge_ratio = 3.0
+
+[binding.constraints.output]
+formats   = ["png", "jpeg", "webp"]
+max_count = 10
+
+[binding.constraints.references]
+max = 16

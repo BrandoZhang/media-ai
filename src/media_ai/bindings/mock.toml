@@ -1,0 +1,74 @@
+# The offline backend. Deterministic given (prompt, seed); draws Pillow placeholders,
+# ffmpeg clips and stdlib WAV tones, and fakes an async job so the poll path is
+# testable without a network.
+#
+# It is an ordinary binding now, not the fallback the CLI lands on when nothing else
+# is configured. A run that quietly produced a placeholder video and exited 0 is the
+# worst failure an agent can be handed: it looks like success. Reaching mock takes
+# asking for it — on the command line, or by choosing it as a default during setup.
+
+[provider]
+name      = "mock"
+title     = "Mock (offline)"
+transport = "local"
+adapter   = "media_ai.providers.mock:MockAdapter"
+
+[provider.auth]
+kind = "none"
+
+[[binding]]
+id     = "mock/mock"
+model  = "mock"
+title  = "Mock"
+scenes = [
+  "image.text_to_image",
+  "image.image_to_image",
+  "video.text_to_video",
+  "video.image_to_video",
+  "video.keyframe_to_video",
+  "video.reference_to_video",
+  "video.extend",
+  "speech.text_to_speech",
+  "speech.dialogue",
+  "music.text_to_music",
+  "music.plan_to_music",
+  "music.plan",
+  "sound.text_to_sound",
+]
+notes = [
+  "token and character counts follow the same formulas the real APIs document, so the cost path is exercised offline",
+]
+
+[binding.constraints]
+options = ["watermark"]
+
+[binding.constraints.supports]
+seed             = true
+audio            = true
+negative_prompt  = true
+first_frame      = true
+last_frame       = true
+reference_images = true
+reference_videos = true
+reference_audios = true
+dialogue         = true
+timestamps       = true
+composition_plan = true
+cancel           = true
+
+[binding.constraints.geometry]
+mode = "both"
+
+[binding.constraints.output]
+formats   = ["png", "jpeg", "webp", "mp4", "wav", "mp3"]
+max_count = 4
+
+[binding.constraints.references]
+max = 16
+
+[binding.constraints.video]
+async = true
+
+[binding.constraints.audio]
+formats             = ["wav", "mp3_44100_128"]
+max_dialogue_voices = 10

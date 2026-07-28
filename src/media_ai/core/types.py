@@ -110,6 +110,11 @@ class VideoRequest:
     reference_images: list[MediaRef] = field(default_factory=list)
     reference_videos: list[MediaRef] = field(default_factory=list)
     reference_audios: list[MediaRef] = field(default_factory=list)
+    # Distinct from `reference_videos` on purpose: a reference is material the model
+    # draws on, while this is a clip the model continues from its final frame (Veo's
+    # extension, which takes the URI of a prior Veo output). Same file type, different
+    # role — and the role is what picks the scene. See core/scene.py.
+    continue_from: MediaRef | None = None
     geometry: GeometrySpec | None = None
     duration: int | None = None  # seconds
     seed: int | None = None
