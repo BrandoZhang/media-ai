@@ -37,17 +37,17 @@ Always confirm with `media-ai capabilities --model <m>` (`supports_mask`,
 
 ```bash
 # Masked inpaint (OpenAI): change only the masked region
-media-ai image edit --provider openai --model gpt-image-1 \
+media-ai image edit --binding openai/gpt-image-1 \
     --reference room.png --mask sofa-region.png \
     --prompt "a green velvet sofa" --output room-green.png
 
 # Maskless restyle (Gemini): recolor the whole image
-media-ai image edit --provider gemini --model gemini-3.1-flash-image \
+media-ai image edit --binding gemini/gemini-3.1-flash-image \
     --reference bike.png --prompt "make it a blue bike, keep the background" \
     --aspect-ratio 1:1 --resolution 1K --output bike-blue.png
 
 # Multiple references (compose subjects), passed as a JSON array
-media-ai image edit --provider gemini --model gemini-3-pro-image \
+media-ai image edit --binding gemini/gemini-3-pro-image \
     --reference '["subject.png","style.png"]' \
     --prompt "the subject rendered in the reference's art style" --output combined.png
 ```

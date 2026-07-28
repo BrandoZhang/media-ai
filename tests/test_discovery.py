@@ -24,8 +24,7 @@ from media_ai.core.scene import Scene
 
 # Skills that drive no credentialed generation: local ffmpeg, offline, or docs.
 LOCAL_ONLY = [
-    "media-ai-concat",
-    "media-ai-capabilities",
+        "media-ai-capabilities",
     "media-ai-usage",
     "media-ai-shared",
     "media-ai-job",
@@ -61,7 +60,7 @@ def test_scenes_derived_from_skill_name(skill, expected):
     assert scenes_for_skill(skill) == expected
 
 
-@pytest.mark.parametrize("skill", [s for s in LOCAL_ONLY if s != "media-ai-concat"])
+@pytest.mark.parametrize("skill", [s for s in LOCAL_ONLY if s != "media-ai-usage"])
 def test_skills_that_drive_no_generation_have_no_scenes(skill):
     assert scenes_for_skill(skill) == frozenset()
 

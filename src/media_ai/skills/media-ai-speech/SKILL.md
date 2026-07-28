@@ -11,7 +11,7 @@ version: 1.0.0
 metadata:
   requires:
     bins: ["media-ai"]
-  cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  cliHelp: "media-ai capabilities --binding elevenlabs/eleven-multilingual-v2 --pretty"
   install:
     tier: optional
     summary: >-
@@ -47,8 +47,8 @@ Voice ids, output formats, per-request character budgets, and dialogue limits di
 sharply per provider/model. Check before you submit:
 
 ```bash
-media-ai capabilities --provider elevenlabs --pretty
-media-ai capabilities --provider gemini --model gemini-2.5-flash-preview-tts --pretty
+media-ai capabilities --binding elevenlabs/eleven-multilingual-v2 --pretty
+media-ai capabilities --binding gemini/gemini-2.5-flash-preview-tts --pretty
 ```
 
 Read `audio.operations`, `output_formats`, `default_voice`, `supports_seed` /
@@ -71,14 +71,14 @@ An unsupported field fails with **exit 3** *before any network call*.
 
 ```bash
 # ElevenLabs single voice, tuned
-media-ai speech generate --provider elevenlabs \
+media-ai speech generate --binding elevenlabs/eleven-multilingual-v2 \
     --text "Welcome aboard. Please fasten your seatbelt." \
     --voice JBFqnCBsd6RMkjVDRZzb --output-format mp3_44100_128 \
     --option stability=0.4 similarity_boost=0.8 style=0.2 \
     --output welcome.mp3
 
 # Gemini TTS — direct the delivery in the prompt; pick a named voice
-media-ai speech generate --provider gemini --model gemini-2.5-flash-preview-tts \
+media-ai speech generate --binding gemini/gemini-2.5-flash-preview-tts \
     --text "Say cheerfully: We did it — the launch is live!" \
     --voice Kore --output launch.wav
 ```
@@ -98,14 +98,14 @@ ordered **turns** (which speaker says what).
 
 ```bash
 # ElevenLabs multi-voice (≤10 voices)
-media-ai speech dialogue --provider elevenlabs \
+media-ai speech dialogue --binding elevenlabs/eleven-v3 \
     --speaker Ana=EXAVITQu4vr4xnSDxMaL --speaker Ben=JBFqnCBsd6RMkjVDRZzb \
     --turn Ana "Did you see the numbers?" \
     --turn Ben "I did — they're up thirty percent." \
     --timestamps true --output chat.mp3
 
 # Gemini TTS dialogue (≤2 speakers) with a global director note
-media-ai speech dialogue --provider gemini --model gemini-2.5-flash-preview-tts \
+media-ai speech dialogue --binding gemini/gemini-2.5-flash-preview-tts \
     --speaker Host=Kore --speaker Guest=Puck \
     --instruction "Warm late-night radio tone, unhurried" \
     --turn Host "Thanks for coming on." \
@@ -126,5 +126,5 @@ media-ai speech dialogue --provider gemini --model gemini-2.5-flash-preview-tts 
 
 ## References
 
-- `references/providers.md` — per-provider voice/model/format matrix, option keys, tier notes.
+- `../media-ai-shared/references/bindings.md` — per-provider voice/model/format matrix, option keys, tier notes.
 - `references/dialogue.md` — the cast/turns/`--script` model in full, with the JSON shapes.

@@ -1,97 +1,73 @@
-# media-ai profiles — routing bundles (NON-SECRET; safe to share/commit).
+# media-ai — bindings and scene defaults.
 #
-# A profile = provider + default model + optional base_url + which credential to use.
-# Select one per call with `--provider-profile <name>` (or $MEDIA_PROFILE).
+# NON-SECRET: safe to share or commit. `credential` is always a *reference*; a raw key
+# here is refused, because this is the file meant to be shared.
 #
-# `credential` is a REFERENCE, never a raw key (a raw key here is refused):
-#   cred://<name>   → the account [<name>] in credentials.toml
-#   env://VAR       → an environment variable
-#   op://… , vault://… , arn:aws:secretsmanager:…  → a secret manager
-# Secrets stay in the chmod-600 credentials.toml; this shareable file only names them.
+# Copy to ~/.config/media-ai/config.toml (or point $MEDIA_CONFIG_FILE at it).
+# `media-ai init` writes this for you; `media-ai bindings add` writes one entry.
+
+schema = 2
+
+# ---------------------------------------------------------------- bindings
 #
-# Setup:
-#   mkdir -p ~/.config/media-ai
-#   cp config.toml.example ~/.config/media-ai/config.toml
-# Override the location with $MEDIA_CONFIG_FILE.
-
-# Two accounts on the same provider — image on one, video on the other:
-[profiles.prod_image]
-provider   = "volc"
-model      = "ep-image-A"                 # e.g. an Ark custom endpoint id
-credential = "cred://volc_account_a"      # → [volc_account_a] in credentials.toml
-
-[profiles.prod_video]
-provider   = "volc"
-model      = "ep-video-B"
-base_url   = "https://ark.cn-beijing.volces.com/api/v3"   # optional
-credential = "cred://volc_account_b"      # → [volc_account_b] in credentials.toml
-
-# Fallback: list several references; the FIRST that resolves at call time wins. So you
-# can configure more accounts than you routinely use and a call degrades gracefully if
-# the preferred one is absent (rotated out, not present on this machine, …). A single
-# reference is strict (an absent source errors, never a silent switch to another
-# account); a list is the explicit opt-in to fall through.
-[profiles.prod_video_ha]
-provider   = "volc"
-model      = "ep-video-B"
-credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]
-
-# No `credential`? The profile falls back to the normal chain (the provider-default
-# account / env var), so it still ends at e.g. ARK_API_KEY:
-# [profiles.dev]
-# provider = "gemini"
-# model    = "gemini-3.1-flash-image"
-
-# ---------------------------------------------------------------------------
-# [providers.<name>] — per-provider defaults (NON-SECRET, like everything here)
+# A binding is one callable (provider, model) pair. Each is self-contained: its own
+# endpoint, its own credential. Two bindings on one account repeat the reference —
+# deliberately, so this file says outright which key every call uses.
 #
-# A profile pins ONE `model`, which cannot say "images use one model and video
-# another" on the same provider. Those defaults are genuinely different models:
-# Gemini's image / Veo / TTS families are disjoint, and ElevenLabs splits further
-# by operation (speech vs dialogue vs music vs sound). Set them here.
+# See what exists:  media-ai bindings available
+
+[bindings."volc-ark/seedance-2.0"]
+credential = "env://ARK_API_KEY"
+
+[bindings."volc-ark/seedream-4.5"]
+credential = "env://ARK_API_KEY"
+
+[bindings."gemini/veo-3.1"]
+credential = "cred://gemini"          # the [gemini] account in credentials.toml
+
+[bindings."openai/gpt-image-2"]
+credential = "keychain://media-ai/openai"
+
+# Per-binding knobs. These used to be environment variables, which made them global to
+# the process — two endpoints could not want different deadlines. Unknown keys are
+# ignored, so a newer config stays readable by an older CLI.
+[bindings."volc-ark/seedance-2.0".options]
+poll_interval = 5
+poll_timeout  = 900
+
+# ---------------------------------------------------------------- extends
 #
-# Resolution order, most specific first:
-#   --model  →  the active profile's `model`  →  [providers.<name>]  →  env var
-#   →  the adapter's built-in default
-# Unknown keys are ignored, so a newer config stays readable by an older CLI.
+# One mechanism, three uses: a second account, a second region, and an opaque
+# deployment id. All three are "the same declared capabilities, reached differently".
 
-# [providers.gemini]
-# image_model = "gemini-3-pro-image"            # also -3.1-flash-image / -flash-lite-image
-# video_model = "veo-3.1-fast-generate-preview" # also veo-3.1-generate-preview / -lite-
-# tts_model   = "gemini-3.1-flash-tts-preview"  # also gemini-2.5-flash/pro-preview-tts
+# A second region.
+[bindings."volc-ark-sg/seedance-2.0"]
+extends    = "volc-ark/seedance-2.0"
+base_url   = "https://ark.ap-southeast.volces.com/api/v3"
+credential = "cred://volc-ark-sg"
 
-# Ark model ids are account-specific: a custom endpoint (ep-…) only exists on the
-# account that created it, so the built-in defaults may not be enabled on yours.
-# [providers.volc]
-# image_model = "ep-2026...-img"
-# video_model = "ep-2026...-vid"
+# An Ark custom inference endpoint: `ep-…` names a deployment, not a model, so it
+# carries no capability information of its own. `extends` says what it actually
+# serves; the wire keeps the id the API accepts.
+[bindings."volc-ark/my-endpoint"]
+extends    = "volc-ark/seedream-4.5"
+model_id   = "ep-example-endpoint"
+credential = "env://ARK_API_KEY"
 
-# An endpoint id names a DEPLOYMENT, not a model — `ep-2026…-zrbtw` says nothing
-# about what it can do. Map it to the model it actually serves and everything the
-# CLI knows about that model (which operations, geometry limits, options) applies
-# to the endpoint. Without a mapping the CLI has to fail open and let the API be
-# the authority, so e.g. "does this endpoint support image editing?" can only be
-# answered by trying it.
+# ---------------------------------------------------------------- defaults
 #
-# The wire request still uses the ep- id, which is the only name Ark accepts.
-# [providers.volc.endpoints]
-# "ep-2026...-img" = "doubao-seedream-4-5-251128"
-# "ep-2026...-vid" = "doubao-seedance-2-0-260128"
+# Which binding runs when a call names none. This is the only automatic choice the CLI
+# makes: `--provider`/`--model` are flags a model driving the CLI may not have learned,
+# so a bare `media-ai video generate --prompt …` has to work.
 #
-# Any provider addressed by deployment id works the same way (Azure-style
-# deployments, a gateway that renames models):
-# [providers.openai.endpoints]
-# "my-image-deployment" = "gpt-image-2"
+# Set one:  media-ai config set-default video volc-ark/seedance-2.0
 
-# [providers.openai]
-# image_model = "gpt-image-1.5"                 # also gpt-image-2 / -1 / -1-mini
-
-# [providers.elevenlabs]
-# model          = "eleven_turbo_v2_5"          # speech.generate
-# dialogue_model = "eleven_v3"                  # speech.dialogue
-# music_model    = "music_v2"                   # music.generate / music.plan
-# sound_model    = "eleven_text_to_sound_v2"    # sound.generate
-
-# base_url works here too, for a provider you always reach through a gateway:
-# [providers.openai]
-# base_url = "https://gateway.internal/v1"
+[defaults]
+"image.text_to_image"      = "volc-ark/seedream-4.5"
+"image.image_to_image"     = "volc-ark/seedream-4.5"
+"video.text_to_video"      = "volc-ark/seedance-2.0"
+"video.image_to_video"     = "volc-ark/seedance-2.0"
+"video.keyframe_to_video"  = "volc-ark/seedance-2.0"
+"video.reference_to_video" = "volc-ark/seedance-2.0"
+"video.extend"             = "gemini/veo-3.1"
+"video.concat"             = "local/ffmpeg"

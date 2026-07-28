@@ -43,21 +43,6 @@ def test_gpt_image_2_resolution_tier_maps_to_4k(fake_provider, tmp_path):
     assert fake.calls[0]["body"]["size"] == "3840x2160"
 
 
-def test_edit_uses_multipart_with_images_and_mask(fake_provider, tmp_path):
-    ref, mask = tmp_path / "r.png", tmp_path / "m.png"
-    ref.write_bytes(PNG_1x1_BYTES)
-    mask.write_bytes(PNG_1x1_BYTES)
-    prov, fake = fake_provider("openai/gpt-image-2", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
-    req = ImageRequest(prompt="add a hat", output=tmp_path / "o.png", operation=Operation.IMAGE_EDIT,
-                       model="gpt-image-2", references=[MediaRef(str(ref), "reference_image")],
-                       mask=MediaRef(str(mask), "mask"))
-    prov.generate_image(req)
-    call = fake.calls[0]
-    assert call.get("multipart") and call["path"] == "/images/edits"
-    field_names = [f[0] for f in call["files"]]
-    assert field_names == ["image[]", "mask"]
-
-
 def test_input_fidelity_not_forwarded_to_gpt_image_2(fake_provider, tmp_path):
     # Even if the option slips through (e.g. --on-unsupported ignore), never send it
     # to a model that rejects it.
@@ -147,3 +132,16 @@ def test_multi_output_groups_extra_artifacts(fake_provider, tmp_path):
 # input_fidelity exists) live in the manifest now — see bindings/openai.toml, checked
 # by tests/test_manifests.py and exercised by tests/test_contract.py. Retired models
 # are simply absent from it, so there is no removal error left to assert.
+
+
+def test_edit_uses_multipart_with_reference_images(fake_provider, tmp_path):
+    """Editing posts the references as multipart parts, not as inline base64."""
+    ref = tmp_path / "a.png"
+    ref.write_bytes(PNG_1x1_BYTES)
+    prov, fake = fake_provider("openai/gpt-image-2", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="make it night", output=tmp_path / "o.png",
+                                     operation=Operation.IMAGE_EDIT,
+                                     references=[MediaRef(str(ref), "reference_image")]))
+    call = fake.calls[0]
+    assert call["path"] == "/images/edits" and call["multipart"]
+    assert [name for name, *_ in call["files"]] == ["image[]"]

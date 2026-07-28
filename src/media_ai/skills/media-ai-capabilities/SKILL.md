@@ -32,9 +32,9 @@ geometry, or option otherwise fails with **exit 3** *before any network call*.
 
 ```bash
 media-ai capabilities                                   # every registered provider/model
-media-ai capabilities --provider openai --pretty        # one provider
-media-ai capabilities --provider gemini --model veo-3.1-generate-preview --pretty   # one model
-media-ai capabilities --provider elevenlabs --pretty    # audio (speech/music/sound)
+media-ai capabilities --binding openai/gpt-image-2 --pretty        # one provider
+media-ai capabilities --binding gemini/veo-3.1-generate-preview --pretty   # one model
+media-ai capabilities --binding elevenlabs/eleven-multilingual-v2 --pretty    # audio (speech/music/sound)
 ```
 
 | flag | notes |

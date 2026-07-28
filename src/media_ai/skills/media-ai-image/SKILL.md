@@ -6,7 +6,7 @@ description: >-
   and Volcengine Seedream. Use when asked to create, generate, make, draw, or edit an
   image / picture / logo / icon / illustration / photo from the command line, or to
   inpaint or restyle an existing image.
-version: 1.0.0
+version: 2.0.0
 metadata:
   requires:
     bins: ["media-ai"]
@@ -15,8 +15,8 @@ metadata:
     tier: optional
     summary: >-
       Make and edit pictures from a prompt — logos, icons, illustrations, photos —
-      with optional reference images and inpaint masks. Backed by GPT-Image, Nano
-      Banana, or Seedream.
+      with optional reference images and reference images. Ask the CLI which
+      bindings can serve it — the lineup is not fixed.
 ---
 
 # media-ai-image — generate & edit images
@@ -35,8 +35,8 @@ Two operations, one normalized request:
 Different models allow different geometry, counts, and options. Check before you commit:
 
 ```bash
-media-ai capabilities --provider openai --model gpt-image-2 --pretty
-media-ai capabilities --provider gemini --model gemini-3.1-flash-image --pretty
+media-ai capabilities --pretty
+media-ai capabilities --pretty
 ```
 
 Read `image.geometry_mode` (`pixels` / `aspect_ratio` / `both`), `pixel_sizes` /
@@ -74,21 +74,21 @@ Two mutually-exclusive ways; each adapter maps/validates it to the model:
 
 ```bash
 # OpenAI GPT-Image (pixels or ratio+tier, quality, up to 10; gpt-image-1* adds transparency)
-media-ai image generate --provider openai --model gpt-image-2 \
+media-ai image generate \
     --prompt "a red bicycle on a white seamless background" \
     --size 1024x1024 --quality high --output bike.png
 
 # Gemini Nano Banana (aspect-ratio mode, not pixels)
-media-ai image generate --provider gemini --model gemini-3.1-flash-image \
+media-ai image generate \
     --prompt "isometric city block, soft light" \
     --aspect-ratio 16:9 --resolution 2K --output city.png
 
 # Volcengine Seedream (pixels; min 2560x1440 or it falls back to the 2K preset)
-media-ai image generate --provider volc \
+media-ai image generate \
     --prompt "silver astronaut on a red dune" --size 2560x1440 --output astro.png
 
 # Edit / inpaint with a mask
-media-ai image edit --provider openai --model gpt-image-1 \
+media-ai image edit \
     --reference room.png --mask sofa-region.png \
     --prompt "replace the sofa with a green velvet one" --output room2.png
 ```
@@ -97,4 +97,4 @@ media-ai image edit --provider openai --model gpt-image-1 \
 
 - `references/generate.md` — full `image generate` flag semantics + per-provider examples.
 - `references/edit.md` — `image edit`, `--reference`/`--mask`, inpainting, per-model reference limits.
-- `references/providers.md` — image model matrix: geometry modes, sizes/ratios, max references, per-model `--option` keys.
+- `../media-ai-shared/references/bindings.md` — image model matrix: geometry modes, sizes/ratios, max references, per-model `--option` keys.

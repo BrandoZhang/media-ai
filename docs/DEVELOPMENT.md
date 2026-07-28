@@ -104,27 +104,36 @@ The `[project.optional-dependencies]` extras remain for the pip / CI path:
 `uv sync --extra keychain` installs the OS-keychain credential source; `--all-extras`
 installs them all.
 
-## Running against a real provider
+## Running against a real backend
 
-The default `mock` provider needs no credentials or network. For a real backend,
-set the provider and its key in the **environment** (never as a CLI flag). The
-fastest way to see every variable is [`.env.example`](../.env.example) — copy it and
-fill in the block for your provider:
+`mock/mock` and `local/ffmpeg` need no credentials or network and are always
+available. A real backend needs a **binding**, which is one command:
 
 ```bash
-cp .env.example .env          # then edit .env (OPENAI_API_KEY=…, ARK_API_KEY=…, etc.)
-uv run --env-file .env media-ai capabilities --provider openai
-uv run --env-file .env media-ai image generate --model gpt-image-2 --prompt "a fox" --output fox.png
+media-ai bindings available          # what could be added, and the command for each
+media-ai bindings add openai/gpt-image-2 --credential env://OPENAI_API_KEY
+media-ai config set-default image openai/gpt-image-2
+
+export OPENAI_API_KEY=…              # or use cred:// / keychain:// and skip the env
+media-ai image generate --prompt "a fox" --output fox.png
 ```
 
-`uv run --env-file .env` loads the file into the process environment; the CLI does
-not read `.env` on its own. (Equivalently: `set -a && . ./.env && set +a`.) Never
-commit your real `.env` — only `.env.example` is committed.
+**There is no `.env` support and no env-var fallback.** A binding names exactly one
+credential source and nothing else is consulted, so `uv run --env-file .env …` works
+only in the sense that it populates the variable an `env://` reference points at.
 
-Credential resolution (env is the last link of a broker → secret-manager → keychain
-→ config-file → env chain), the `credentials.toml` file, and **profiles** (per-
-endpoint/tenant keys) are described in [CREDENTIALS.md](CREDENTIALS.md); per-provider
-setup is in [PROVIDERS.md](PROVIDERS.md).
+To keep a dev config out of your real one, point `$MEDIA_CONFIG_FILE` (and
+`$MEDIA_CREDENTIALS_FILE`) at a scratch directory:
+
+```bash
+export MEDIA_CONFIG_FILE=/tmp/dev/config.toml
+export MEDIA_CREDENTIALS_FILE=/tmp/dev/credentials.toml
+```
+
+Templates: [`config.toml.example`](../config.toml.example) and
+[`credentials.toml.example`](../credentials.toml.example). Reference schemes and the
+trust boundary are in [CREDENTIALS.md](CREDENTIALS.md); binding setup is in
+[BINDINGS.md](BINDINGS.md).
 
 ## Live / regression tests (real APIs)
 

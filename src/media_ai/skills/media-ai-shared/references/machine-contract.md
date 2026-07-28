@@ -46,7 +46,7 @@ table in `SKILL.md`) without parsing the message.
   "job": {"provider": "gemini", "model": "veo-3.1-generate-preview", "id": "<op-id>"},
   "task_id": "<op-id>",         // compat alias == job.id
   "output": "/tmp/run/clip.mp4",
-  "poll": "media-ai job query --provider gemini --id <op-id> --output /tmp/run/clip.mp4",
+  "poll": "media-ai job query --binding gemini/nano-banana-2 --id <op-id> --output /tmp/run/clip.mp4",
   "meta": {}
 }
 ```

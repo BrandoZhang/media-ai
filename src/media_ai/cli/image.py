@@ -8,7 +8,7 @@ from pathlib import Path
 from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..core.types import ImageRequest, MediaRef, Operation
+from ..core.types import ImageRequest, Operation
 from . import common
 
 
@@ -31,8 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai image", description="Generate or edit an image.")
     sub = ap.add_subparsers(dest="op", required=True)
     _add_common(sub.add_parser("generate", help="text (+optional references) -> image"))
-    edit = sub.add_parser("edit", help="reference image(s) (+optional mask) -> image")
-    edit.add_argument("--mask", default=None, help="PNG alpha mask (inpaint region)")
+    edit = sub.add_parser("edit", help="reference image(s) -> image")
     _add_common(edit)
     return ap
 
@@ -44,7 +43,6 @@ def _do(args) -> object:
         raise MediaError("image edit requires at least one --reference", category=ErrorCategory.CLI)
     req = ImageRequest(
         prompt=args.prompt, output=Path(args.output), operation=op, references=refs,
-        mask=MediaRef(args.mask, role="mask") if getattr(args, "mask", None) else None,
         geometry=common.parse_geometry(args), count=args.count, seed=args.seed,
         negative_prompt=args.negative_prompt, background=args.background, quality=args.quality,
         output_format=args.format, options=common.parse_options(args.option),

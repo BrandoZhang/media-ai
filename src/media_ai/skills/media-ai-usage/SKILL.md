@@ -32,8 +32,8 @@ aggregates it into token/artifact totals for the run.
 
 ```bash
 export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
-media-ai image generate --provider gemini --prompt "..." --output /tmp/run/a.png
-media-ai video generate --provider volc   --prompt "..." --output /tmp/run/b.mp4 --resolution 480p
+media-ai image generate --binding gemini/nano-banana-2 --prompt "..." --output /tmp/run/a.png
+media-ai video generate --binding volc-ark/seedream-4.5   --prompt "..." --output /tmp/run/b.mp4 --resolution 480p
 media-ai usage                       # summarize $MEDIA_USAGE_LOG
 media-ai usage --log /tmp/run/usage.jsonl --pretty   # or an explicit ledger path
 ```

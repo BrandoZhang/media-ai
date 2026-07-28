@@ -31,14 +31,14 @@ finalizes, or cancels it.
 
 ```bash
 # 1. submit async -> JobHandle (note the job.id, provider, and the ready-to-run `poll` string)
-media-ai video generate --provider gemini --model veo-3.1-generate-preview \
+media-ai video generate --binding gemini/veo-3.1-generate-preview \
     --prompt "..." --output /tmp/run/clip.mp4 --wait false --metadata-out /tmp/run/job.json
 
 # 2. poll until done. WITH --output, a succeeded job is downloaded + finalized here.
-media-ai job query --provider gemini --id <op-id> --output /tmp/run/clip.mp4
+media-ai job query --binding gemini/veo-3.1 --id <op-id> --output /tmp/run/clip.mp4
 
 # 3. (optional) cancel a still-queued/running job to stop cost
-media-ai job cancel --provider volc --id <task-id>
+media-ai job cancel --binding volc-ark/seedream-4.5 --id <task-id>
 ```
 
 The `JobHandle.poll` field **is** the exact `media-ai job query` command to run — execute it

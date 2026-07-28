@@ -26,14 +26,14 @@ Text / frames / references → video. Async on every real provider; `--wait true
 | `--return-last-frame {true,false}` | `false` | also emit the final frame as an artifact |
 | `--wait {true,false}` | `true` | block+poll vs async submit |
 | `--option key=value ...` | `[]` | provider-specific, capability-gated |
-| global | | `--provider`, `--model`, `--provider-profile`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
+| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
 
 ## The three input modes
 
 ### 1. Text → video
 
 ```bash
-media-ai video generate --provider volc \
+media-ai video generate --binding volc-ark/seedance-2.0 \
     --prompt "twin suns setting over a desert, slow push in" \
     --resolution 720p --aspect-ratio 16:9 --duration 5 --output suns.mp4
 ```
@@ -42,12 +42,12 @@ media-ai video generate --provider volc \
 
 ```bash
 # animate a single still
-media-ai video generate --provider gemini --model veo-3.1-generate-preview \
+media-ai video generate --binding gemini/veo-3.1-generate-preview \
     --first-frame ref.png --prompt "he turns to camera" \
     --resolution 1080p --duration 6 --audio true --output turn.mp4
 
 # interpolate between two stills (needs supports_last_frame)
-media-ai video generate --provider gemini --model veo-3.1-generate-preview \
+media-ai video generate --binding gemini/veo-3.1-generate-preview \
     --first-frame a.png --last-frame b.png --prompt "smooth morph" \
     --resolution 720p --duration 4 --output morph.mp4
 ```
@@ -55,7 +55,7 @@ media-ai video generate --provider gemini --model veo-3.1-generate-preview \
 ### 3. References → video
 
 ```bash
-media-ai video generate --provider volc \
+media-ai video generate --binding volc-ark/seedance-2.0 \
     --prompt "keep this character, new scene: a night market" \
     --reference-image '["char1.png","char2.png"]' \
     --resolution 720p --duration 5 --output market.mp4 --option camera_fixed=true
@@ -65,10 +65,10 @@ media-ai video generate --provider volc \
 
 ```bash
 # 1. submit
-media-ai video generate --provider gemini --model veo-3.1-generate-preview \
+media-ai video generate --binding gemini/veo-3.1-generate-preview \
     --prompt "..." --output /tmp/run/clip.mp4 --wait false --metadata-out /tmp/run/job.json
 # 2. read job.json -> run its `poll` string until status == succeeded (downloads the file)
-media-ai job query --provider gemini --id <op-id> --output /tmp/run/clip.mp4
+media-ai job query --binding gemini/veo-3.1 --id <op-id> --output /tmp/run/clip.mp4
 ```
 
 See the `media-ai-job` skill for the full lifecycle and cancel semantics. A duration

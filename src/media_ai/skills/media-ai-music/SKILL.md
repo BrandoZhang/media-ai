@@ -10,7 +10,7 @@ version: 1.0.0
 metadata:
   requires:
     bins: ["media-ai"]
-  cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  cliHelp: "media-ai capabilities --binding elevenlabs/music-v2 --pretty"
   install:
     tier: optional
     summary: >-
@@ -35,7 +35,7 @@ Two operations under `media-ai music`:
 ## Discover first
 
 ```bash
-media-ai capabilities --provider elevenlabs --pretty
+media-ai capabilities --binding elevenlabs/music-v2 --pretty
 ```
 
 Read `audio.supports_music`, `supports_composition_plan`, `music_models`,
@@ -58,20 +58,20 @@ Read `audio.supports_music`, `supports_composition_plan`, `music_models`,
 
 ```bash
 # Prompt → song
-media-ai music generate --provider elevenlabs \
+media-ai music generate --binding elevenlabs/music-v2 \
     --prompt "warm lofi hip-hop beat, vinyl crackle, mellow rhodes" \
     --duration-ms 30000 --output-format mp3_44100_128 \
     --option force_instrumental=true --output beat.mp3
 
 # Plan → song (edit the plan first; seed for reproducibility)
-media-ai music generate --provider elevenlabs \
+media-ai music generate --binding elevenlabs/music-v2 \
     --plan song_plan.json --seed 42 --detailed true --output song.mp3
 ```
 
 ## `music plan` — credit-free structure pass
 
 ```bash
-media-ai music plan --provider elevenlabs \
+media-ai music plan --binding elevenlabs/music-v2 \
     --prompt "upbeat indie-pop, verse/chorus/bridge, ~2 min" \
     --duration-ms 120000 --output song_plan.json
 # → edit song_plan.json, then: music generate --plan song_plan.json

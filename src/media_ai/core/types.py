@@ -41,7 +41,7 @@ class MediaRef:
     (multipart bytes, inline base64, a Files-API URI)."""
 
     raw: str
-    role: str | None = None  # reference_image | first_frame | last_frame | mask | ...
+    role: str | None = None  # reference_image | first_frame | last_frame | continue_from | ...
 
     @property
     def is_remote(self) -> bool:
@@ -84,7 +84,6 @@ class ImageRequest:
     output: Path
     operation: Operation = Operation.IMAGE_GENERATE
     references: list[MediaRef] = field(default_factory=list)  # i2i / edit inputs
-    mask: MediaRef | None = None  # inpaint region (edit)
     geometry: GeometrySpec | None = None
     count: int = 1  # n / sampleCount / candidateCount
     seed: int | None = None

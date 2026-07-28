@@ -1,7 +1,7 @@
 """OpenAI provider — Images API (GPT Image family).
 
 Image generation is **synchronous**: ``POST /v1/images/generations`` (JSON) and
-``POST /v1/images/edits`` (multipart, for reference images + an inpaint mask). GPT
+``POST /v1/images/edits`` (multipart, for reference images). GPT
 Image returns base64-encoded bytes only (never a hosted URL).
 
 This adapter is **GPT-Image-only**. OpenAI's older DALL·E models are intentionally
@@ -107,12 +107,12 @@ class OpenAIAdapter(HttpAdapter):
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
-        model = req.model or self.image_model
+        model = req.model or self.model_id
         # Refuse a retired model here as well as in capabilities(), so the two agree:
         # a caller must never be able to send a request for something discovery says
         # is gone.
         client, headers = self._prepare()
-        if req.operation == Operation.IMAGE_EDIT or req.references or req.mask:
+        if req.operation == Operation.IMAGE_EDIT or req.references:
             data = self._edit(client, headers, model, req)
         else:
             data = self._generate(client, headers, model, req)
@@ -169,9 +169,6 @@ class OpenAIAdapter(HttpAdapter):
         for r in req.references:
             content, mime = read_bytes(r)
             files.append(("image[]", Path(r.raw).name, mime, content))
-        if req.mask:
-            content, mime = read_bytes(req.mask)
-            files.append(("mask", Path(req.mask.raw).name, mime, content))
         return client.request_multipart("POST", "/images/edits", fields=fields, files=files, headers=headers)
 
     @staticmethod

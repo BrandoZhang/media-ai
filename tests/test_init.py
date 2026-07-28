@@ -271,9 +271,15 @@ class TestTheSkillMenu:
         notes = "\n".join(prompter.notes)
         assert "media-ai-job" in notes and "needed by media-ai-video" in notes
 
-    def test_picking_only_local_skills_asks_for_no_key(self, home):
+    def test_a_selection_that_needs_no_key_asks_for_none(self, home):
+        """Deselecting everything still installs the core skills, which are offline.
+
+        Folding concat into video removed the last *optional* skill that needed no
+        credential, so this is now the only way to reach that state — worth keeping
+        reachable, since it is what a first-time user does while looking around.
+        """
         args = make_args(skills_dest=str(home / "sk"))
-        summary, prompter = run(args, [pick("media-ai-concat")])
+        summary, prompter = run(args, [[]])
         assert summary["bindings"] == []
         assert "no credentials needed" in "\n".join(prompter.notes)
 
@@ -409,13 +415,11 @@ class TestGoingBack:
         """`providers` and `needed` are set by the same step; leaving one behind made
         the next step die on a KeyError, taking every answer with it."""
         args = make_args(skills_dest=str(home / "sk"))
-        # image -> a provider -> mode -> back to providers -> back to skills -> concat
-        summary, _ = run(
-            args, [pick("media-ai-image"), [0], 0, GoBack, GoBack, pick("media-ai-concat")],
-        )
+        # image -> a binding -> mode -> back to bindings -> back to skills -> pick nothing
+        summary, _ = run(args, [pick("media-ai-image"), [0], 0, GoBack, GoBack, []])
         assert summary["ok"] is True
         assert summary["bindings"] == []
-        assert "media-ai-concat" in summary["skills"][0]["installed"]
+        assert "media-ai-shared" in summary["skills"][0]["installed"]
 
 
 def binding_index(name: str, skills=("media-ai-image",)) -> list[int]:

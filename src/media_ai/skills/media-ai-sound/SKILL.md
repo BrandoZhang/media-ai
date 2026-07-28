@@ -9,7 +9,7 @@ version: 1.0.0
 metadata:
   requires:
     bins: ["media-ai"]
-  cliHelp: "media-ai capabilities --provider elevenlabs --pretty"
+  cliHelp: "media-ai capabilities --binding elevenlabs/sound-v2 --pretty"
   install:
     tier: optional
     summary: >-
@@ -30,7 +30,7 @@ audio file.
 ## Discover first
 
 ```bash
-media-ai capabilities --provider elevenlabs --pretty
+media-ai capabilities --binding elevenlabs/sound-v2 --pretty
 ```
 
 Read `audio.supports_sound`, `sound_output_formats`, `sound_min_seconds` /
@@ -48,12 +48,12 @@ Read `audio.supports_sound`, `sound_output_formats`, `sound_min_seconds` /
 
 ```bash
 # One-shot effect, model picks the length
-media-ai sound generate --provider elevenlabs \
+media-ai sound generate --binding elevenlabs/sound-v2 \
     --text "a heavy wooden door creaking open, then slamming shut" \
     --output door.mp3
 
 # A seamless 4-second loop, tight to the prompt
-media-ai sound generate --provider elevenlabs \
+media-ai sound generate --binding elevenlabs/sound-v2 \
     --text "gentle rain on a tin roof" --duration-seconds 4 \
     --option loop=true prompt_influence=0.7 --output rain_loop.mp3
 ```

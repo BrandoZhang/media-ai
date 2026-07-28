@@ -168,7 +168,7 @@ sidecars, `music generate`/`plan`, `sound generate`.
 covered by mocked-API tests (`tests/test_volc_api.py`, request bodies + response
 parse + error mapping) and the parametrized contract suite. Ark model ids are
 account-specific and must be enabled in the console before a live run — see
-[PROVIDERS.md](PROVIDERS.md#volc--volcengine-ark-doubao-seedream--seedance).
+[BINDINGS.md](BINDINGS.md#volc--volcengine-ark-doubao-seedream--seedance).
 
 ---
 
@@ -176,21 +176,21 @@ account-specific and must be enabled in the console before a live run — see
 
 ```bash
 # Load a key for the process env (the CLI reads the process environment):
-uv run --env-file .env media-ai capabilities --provider gemini   # or set -a && . ./.env && set +a
+media-ai bindings list        # confirm the binding under test is configured
 
 # gemini — cheap image + TTS
-uv run media-ai image generate  --provider gemini --prompt "a green leaf on white" --output /tmp/leaf.png
-uv run media-ai speech generate --provider gemini --text "hello there" --voice Kore --output /tmp/g.wav
+uv run media-ai image generate  --binding gemini/nano-banana-2 --prompt "a green leaf on white" --output /tmp/leaf.png
+uv run media-ai speech generate --binding gemini/gemini-tts --text "hello there" --voice Kore --output /tmp/g.wav
 # gemini — Veo video (async submit → poll; billed + slow)
-uv run media-ai video generate  --provider gemini --wait false --model veo-3.1-lite-generate-preview \
+uv run media-ai video generate  --binding gemini/veo-3.1 --wait false \
   --prompt "a kitten yawns" --first-frame /path/local.png --output /tmp/v.mp4 --duration 4 --resolution 720p
-uv run media-ai job query       --provider gemini --id "<operation-id>" --output /tmp/v.mp4
+uv run media-ai job query       --binding gemini/veo-3.1 --id "<operation-id>" --output /tmp/v.mp4
 
 # openai — image
-uv run media-ai image generate  --provider openai --prompt "a small red cube on white" --output /tmp/o.png
+uv run media-ai image generate  --binding openai/gpt-image-2 --prompt "a small red cube on white" --output /tmp/o.png
 
 # elevenlabs — speech
-uv run media-ai speech generate --provider elevenlabs --text "hello there" --output /tmp/e.mp3
+uv run media-ai speech generate --binding elevenlabs/eleven-multilingual-v2 --text "hello there" --output /tmp/e.mp3
 ```
 
 ## Gated live pytest

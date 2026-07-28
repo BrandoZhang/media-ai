@@ -21,38 +21,38 @@ generation is never async). Emits a `GenerationResult` (see
 | `--aspect-ratio R` / `--ratio R` | none | ratio geometry (gemini; also openai GPT-Image `2K\|4K`) |
 | `--resolution TIER` | none | named tier `1K\|2K\|4K` |
 | `--option key=value ...` | `[]` | provider-specific; capability-gated (unknown → exit 3) |
-| global | | `--provider`, `--model`, `--provider-profile`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
+| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
 
 ## Per-provider examples
 
 ```bash
 # --- OpenAI ---
 # gpt-image-2: arbitrary sizes (multiple of 16, up to 3840x2160), no seed, transparency off
-media-ai image generate --provider openai --model gpt-image-2 \
+media-ai image generate --binding openai/gpt-image-2 \
     --prompt "product photo of a matte black kettle" \
     --size 1536x1024 --quality high --format webp --output kettle.webp \
     --option moderation=low
 
 # gpt-image-1.5: fixed sizes, transparency + input_fidelity supported
-media-ai image generate --provider openai --model gpt-image-1.5 \
+media-ai image generate --binding openai/gpt-image-1.5 \
     --prompt "watercolor fox on a transparent background" \
     --size 1024x1536 --background transparent --quality high \
     --option input_fidelity=high --output fox.png
 
 # --- Gemini (aspect-ratio mode; do NOT pass --size) ---
-media-ai image generate --provider gemini --model gemini-3.1-flash-image \
+media-ai image generate --binding gemini/gemini-3.1-flash-image \
     --prompt "logo: a friendly origami crane, flat vector" \
     --aspect-ratio 1:1 --resolution 1K --output crane.png \
     --option thinking_level=high
 
 # multiple candidates (max_count 4 on Gemini)
-media-ai image generate --provider gemini --model gemini-3-pro-image \
+media-ai image generate --binding gemini/gemini-3-pro-image \
     --prompt "concept art, alien bazaar" --aspect-ratio 16:9 --resolution 4K \
     --count 4 --output bazaar.png --option grounding=false
 
 # --- Volcengine Seedream ---
 # Below 2560x1440 total pixels falls back to the 2K preset; up to 15 images
-media-ai image generate --provider volc \
+media-ai image generate --binding volc-ark/seedream-4.5 \
     --prompt "storybook illustration, a whale over a city" \
     --aspect-ratio 16:9 --resolution 2K --count 3 --seed 7 \
     --output whale.png --option watermark=false
@@ -61,7 +61,7 @@ media-ai image generate --provider volc \
 ## Reading the result
 
 ```bash
-media-ai image generate --provider gemini --prompt "..." --output out.png --metadata-out meta.json
+media-ai image generate --binding gemini/nano-banana-2 --prompt "..." --output out.png --metadata-out meta.json
 # stdout: {"ok":true,...,"artifacts":[{"path":"out.png",...}], "usage":{...}}
 # on --count > 1, artifacts[] has each image; extra_paths mirrors artifacts[1:]
 ```
