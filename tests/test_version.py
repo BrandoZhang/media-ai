@@ -79,8 +79,8 @@ def test_the_version_is_reported_by_the_cli():
 # ------------------------------------------------------------------- the bump
 
 
-def load_bump_script():
-    """Import ``scripts/bump_version.py`` by path.
+def load_script(name: str):
+    """Import a file from ``scripts/`` by path.
 
     ``scripts/`` is a directory of standalone tools, not an importable package — it
     has no ``__init__.py`` on purpose, so that setuptools never mistakes it for one
@@ -88,10 +88,14 @@ def load_bump_script():
     """
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("bump_version", ROOT / "scripts" / "bump_version.py")
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_bump_script():
+    return load_script("bump_version")
 
 
 @pytest.fixture
@@ -154,3 +158,87 @@ def test_the_bump_refuses_a_file_it_cannot_find_the_line_in(sandbox):
     init.write_text("# someone reorganised this\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="exactly one line"):
         bump_version.bump("9.8.7")
+
+
+# --------------------------------------------------------- which way it points
+
+# Releases follow `__version__`, so the number can only go forwards: a version that
+# went backwards would either collide with a published tag or ship a release that
+# sorts below its predecessor. `scripts/check_version.py` is what CI runs on every
+# pull request to say so before the merge rather than after the tag.
+
+
+@pytest.fixture
+def check_version():
+    return load_script("check_version")
+
+
+# semver.org §11, in the order the spec gives them. Each pair is (lower, higher).
+ORDERED = [
+    ("0.2.0", "0.2.1"),
+    ("0.2.1", "0.3.0"),
+    ("0.9.0", "0.10.0"),  # not string order
+    ("0.9.9", "1.0.0"),
+    ("1.0.0-alpha", "1.0.0"),  # a pre-release precedes the release it leads to
+    ("1.0.0-alpha", "1.0.0-alpha.1"),  # more identifiers wins the tie
+    ("1.0.0-alpha.1", "1.0.0-alpha.beta"),  # numeric sorts below alphanumeric
+    ("1.0.0-alpha.beta", "1.0.0-beta"),
+    ("1.0.0-rc.2", "1.0.0-rc.10"),  # numeric identifiers compare numerically
+    ("1.0.0-rc1", "1.0.0"),
+]
+
+
+@pytest.mark.parametrize("lower,higher", ORDERED)
+def test_precedence_follows_semver(check_version, lower, higher):
+    assert check_version.precedence(lower) < check_version.precedence(higher)
+
+
+def test_the_highest_release_is_picked_by_precedence_not_by_name(check_version):
+    """`sorted()` on the tag names would answer v0.9.0 here."""
+    assert check_version.highest(["v0.2.0", "v0.10.0", "v0.9.0"]) == "0.10.0"
+
+
+def test_tags_that_are_not_releases_are_ignored(check_version):
+    assert check_version.highest(["v0.2.0", "nightly", "v-broken", "vlatest"]) == "0.2.0"
+
+
+def test_no_tags_at_all_is_the_first_release(check_version):
+    assert check_version.highest([]) is None
+    assert "first release" in check_version.check("0.1.0", [])
+
+
+@pytest.mark.parametrize("version", ["0.2.1", "0.3.0", "1.0.0", "0.3.0-rc1"])
+def test_a_version_ahead_of_the_latest_tag_is_a_release(check_version, version):
+    """The two the question is usually about — a patch and a minor — plus the edges."""
+    assert "ahead" in check_version.check(version, ["v0.1.0", "v0.2.0"])
+
+
+def test_the_version_of_the_current_release_ships_nothing_new(check_version):
+    """The ordinary state of the default branch between releases: not an error."""
+    assert "nothing new" in check_version.check("0.2.0", ["v0.1.0", "v0.2.0"])
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "0.1.9", "0.2.0-rc1"])
+def test_a_version_behind_a_release_is_refused(check_version, version):
+    """Including one that only *looks* new: 0.2.0-rc1 comes before the released 0.2.0."""
+    with pytest.raises(SystemExit, match="behind the released v0.2.0"):
+        check_version.check(version, ["v0.1.0", "v0.2.0"])
+
+
+@pytest.mark.parametrize("bad", ["v0.3.0", "0.3", "latest", "", "0.3.0.0.0-"])
+def test_the_check_refuses_something_that_cannot_be_a_tag(check_version, bad):
+    with pytest.raises(SystemExit):
+        check_version.check(bad, ["v0.2.0"])
+
+
+def test_the_declared_version_is_read_without_importing_the_package(check_version):
+    """It runs before anything is installed, in CI's first step."""
+    assert check_version.declared_version() == media_ai.__version__
+
+
+def test_this_checkout_is_not_behind_its_own_releases(check_version):
+    """The real check, when the clone has the tags to run it against."""
+    tags = check_version.released_tags()
+    if not tags:
+        pytest.skip("no tags fetched in this checkout")
+    check_version.check(media_ai.__version__, tags)
