@@ -565,9 +565,10 @@ cast / timestamps；music 是作曲：`--plan` / `--duration-ms` 3s–600s；sou
 | Binding | model_id | 场景 | `verified` |
 |---|---|---|---|
 | `volc-ark/seedream-5.0-pro` | `doubao-seedream-5-0-pro-260628` | image.text_to_image, image.image_to_image | 空 |
-| `volc-ark/seedream-5.0-lite` | `doubao-seedream-5-0-260128` | image.text_to_image, image.image_to_image | 空 |
+| `volc-ark/seedream-5.0` | `doubao-seedream-5-0-260128` | image.text_to_image, image.image_to_image | 空 |
 | `volc-ark/seedream-4.5` | `doubao-seedream-4-5-251128` | image.text_to_image, image.image_to_image | 空 |
 | `volc-ark/seedance-2.0` | `doubao-seedance-2-0-260128` | video.{text,image,keyframe,reference}_to_video | 空 |
+| `volc-ark/seedance-2.0-fast` | `seedance-2.0-fast-260128-cc-beta` | video.{text,image,keyframe,reference}_to_video | 空 |
 | `gemini/nano-banana-2` | `gemini-3.1-flash-image` | image.text_to_image, image_to_image | 2026-07-12 |
 | `gemini/veo-3.1` | `veo-3.1-generate-preview` | video.{text,image,keyframe,reference}_to_video, video.extend | 空 |
 | `gemini/gemini-tts` | `gemini-2.5-flash-preview-tts` | speech.text_to_speech, speech.dialogue | 2026-07-12 |
@@ -586,7 +587,7 @@ music / sound 都标着 not yet exercised。这些如实填空，不补日期。
 
 三个 Seedream 共用同一个端点（`POST /images/generations`）、同一套鉴权，但**每一项参数约束都不同**：
 
-| | 5.0 pro | 5.0 lite | 4.5 |
+| | 5.0 pro | 5.0 | 4.5 |
 |---|---|---|---|
 | model_id | `doubao-seedream-5-0-pro-260628` | `doubao-seedream-5-0-260128` | `doubao-seedream-4-5-251128` |
 | 分辨率档位 | 1K, 2K | 2K, 3K, 4K | 2K, 4K |
@@ -605,7 +606,7 @@ music / sound 都标着 not yet exercised。这些如实填空，不补日期。
 - `named_sizes=("1K","2K","4K")` —— 三个模型分别是 1K/2K、2K/3K/4K、2K/4K，没有一个匹配
 - `output_formats=("png",)` —— 4.5 只出 jpeg，而且 adapter 根本没发 `output_format` 字段：
   `--output x.png` 拿到的其实是 jpeg 字节，扩展名是错的
-- `max_references=9` —— 5.0 pro 是 10，4.5/5.0 lite 是「参考图 + 输出 ≤ 15」的联合约束
+- `max_references=9` —— 5.0 pro 是 10，4.5/5.0 是「参考图 + 输出 ≤ 15」的联合约束
 - `max_count=15` —— 5.0 pro 不支持组图
 - `_ARK_MIN_IMAGE_PIXELS = 2560*1440` 的「低于就回退成 2K」—— 5.0 pro 的下限是 `1280x720`
 
@@ -632,7 +633,7 @@ ratio_range = [0.0625, 16]      # [1/16, 16]
 有了它，一张 40 MB 的参考图在**联网前**就被拒，而不是花一次调用换一个 400。
 
 **待补**：5.0 pro 的「支持生成单图/多张图层」——「图层」是什么形态的产物、走哪个字段，文档没写，
-先留空并在 manifest 的 `notes` 里标 TODO；5.0 lite 的「联网搜索」开关字段名同理。**不猜。**
+先留空并在 manifest 的 `notes` 里标 TODO；5.0 的「联网搜索」开关字段名同理。**不猜。**
 
 ## 12. 实施阶段
 
@@ -672,7 +673,7 @@ ratio_range = [0.0625, 16]      # [1/16, 16]
 
 ## 13. 待补 / 遗留
 
-- **Seedream 5.0 pro 的「多张图层」输出**、**5.0 lite 的联网搜索开关字段名**、两者的像素区间
+- **Seedream 5.0 pro 的「多张图层」输出**、**5.0 的联网搜索开关字段名**、两者的像素区间
   ——文档未给，manifest 里留空 + `notes` 标 TODO（§11.1）
 - **`optimize_prompt_mode` 的透传方式**：adapter 逐个 option 显式映射，还是做通用的
   option→body 透传。前者安全、后者才真的「零代码接兄弟模型」。仍为逐个显式映射，未改

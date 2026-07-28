@@ -24,10 +24,10 @@ Usually **one manifest entry and no code**, because the wire is already implemen
 
 ```toml
 [[binding]]
-id       = "volc-ark/seedream-5.0-lite"
-model    = "seedream-5.0-lite"
+id       = "volc-ark/seedream-5.0"
+model    = "seedream-5.0"
 model_id = "doubao-seedream-5-0-260128"
-title    = "Seedream 5.0 lite"
+title    = "Seedream 5.0"
 scenes   = ["image.text_to_image", "image.image_to_image"]
 
 [binding.constraints]

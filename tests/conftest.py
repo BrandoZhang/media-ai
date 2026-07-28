@@ -41,6 +41,10 @@ class FakeClient:
         self.calls.append({"method": method, "path": path, "body": body, "headers": headers})
         return self._next()
 
+    def request_sse_json(self, method, path, *, body=None, headers=None):
+        self.calls.append({"method": method, "path": path, "body": body, "headers": headers, "sse": True})
+        return self._next()
+
     def request_multipart(self, method, path, *, fields, files, headers=None):
         self.calls.append({"method": method, "path": path, "fields": fields, "files": files, "multipart": True})
         return self._next()

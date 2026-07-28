@@ -79,22 +79,50 @@ class VolcArkAdapter(HttpAdapter):
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         client, headers = self._prepare()
         model_id = req.model or self.model_id
+        response_format = str(req.options.get("response_format", "url")).lower()
+        if response_format not in {"url", "b64_json"}:
+            raise MediaError(
+                "Ark response_format must be 'url' or 'b64_json'",
+                category=ErrorCategory.VALIDATION,
+                provider=self.name,
+                model=model_id,
+            )
+        stream_requested = "stream" in req.options
+        stream = req.options.get("stream", False)
+        if stream_requested and not isinstance(stream, bool):
+            raise MediaError(
+                "Ark stream must be a boolean",
+                category=ErrorCategory.VALIDATION,
+                provider=self.name,
+                model=model_id,
+            )
         body: dict = {
             "model": model_id, "prompt": req.prompt, "size": self._image_size(req),
-            "response_format": "url", "watermark": bool(req.options.get("watermark", False)),
+            "response_format": response_format, "watermark": bool(req.options.get("watermark", False)),
         }
         if req.seed is not None and req.seed >= 0:
             body["seed"] = req.seed
         if req.references:
             enc = [to_data_uri(r, "image") for r in req.references]
             body["image"] = enc if len(enc) > 1 else enc[0]
-        if req.count > 1:
-            body["sequential_image_generation"] = "auto"
-            body["sequential_image_generation_options"] = {"max_images": req.count}
-        else:
-            body["sequential_image_generation"] = "disabled"
+        if req.output_format is not None:
+            body["output_format"] = req.output_format
+        if stream_requested:
+            body["stream"] = stream
+        # This is a Seedream group-output control, not a harmless global default:
+        # Seedream 5.0 Pro rejects it even when set to "disabled".  Only bindings
+        # that declare group output may receive either form of the parameter.
+        if self.constraints.supports_flag("group_output"):
+            if req.count > 1:
+                body["sequential_image_generation"] = "auto"
+                body["sequential_image_generation_options"] = {"max_images": req.count}
+            else:
+                body["sequential_image_generation"] = "disabled"
 
-        data = client.request_json("POST", "/images/generations", body=body, headers=headers)
+        if stream:
+            data = self._streamed_image_response(client.request_sse_json("POST", "/images/generations", body=body, headers=headers))
+        else:
+            data = client.request_json("POST", "/images/generations", body=body, headers=headers)
         items = [d for d in (data.get("data") or []) if d.get("url") or d.get("b64_json")]
         if not items:
             raise MediaError("Ark image response had no images", category=ErrorCategory.PROVIDER,
@@ -115,17 +143,66 @@ class VolcArkAdapter(HttpAdapter):
         )
 
     @staticmethod
+    def _streamed_image_response(events: list[dict]) -> dict:
+        """Normalize Ark's image SSE events into the ordinary image response shape."""
+        images: list[tuple[int, int, dict]] = []
+        usage: dict = {}
+        model = None
+        for position, event in enumerate(events):
+            if event.get("error"):
+                raise MediaError(
+                    f"Ark streamed image generation failed: {event['error']}",
+                    category=ErrorCategory.PROVIDER,
+                    provider="volc-ark",
+                )
+            if event.get("model"):
+                model = event["model"]
+            if isinstance(event.get("usage"), dict):
+                usage = event["usage"]
+            if event.get("url") or event.get("b64_json"):
+                index = event.get("image_index")
+                images.append((index if isinstance(index, int) else position, position,
+                               {k: event[k] for k in ("url", "b64_json") if event.get(k)}))
+        images.sort(key=lambda item: (item[0], item[1]))
+        return {"data": [image for _, _, image in images], "usage": usage, "model": model}
+
+    @staticmethod
     def _save_image(item: dict, out: Path, client, headers, kind: str, *, role=None) -> Artifact:
         out.parent.mkdir(parents=True, exist_ok=True)
         if item.get("b64_json"):
             out.write_bytes(base64.b64decode(item["b64_json"]))
         elif item.get("url"):
             client.download(item["url"], out)
-        return Artifact.from_path(out, kind, mime="image/png", role=role)
+        return Artifact.from_path(out, kind, mime=VolcArkAdapter._image_mime(out), role=role)
+
+    @staticmethod
+    def _image_mime(path: Path) -> str | None:
+        """Report the bytes Ark returned, rather than trusting the caller's suffix.
+
+        ``response_format=url`` has historically returned JPEG by default.  Newer
+        Seedream 5 bindings honour ``output_format``, but an artifact must still
+        describe its actual bytes if a deployment ignores that optional parameter.
+        """
+        with path.open("rb") as image:
+            header = image.read(12)
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if header.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+            return "image/gif"
+        if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+            return "image/webp"
+        return None
 
     # ---- video (async task) ----------------------------------------------
     def _build_content(self, req: VideoRequest) -> list[dict]:
         content: list[dict] = []
+        # Ark's published examples lead with the text instruction, then enumerate
+        # Image 1/2, Video 1, Audio 1 in reference order.  Keep that order so prompts
+        # can unambiguously refer to those numbered inputs.
+        if req.prompt:
+            content.append({"type": "text", "text": req.prompt})
         if req.first_frame:
             content.append({"type": "image_url", "image_url": {"url": to_data_uri(req.first_frame, "image")}, "role": "first_frame"})
         if req.last_frame:
@@ -136,10 +213,8 @@ class VolcArkAdapter(HttpAdapter):
             content.append({"type": "video_url", "video_url": {"url": to_data_uri(r, "video")}, "role": "reference_video"})
         for r in req.reference_audios:
             content.append({"type": "audio_url", "audio_url": {"url": to_data_uri(r, "audio")}, "role": "reference_audio"})
-        if not content and not req.prompt:
+        if not content:
             raise MediaError("video generation needs a prompt or at least one reference", category=ErrorCategory.VALIDATION, provider=self.name)
-        if req.prompt:
-            content.append({"type": "text", "text": req.prompt})
         return content
 
     def _create_task(self, req: VideoRequest, client, headers) -> str:

@@ -177,7 +177,7 @@ class Output:
     max_count: int = 1
     max_total_images: int | None = None
     """Ceiling on *references plus outputs* together, where a provider budgets them
-    jointly (Seedream 4.5 / 5.0 lite: ≤ 15). Neither a count nor a reference limit
+    jointly (Seedream 4.5 / 5.0: ≤ 15). Neither a count nor a reference limit
     alone can express it."""
 
 

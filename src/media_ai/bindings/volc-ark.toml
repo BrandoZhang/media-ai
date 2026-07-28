@@ -32,8 +32,9 @@ configurable = true
 id       = "volc-ark/seedream-5.0-pro"
 model    = "seedream-5.0-pro"
 model_id = "doubao-seedream-5-0-pro-260628"
-title    = "Seedream 5.0 pro"
+title    = "Seedream 5.0 Pro"
 scenes   = ["image.text_to_image", "image.image_to_image"]
+verified = "2026-07-28"
 notes    = [
   "interactive editing: mark a region on the input image, or write <point>/<bbox> tags into the prompt",
   "TODO: 'single image / multiple layers' output is documented without a wire field — left undeclared",
@@ -41,7 +42,7 @@ notes    = [
 ]
 
 [binding.constraints]
-options = ["watermark", "optimize_prompt_mode"]
+options = ["watermark", "optimize_prompt_mode", "response_format"]
 
 [binding.constraints.supports]
 seed             = true
@@ -69,23 +70,24 @@ max_pixels  = 36000000
 min_edge    = 15
 ratio_range = [0.0625, 16.0]
 
-# --------------------------------------------------------------- Seedream 5.0 lite
+# ------------------------------------------------------------------- Seedream 5.0
 
 [[binding]]
-id       = "volc-ark/seedream-5.0-lite"
-model    = "seedream-5.0-lite"
+id       = "volc-ark/seedream-5.0"
+model    = "seedream-5.0"
 model_id = "doubao-seedream-5-0-260128"
-title    = "Seedream 5.0 lite"
+title    = "Seedream 5.0"
 scenes   = ["image.text_to_image", "image.image_to_image"]
+verified = "2026-07-28"
 notes    = [
   "group output is budgeted jointly with inputs: references + generated images <= 15",
-  "the API also accepts the wire id doubao-seedream-5-0-lite-260128 for this model",
+  "an account-specific endpoint id can be configured with `extends = \"volc-ark/seedream-5.0\"`",
   "TODO: the web-search toggle is documented without a wire field name — left undeclared",
   "documented standard ratios (1:1 4:3 3:4 16:9 9:16 3:2 2:3 21:9) are examples, not an enum — the vendor states supported ratios are not limited to them, so only ratio_range gates",
 ]
 
 [binding.constraints]
-options = ["watermark"]
+options = ["watermark", "response_format", "stream"]
 
 [binding.constraints.supports]
 seed             = true
@@ -128,7 +130,7 @@ notes    = [
 ]
 
 [binding.constraints]
-options = ["watermark"]
+options = ["watermark", "response_format"]
 
 [binding.constraints.supports]
 seed             = true
@@ -169,7 +171,52 @@ scenes   = [
   "video.keyframe_to_video",
   "video.reference_to_video",
 ]
+verified = "2026-07-28"
 notes = [
+  "a blocking wait cancels the billed task on SIGTERM/SIGINT/timeout so a killed call leaves nothing running",
+  "durations are model-version specific and left to the API to validate",
+]
+
+[binding.constraints]
+options = ["camera_fixed", "watermark"]
+
+[binding.constraints.supports]
+seed              = true
+audio             = true
+negative_prompt   = true
+first_frame       = true
+last_frame        = true
+reference_images  = true
+reference_videos  = true
+reference_audios  = true
+watermark_control = true
+return_last_frame = true
+cancel            = true
+
+[binding.constraints.geometry]
+mode          = "aspect_ratio"
+resolutions   = ["480p", "720p", "1080p"]
+aspect_ratios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"]
+
+[binding.constraints.video]
+async = true
+
+# ------------------------------------------------------------ Seedance 2.0 Fast
+
+[[binding]]
+id       = "volc-ark/seedance-2.0-fast"
+model    = "seedance-2.0-fast"
+model_id = "seedance-2.0-fast-260128-cc-beta"
+title    = "Seedance 2.0 Fast"
+scenes   = [
+  "video.text_to_video",
+  "video.image_to_video",
+  "video.keyframe_to_video",
+  "video.reference_to_video",
+]
+verified = "2026-07-28"
+notes = [
+  "a distinct model from Seedance 2.0; use an account-specific endpoint id when the Ark console provides one",
   "a blocking wait cancels the billed task on SIGTERM/SIGINT/timeout so a killed call leaves nothing running",
   "durations are model-version specific and left to the API to validate",
 ]

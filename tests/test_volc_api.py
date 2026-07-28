@@ -42,6 +42,62 @@ def test_image_seed_omitted_when_negative(fake_provider, tmp_path):
     assert "seed" not in fake.calls[0]["body"]
 
 
+def test_image_response_format_option_is_validated_and_sent(fake_provider, tmp_path):
+    prov, fake = fake_provider("volc-ark/seedream-5.0", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", options={"response_format": "b64_json"}))
+    assert fake.calls[0]["body"]["response_format"] == "b64_json"
+
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "bad.png", options={"response_format": "binary"}))
+    assert ei.value.category == ErrorCategory.VALIDATION
+
+
+def test_streamed_group_response_is_saved_in_image_index_order(fake_provider, tmp_path):
+    events = [
+        {"type": "image_generation.partial", "image_index": 1, "url": "https://example.com/two.jpg", "model": "m"},
+        {"type": "image_generation.partial", "image_index": 0, "url": "https://example.com/one.jpg", "model": "m"},
+        {"type": "image_generation.completed", "model": "m", "usage": {"generated_images": 2}},
+    ]
+    prov, fake = fake_provider("volc-ark/seedream-5.0", [events])
+    result = prov.generate_image(ImageRequest(
+        prompt="a set", output=tmp_path / "set.jpg", count=2, options={"stream": True},
+    ))
+    assert fake.calls[0]["sse"] is True
+    assert fake.calls[0]["body"]["stream"] is True
+    assert fake.calls[0]["body"]["sequential_image_generation"] == "auto"
+    assert fake.downloads == ["https://example.com/one.jpg", "https://example.com/two.jpg"]
+    assert [artifact.role for artifact in result.artifacts] == [None, "group"]
+
+
+def test_stream_option_requires_a_boolean(fake_provider, tmp_path):
+    prov, _ = fake_provider("volc-ark/seedream-5.0", [])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "bad.png", options={"stream": "yes"}))
+    assert ei.value.category == ErrorCategory.VALIDATION
+
+
+def test_stream_false_is_sent_as_an_explicit_non_streaming_request(fake_provider, tmp_path):
+    prov, fake = fake_provider("volc-ark/seedream-5.0", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "one.png", options={"stream": False}))
+    assert fake.calls[0]["body"]["stream"] is False
+    assert "sse" not in fake.calls[0]
+
+
+def test_image_edit_preserves_ordered_remote_reference_urls(fake_provider, tmp_path):
+    refs = [
+        MediaRef("https://example.com/person.png", "reference_image"),
+        MediaRef("https://example.com/outfit.png", "reference_image"),
+    ]
+    prov, fake = fake_provider("volc-ark/seedream-5.0-pro", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    result = prov.generate_image(
+        ImageRequest(prompt="put outfit 2 on person 1", output=tmp_path / "o.png", references=refs, output_format="png")
+    )
+    assert fake.calls[0]["body"]["image"] == [ref.raw for ref in refs]
+    assert fake.calls[0]["body"]["output_format"] == "png"
+    assert "sequential_image_generation" not in fake.calls[0]["body"]
+    assert result.primary().mime == "image/png"
+
+
 def test_image_response_without_images_raises(fake_provider, tmp_path):
     prov, _ = fake_provider("volc-ark/seedream-4.5", [{"data": [], "usage": {}}])
     with pytest.raises(MediaError) as ei:
@@ -111,15 +167,18 @@ def test_video_needs_prompt_or_reference(fake_provider, tmp_path):
 
 
 def test_ref2video_multimodal_roles(fake_provider, tmp_path):
-    img = tmp_path / "r.png"
-    img.write_bytes(PNG_1x1_BYTES)
     prov, fake = fake_provider("volc-ark/seedance-2.0", [{"id": "t"}])
     prov.generate_video(VideoRequest(prompt="scene", output=tmp_path / "v.mp4",
-                                     reference_images=[MediaRef(str(img), "reference_image")],
+                                     reference_images=[MediaRef("https://example.com/i.png", "reference_image")],
                                      reference_videos=[MediaRef("https://example.com/v.mp4", "reference_video")],
                                      reference_audios=[MediaRef("https://example.com/a.mp3", "reference_audio")], wait=False))
-    roles = [c.get("role") for c in fake.calls[0]["body"]["content"] if "role" in c]
+    content = fake.calls[0]["body"]["content"]
+    assert content[0] == {"type": "text", "text": "scene"}
+    roles = [c.get("role") for c in content if "role" in c]
     assert roles == ["reference_image", "reference_video", "reference_audio"]
+    assert content[1]["image_url"]["url"] == "https://example.com/i.png"
+    assert content[2]["video_url"]["url"] == "https://example.com/v.mp4"
+    assert content[3]["audio_url"]["url"] == "https://example.com/a.mp3"
 
 
 def test_job_query_finalizes_and_downloads(fake_provider, tmp_path):
@@ -190,6 +249,17 @@ def test_a_deployment_id_goes_on_the_wire_while_its_backing_model_supplies_the_l
     assert fake.calls[0]["body"]["model"] == ENDPOINT
 
 
+def test_fast_deployment_keeps_its_own_backing_model(fake_provider, tmp_path):
+    """Seedance 2.0 Fast is a sibling binding, not an alias for Seedance 2.0."""
+    prov, fake = fake_provider(
+        "volc-ark/my-fast-endpoint", [{"id": "task-fast"}],
+        extends="volc-ark/seedance-2.0-fast", model_id="test-fast-deployment",
+    )
+    assert prov.binding.spec.id == "volc-ark/seedance-2.0-fast"
+    prov.generate_video(VideoRequest(prompt="a quick shot", output=tmp_path / "fast.mp4", wait=False))
+    assert fake.calls[0]["body"]["model"] == "test-fast-deployment"
+
+
 def test_modality_is_never_guessed_from_a_model_id(fake_provider):
     """A seedance-shaped id on an image binding is still an image binding.
 
@@ -201,5 +271,3 @@ def test_modality_is_never_guessed_from_a_model_id(fake_provider):
     prov, _ = fake_provider("volc-ark/seedream-4.5", [], model_id="doubao-seedance-2-0-260128")
     assert Scene.IMAGE_TEXT_TO_IMAGE in prov.binding.spec.scenes
     assert Scene.VIDEO_TEXT_TO_VIDEO not in prov.binding.spec.scenes
-
-
