@@ -55,6 +55,7 @@ video.image_to_video       + first_frame
 video.keyframe_to_video    + first_frame + last_frame
 video.reference_to_video   + reference_images / videos / audios（把素材当参考）
 video.extend               + continue_from（从一段已有视频的结尾继续生成）
+video.concat               多段视频 → 一段（本地 ffmpeg，见 §5.3）
 
 speech.text_to_speech      单音色
 speech.dialogue            多音色对话
@@ -85,6 +86,24 @@ Gemini 是「从这段 Veo 产物的结尾继续生成」（且必须是 URI，�
 无实际需求；现有的 `--mask` / `ImageRequest.mask` / `ImageCaps.supports_mask` / OpenAI
 `images/edits` 的 multipart 蒙版路径一并删除（见 §10）。要加回来是一个 scene + adapter 一段
 代码的事。
+
+### 3.1 什么不该升格成 scene
+
+Scene 是**输入的语义角色组合**。一个 binding 独有的能力，如果不改变输入角色，就不是新 scene ——
+它属于 §9 的 binding reference 片段（provider 特有的用法与技巧）。
+
+判例：**Seedream 5.0 pro 的「交互编辑」**。它支持用 `<bbox>179 283 796 986</bbox>` / `<point>`
+坐标标签，或在图上手绘标记，精确指定编辑区域。但它的 wire 输入与普通图生图**完全相同**——一张
+待编辑图 + 一段 prompt，差别只在 prompt 怎么写。CLI 无法在不解析 prompt 的情况下把它跟
+`image.image_to_image` 区分开，所以：
+
+- **不设** `image.interactive_edit` scene
+- **设** `constraints.supports.interactive_edit = true`
+- 怎么写坐标标签，写在 `references/bindings/volc-ark.seedream-5.0-pro.md` 里
+
+这个标志有一处实打实的用途：prompt 里出现 `<bbox>` / `<point>` 标签、而 binding 未声明
+`interactive_edit` 时，**联网前报错**。否则模型会把标签当普通文字读进去，生成一张悄悄错掉的图，
+既不报错也不易察觉——正是预校验该拦下的那类失败。
 
 > **Scene 不强制拆成 adapter 方法。** wire 层面很多 scene 共用一个端点（Volc 视频的 t2v/i2v/
 > ref2v 都是同一个 create-task，只是 content 数组不同）。Scene 的价值在**声明、校验、skill
@@ -296,8 +315,38 @@ CI 断言（`tests/test_manifests.py`）：
 5. `constraints.options` 里的每个 key 在 adapter 的 option 白名单里
 6. `lifecycle = "deprecated"` 必须带 `replacement`
 
-**同 provider 的兄弟模型（Seedream 4.5 → 5）通常是纯数据、零代码**——wire 协议是同一套。
-新 provider 才需要写 adapter（约 200–300 行）。
+**同 provider 的兄弟模型（Seedream 4.5 → 5.0）通常是纯数据、零代码**——wire 协议是同一套。
+新 provider 才需要写 adapter（约 200–300 行）。§11.1 用 Seedream 5.0 验证了这个承诺，并标出了
+它**不**成立的那一处。
+
+### 5.3 本地能力也是 binding
+
+`video.concat` 需要有东西「提供」它，而 manifest 的 `transport` 本来就留了 `local`：
+
+```toml
+# src/media_ai/bindings/local.toml
+[provider]
+name      = "local"
+transport = "local"
+adapter   = "media_ai.providers.local:LocalAdapter"
+
+[provider.auth]
+kind = "none"                       # 不需要凭据
+
+[[binding]]
+id       = "local/ffmpeg"
+provider = "local"
+model    = "ffmpeg"
+scenes   = ["video.concat"]
+```
+
+几件事因此同时对齐：
+
+- **向导的「本地工具」分组是推导出来的**：`auth.kind = "none"` 的 binding 不问凭据——不需要给
+  skill 新增一个「这是什么」的声明字段（见 §8）
+- **`mock` 归位**：它本就是一条 `transport = "local"` 的 binding，不再是寻址逻辑里的特例
+- **`[defaults]` 里 `video.concat` 只有一个候选**，向导自动填，用户无感
+- 将来加 trim / mux / transcode，是 `local/ffmpeg` 多几个 scene，不新开 skill、不新开 provider
 
 ## 6. 代码结构
 
@@ -419,6 +468,9 @@ media-ai capabilities --binding volc-ark/seedance-2.0
 
 结构仍是「先问完，再一次性写」（现有设计正确，保留），但**问题清单全部由 manifest 生成**：
 
+0. **本地工具** —— `auth.kind = "none"` 的 binding（`local/ffmpeg`、`mock`）单独一问：免费、离线、
+   不碰凭据。今天 `media-ai-concat` 跟 `media-ai-image` 并排出现在同一个多选题里，但选前者什么
+   都不问、选后者要接着问三个凭据——**两种性质完全不同的决策长得一模一样**。分开问就解决了
 1. **你要做什么** —— 能力域多选（图片 / 视频 / 语音 / 音乐 / 音效）→ 决定装哪些 skill
 2. **每个能力域用哪些接入** —— 从 manifest 列出支持该域 scene 的所有 binding，多选
 3. **对每条选中的 binding**，逐条问：
@@ -431,6 +483,18 @@ media-ai capabilities --binding volc-ark/seedance-2.0
 第 3 步是 D1 的直接体现：同一 provider 下选了三个模型就问三遍凭据。向导会显示
 「上一条用的是 `env://ARK_API_KEY`」作为提示，但**不会替你复用**——复用是你手打同一个引用的
 结果，不是系统替你决定的。
+
+**这个分组不需要给 skill 新增声明字段。** 一度考虑过在 `metadata.install` 里加一个 `kind`
+（`generate` / `local-tool` / `mechanism` / `meta`），但它 100% 能从已有数据推导出来：`meta` 就是
+`tier: core`，`mechanism` 就是 `tier: dependency`，`generate` 是「optional 且有 scene」，
+`local-tool` 是「optional 且无 scene」。`cli/_discovery.py` 已经在做同一个推导——
+`operations_for_skill("media-ai-concat")` 返回空集，所以它自动不进凭据询问，那个模块的 docstring
+写得很明确：*"The provider mapping is **derived, never hardcoded**"*。加一个声明字段等于把推导退回
+成一张要维护的表，会漂移。
+
+`media-ai-job` 的依赖同理：现在 `media-ai-video` 里硬编码了 `needs: ["media-ai-job"]`，但异步不是
+video 独有的——manifest 里每条 binding 都有 `constraints.async`。规则改成**任何已配置的 binding
+声明了 `async = true` 就装 job skill**，那行硬编码删掉。
 
 `doctor` 逐 binding 体检（严格离线）：manifest 是否存在 → adapter 能否导入 → `credential`
 引用能否解析（只判存在，不 reveal）→ 声明的 scene 在 adapter 是否有实现 → `[defaults]` 指向的
@@ -445,6 +509,7 @@ media-ai-video/
   SKILL.md                                    # 能力域主入口：机器契约、scene 选择、默认链路
   references/
     scenes.md                                 # 各 scene 的输入组合与判断方法
+    concat.md                                 # 拼接成片（原 media-ai-concat）
     bindings/volc-ark.seedance-2.0.md         # 该 binding 特有的参数与 prompt 技巧
     bindings/gemini.veo-3.1.md
 ```
@@ -452,6 +517,26 @@ media-ai-video/
 - 主 SKILL.md 的示例命令**不带 `--provider`/`--model`**（D2 的意义所在）
 - binding 片段的**参数表由 manifest 生成**，prompt 技巧人写
 - 安装时按已配置的 binding 决定装哪些片段——没配 Veo 就不装 Veo 的片段，上下文不浪费
+
+### 9.1 skill 从 10 个降到 9 个：concat 并入 video
+
+`media-ai-concat` 是 **video-only** 的：`cli/concat.py` 输出 `"modality": "video"` /
+`"operation": "video.concat"`，它自己的 SKILL.md 也写着 *"Typically the last step after generating
+per-shot clips with the `media-ai-video` skill"*。它从来就是 video 工作流的最后一步，被切成独立
+skill 是按 CLI 命令组切分的副产物。
+
+**`media-ai concat` 命令本身不动**（机器契约不受影响），只是文档归属并入 `media-ai-video`，
+`media-ai-concat/` 目录删除。最大的收益不是少一个目录，是**少一次 skill 触发**：Agent 生成完
+5 段 clip，「怎么拼」就在它刚读过的那个 skill 里。
+
+**speech / music / sound 保持三个，不合并。** 三者参数几乎零交集（speech 是选角：`--voice` /
+cast / timestamps；music 是作曲：`--plan` / `--duration-ms` 3s–600s；sound 是单个音效：0.5–30s /
+`loop` / `prompt_influence`），触发词也没交集。合并会让 Agent 每次读都跳过三分之二——skill 的成本
+就是上下文。真正重复的部分（机器契约、binding 寻址、输出格式）由 `media-ai-shared` 这个 core skill
+吸收。
+
+最终 9 个：`image` · `video`（含 concat）· `speech` · `music` · `sound` · `job` · `shared` ·
+`capabilities` · `usage`。
 
 ## 10. 淘汰清单（D5）
 
@@ -468,12 +553,16 @@ media-ai-video/
 能跑的（只有 gpt-image 支持），但没有实际需求，留着就要一直维护它在每个新 image binding 上的
 「支持/不支持」判断。见 §3。
 
+**删 skill 目录**：`media-ai-concat/`，内容并入 `media-ai-video/references/concat.md`
+（`media-ai concat` **命令保留**，见 §9.1）。
+
 ## 11. 第一批 binding 清单
 
 | Binding | model_id | 场景 | `verified` |
 |---|---|---|---|
-| `volc-ark/seedream-4.5` | `doubao-seedream-4-5-251128` | image.text_to_image, image_to_image | 空 |
-| `volc-ark/seedream-5` | **待补** | **待补** | 空 |
+| `volc-ark/seedream-5.0-pro` | `doubao-seedream-5-0-pro-260628` | image.text_to_image, image.image_to_image | 空 |
+| `volc-ark/seedream-5.0-lite` | `doubao-seedream-5-0-260128` | image.text_to_image, image.image_to_image | 空 |
+| `volc-ark/seedream-4.5` | `doubao-seedream-4-5-251128` | image.text_to_image, image.image_to_image | 空 |
 | `volc-ark/seedance-2.0` | `doubao-seedance-2-0-260128` | video.{text,image,keyframe,reference}_to_video | 空 |
 | `gemini/nano-banana-2` | `gemini-3.1-flash-image` | image.text_to_image, image_to_image | 2026-07-12 |
 | `gemini/veo-3.1` | `veo-3.1-generate-preview` | video.{text,image,keyframe,reference}_to_video, video.extend | 空 |
@@ -488,6 +577,58 @@ media-ai-video/
 `verified` 依据 `docs/LIVE_TESTS.md`：**Volc Ark 整个 provider 从未真实验证过**（当时无 key）；
 ElevenLabs 只验证过 `speech generate` + `eleven_multilingual_v2` 一条，dialogue / timestamps /
 music / sound 都标着 not yet exercised。这些如实填空，不补日期。
+
+### 11.1 Seedream 系列：binding 级 constraints 的第一个验证案例
+
+三个 Seedream 共用同一个端点（`POST /images/generations`）、同一套鉴权，但**每一项参数约束都不同**：
+
+| | 5.0 pro | 5.0 lite | 4.5 |
+|---|---|---|---|
+| model_id | `doubao-seedream-5-0-pro-260628` | `doubao-seedream-5-0-260128` | `doubao-seedream-4-5-251128` |
+| 分辨率档位 | 1K, 2K | 2K, 3K, 4K | 2K, 4K |
+| 输出格式 | png, jpeg | png, jpeg | **jpeg only** |
+| 文生组图 / 图生组图 | ✗ | ✓ | ✓ |
+| 交互编辑（坐标/标记） | ✓ | ✗ | ✗ |
+| 流式输出 | ✗ | ✓ | ✓ |
+| 联网搜索 | ✗ | ✓ | ✗ |
+| 参考图上限 | 10 | 参考图 + 输出 ≤ 15 | 参考图 + 输出 ≤ 15 |
+| 提示词优化模式 | standard, fast | standard | standard |
+| 像素方式总像素区间 | [921600, 4624220] | 待补 | 待补 |
+
+**现有代码把这三套压成了一套硬编码**（`providers/volc.py` 的 `_capabilities_for`），而且每一项都
+和文档对不上：
+
+- `named_sizes=("1K","2K","4K")` —— 三个模型分别是 1K/2K、2K/3K/4K、2K/4K，没有一个匹配
+- `output_formats=("png",)` —— 4.5 只出 jpeg，而且 adapter 根本没发 `output_format` 字段：
+  `--output x.png` 拿到的其实是 jpeg 字节，扩展名是错的
+- `max_references=9` —— 5.0 pro 是 10，4.5/5.0 lite 是「参考图 + 输出 ≤ 15」的联合约束
+- `max_count=15` —— 5.0 pro 不支持组图
+- `_ARK_MIN_IMAGE_PIXELS = 2560*1440` 的「低于就回退成 2K」—— 5.0 pro 的下限是 `1280x720`
+
+**这些不是跨 provider 的差异，是同一个 provider 内部三个兄弟模型的差异**，一套 caps 就已经装不下
+了。这是 §5 binding 级 constraints 最直接的存在理由。
+
+顺带给「兄弟模型 = 纯数据、零代码」这个承诺划出边界：**它成立，但有一处例外。**
+`optimize_prompt_options.mode`（standard / fast）是 5.0 pro 独有的新请求字段。按本项目既有约定，
+provider 特有的旋钮走 `--option`：声明 `constraints.options = ["optimize_prompt_mode"]`，adapter
+里加一行透传。**所以是「一条 manifest + 一行代码」，不是零代码**——如果 adapter 做成通用的
+option→body 透传，才真的是零。这个取舍留到 P2 决定。
+
+新增 `constraints.inputs` 描述**输入**约束（现有 `ModelCapabilities` 只描述输出）：
+
+```toml
+[binding.constraints.inputs]
+formats     = ["jpeg", "png", "webp", "bmp", "tiff", "gif", "heic", "heif"]
+max_bytes   = 31457280          # 30 MB
+max_pixels  = 36000000          # 6000x6000
+min_edge    = 15                # 文档：宽高长度 > 14 px
+ratio_range = [0.0625, 16]      # [1/16, 16]
+```
+
+有了它，一张 40 MB 的参考图在**联网前**就被拒，而不是花一次调用换一个 400。
+
+**待补**：5.0 pro 的「支持生成单图/多张图层」——「图层」是什么形态的产物、走哪个字段，文档没写，
+先留空并在 manifest 的 `notes` 里标 TODO；5.0 lite 的「联网搜索」开关字段名同理。**不猜。**
 
 ## 12. 实施阶段
 
@@ -505,10 +646,13 @@ music / sound 都标着 not yet exercised。这些如实填空，不补日期。
 
 ## 13. 待补 / 遗留
 
-- **Seedream 5 规格**：真实 model id、支持的场景、几何约束、是否与 4.5 同 wire。按新规范，
-  这四项就是 manifest 的必填字段
+- **Seedream 5.0 pro 的「多张图层」输出**、**5.0 lite 的联网搜索开关字段名**、两者的像素区间
+  ——文档未给，manifest 里留空 + `notes` 标 TODO（§11.1）
+- **`optimize_prompt_mode` 的透传方式**：adapter 逐个 option 显式映射，还是做通用的
+  option→body 透传。前者安全、后者才真的「零代码接兄弟模型」。P2 决定
 - **内部 RPC 平台**：`transport = "rpc"` + `auth.kind = "custom"` 的口子已留；具体 adapter 在
   内部仓库实现，通过 `media_ai.bindings` 入口点注册 manifest
 - **多账号 / 多区域**：`extends` 已覆盖，无需额外设计（§4.2 用例 1）
-- **`schema_version`**：结果 JSON 形状会因 `error.code` / `error.hint` 与 `meta.binding` 变化，
-  `core/result.py` 的 `SCHEMA_VERSION` 需要 bump
+- **`schema_version`**：结果 JSON 形状会因 `error.code` / `error.hint` 与 `meta.scene` /
+  `meta.binding` 变化，`core/result.py` 的 `SCHEMA_VERSION` 需要 bump
+- **Seedance 2.0 之外的 Volc 视频模型**：本轮不接（原「Seedance 5」是笔误）
