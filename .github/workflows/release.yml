@@ -67,10 +67,13 @@ jobs:
       # The whole point of releasing from CI: the tag can only land on a tree that
       # passed everything, including the installer's own checks.
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
 
       - name: Test (offline — no creds, no network)
         run: uv run pytest -q -m "not live"
+
+      - name: Lint the workflows
+        run: uv run actionlint
 
       - name: Lint the installer
         run: shellcheck install/install.sh install/test_parse.sh
@@ -86,26 +89,12 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # Two files: the one declaration (pyproject reads it) and the installer's
-          # fallback git ref, which is a tag name rather than a package version.
-          # tests/test_version.py fails if they ever disagree, and it runs below.
-          python - <<'PY'
-          import os, pathlib, re
-          version = os.environ["VERSION"]
-          init = pathlib.Path("src/media_ai/__init__.py")
-          init.write_text(
-              re.sub(r'^__version__ = ".*"$', f'__version__ = "{version}"', init.read_text(), flags=re.M)
-          )
-          sh = pathlib.Path("install/install.sh")
-          sh.write_text(
-              re.sub(
-                  r'^DEFAULT_VERSION="\$\{MEDIA_AI_DEFAULT_VERSION:-[^}]+\}"$',
-                  f'DEFAULT_VERSION="${{MEDIA_AI_DEFAULT_VERSION:-v{version}}}"',
-                  sh.read_text(),
-                  flags=re.M,
-              )
-          )
-          PY
+          # A script rather than an inline heredoc: this step would otherwise be three
+          # levels of quoting deep (YAML block scalar → shell → Python), and the
+          # inline version broke the whole workflow file — an f-string's escaped brace
+          # produced a dollar-brace-brace sequence, which GitHub reads as one of its
+          # own expressions wherever it appears, comments included.
+          python scripts/bump_version.py "$VERSION"
           git --no-pager diff --stat
 
       - name: Check the bump landed everywhere

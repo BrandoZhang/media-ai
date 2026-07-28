@@ -152,12 +152,20 @@ automatically on merge to `main` later, uncomment the `push:` trigger in the fil
 ## Before you push
 
 ```bash
-uv run ruff check src tests
+uv run ruff check src tests scripts
 uv run pytest -q
+uv run actionlint          # only if you touched .github/workflows/
 ```
 
-Both must be green. The suite is fully **offline** — no credentials, no network —
-and CI runs the same `ruff` + `pytest`.
+All must be green. The suite is fully **offline** — no credentials, no network —
+and CI runs the same checks.
+
+`actionlint` is worth the extra command when you edit a workflow: a file GitHub
+rejects does not fail a *step*, it fails as a run with **no jobs**, named after the
+file path instead of the workflow — and nothing else here catches it, because the
+file is still valid YAML. The usual cause is a literal `$`+`{{` appearing anywhere in
+the file, comments included: GitHub evaluates its own expressions on the raw text
+before the runner ever sees it.
 
 ## Releasing
 
@@ -165,9 +173,10 @@ and CI runs the same `ruff` + `pytest`.
 leading `v` (e.g. `0.3.0`). That is the whole procedure. The workflow
 ([`.github/workflows/release.yml`](../.github/workflows/release.yml)) runs the full
 suite, `shellcheck`, and the installer's own tests *before* it touches anything, then
-bumps the version, commits, tags `v0.3.0`, builds the sdist + wheel, and publishes a
-GitHub Release with generated notes and the distributions attached. Tick **dry run**
-to see everything except the push.
+bumps the version (via [`scripts/bump_version.py`](../scripts/bump_version.py)),
+commits, tags `v0.3.0`, builds the sdist + wheel, and publishes a GitHub Release with
+generated notes and the distributions attached. Tick **dry run** to see everything
+except the push.
 
 It refuses to start if the version is malformed, if the tag already exists, or if it
 was launched from a branch other than the default one — it tags whatever ref it runs

@@ -28,7 +28,7 @@ keychain = ["keyring>=24"]
 # Dev tooling for the uv workflow (installed by default by `uv sync`).
 # The `test` extra above is kept for the pip / CI path.
 [dependency-groups]
-dev = ["pytest>=7", "ruff>=0.6"]
+dev = ["pytest>=7", "ruff>=0.6", "actionlint-py>=1.7"]
 
 [tool.setuptools.dynamic]
 version = { attr = "media_ai.__version__" }
