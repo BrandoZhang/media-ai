@@ -275,10 +275,47 @@ class ElevenLabsAdapter(HttpAdapter):
 
     # ---- errors ----------------------------------------------------------
     def _error(self, status: int, body: str) -> MediaError:
+        code, message, details = _parse_error(body)
+        if status == 402:
+            # A valid key can lack entitlement for a product API (for example Music
+            # on a free plan). Retrying the same request cannot change that, and it
+            # belongs with credentials/permissions rather than upstream failures.
+            return MediaError(
+                f"ElevenLabs {code or 'payment_required'}: {message}",
+                category=ErrorCategory.AUTH,
+                code=code or "payment_required",
+                retryable=False,
+                provider=self.name,
+                details={"status": status, **details},
+                hint="upgrade the ElevenLabs plan or enable this product API for the key",
+            )
         cat = {400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
                404: ErrorCategory.NOT_FOUND, 422: ErrorCategory.VALIDATION,
                429: ErrorCategory.RATE_LIMIT}.get(status, ErrorCategory.PROVIDER)
-        return MediaError(f"ElevenLabs HTTP {status}: {body}", category=cat, provider=self.name, details={"status": status})
+        return MediaError(f"ElevenLabs HTTP {status}: {body}", category=cat, code=code,
+                          provider=self.name, details={"status": status, **details})
+
+
+def _parse_error(body: str) -> tuple[str | None, str, dict]:
+    """Extract ElevenLabs's nested ``detail`` error without trusting its shape."""
+    try:
+        raw = json.loads(body)
+    except (TypeError, ValueError):
+        return None, body, {}
+    detail = raw.get("detail") if isinstance(raw, dict) else None
+    if not isinstance(detail, dict):
+        return None, body, {}
+    code = detail.get("code") or detail.get("type")
+    message = detail.get("message") or body
+    details = {
+        key: detail[key]
+        for key in ("type", "request_id")
+        if detail.get(key) is not None
+    }
+    if detail.get("status") is not None:
+        # ``status`` is already the integer HTTP status in MediaError.details.
+        details["provider_status"] = detail["status"]
+    return str(code) if code is not None else None, str(message), details
 
 
 def _parse_multipart(body: bytes) -> tuple[dict | None, bytes | None]:

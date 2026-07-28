@@ -29,7 +29,7 @@ id       = "elevenlabs/eleven-multilingual-v2"
 model    = "eleven-multilingual-v2"
 model_id = "eleven_multilingual_v2"
 title    = "Eleven Multilingual v2"
-verified = "2026-07-12"
+verified = "2026-07-28"
 scenes   = ["speech.text_to_speech"]
 notes    = [
   "timestamps switch to the /with-timestamps endpoint and write a sidecar as a second artifact",
@@ -65,6 +65,7 @@ id       = "elevenlabs/eleven-v3"
 model    = "eleven-v3"
 model_id = "eleven_v3"
 title    = "Eleven v3"
+verified = "2026-07-28"
 scenes   = ["speech.dialogue"]
 notes    = [
   "no global director instruction — that is Gemini TTS only",
@@ -136,6 +137,7 @@ id       = "elevenlabs/sound-v2"
 model    = "sound-v2"
 model_id = "eleven_text_to_sound_v2"
 title    = "ElevenLabs Text to Sound v2"
+verified = "2026-07-28"
 scenes   = ["sound.text_to_sound"]
 
 [binding.constraints]

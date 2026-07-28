@@ -159,6 +159,21 @@ def test_error_mapping():
     assert prov._error(500, "boom").category == ErrorCategory.PROVIDER
 
 
+def test_payment_required_is_an_actionable_non_retryable_entitlement_error():
+    prov = adapter_for("elevenlabs/music-v2")
+    err = prov._error(
+        402,
+        '{"detail":{"type":"payment_required","code":"paid_plan_required",'
+        '"message":"Music API is not available for free users.","status":"limited_access"}}',
+    )
+    assert err.category == ErrorCategory.AUTH
+    assert err.code == "paid_plan_required"
+    assert err.retryable is False
+    assert err.details["status"] == 402
+    assert err.details["provider_status"] == "limited_access"
+    assert "upgrade" in (err.hint or "")
+
+
 def test_a_residency_endpoint_is_set_per_binding_not_per_process(monkeypatch):
     """Two regions are two bindings, so the endpoint belongs to the binding.
 
