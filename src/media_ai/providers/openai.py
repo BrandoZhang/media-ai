@@ -10,26 +10,24 @@ and GPT Image supersedes them. OpenAI also exposes no video API here (Sora is no
 public), so a ``video generate --provider openai`` request fails the pre-flight
 capability check with a deterministic ``unsupported`` error.
 
-Verified against developers.openai.com / platform.openai.com. Auth: ``OPENAI_API_KEY``.
+Verified against developers.openai.com / platform.openai.com.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import os
 from pathlib import Path
 
-from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation
+from ..core.types import Operation
 from ..core.errors import ErrorCategory, MediaError
-from ..core.modelspec import apply_spec
 from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
+from ..core.scene import Scene
 from ..core.result import Artifact, GenerationResult
-from ..core.types import ImageRequest, Modality
+from ..core.types import ImageRequest
 from ..core.usage import record_usage
-from ._base import HttpProvider
-from ._catalog import OPENAI
+from ._base import HttpAdapter
 
 # GPT Image accepts a fixed size enum on the pre-gpt-image-2 models; gpt-image-2
 # takes an arbitrary size subject to the constraints declared in `capabilities`.
@@ -47,81 +45,39 @@ _GI2_MAX_EDGE_RATIO = 3.0
 _SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp"}
 
 
-def _is_gpt_image_2(model: str) -> bool:
-    """Whether a model takes arbitrary sizes, per the catalogue rather than its name.
+class OpenAIAdapter(HttpAdapter):
 
-    Was ``startswith("gpt-image-2")``, which quietly made every future id a non-match.
-    """
-    spec = OPENAI.get(model)
-    return bool(spec and spec.caps.get("arbitrary_sizes"))
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset({Scene.IMAGE_TEXT_TO_IMAGE, Scene.IMAGE_IMAGE_TO_IMAGE})
 
+    def _scoping_headers(self) -> dict:
+        """Optional org/project scoping, declared on the binding rather than the shell.
 
-def _supports_input_fidelity(model: str) -> bool:
-    """``input_fidelity`` is a knob only some tiers expose — gpt-image-2 processes
-    inputs at high fidelity and rejects the parameter, and the mini tier lacks it."""
-    spec = OPENAI.get(model)
-    return bool(spec and spec.caps.get("input_fidelity"))
+        Two accounts billing different projects are two bindings, so the header belongs
+        to the binding — read from the environment it was global to the process and
+        could not differ between them.
+        """
+        return {
+            header: value
+            for header, key in (("OpenAI-Organization", "org"), ("OpenAI-Project", "project"))
+            if (value := self.option(key))
+        }
 
+    @property
+    def arbitrary_sizes(self) -> bool:
+        """Whether this tier takes any size, or only a fixed enum.
 
-class OpenAIProvider(HttpProvider):
-    name = "openai"
-    catalog = OPENAI
-    auth_scheme = "bearer"
-    # `dall-e`/`sora` route here only to return a clear unsupported/removal error (the
-    # provider is GPT-Image-only); the catalogue marks them removed.
-    model_hints = ("gpt-image", "dall-e", "sora")
-
-    def __init__(self, *, credentials=None, config=None) -> None:
-        super().__init__(credentials=credentials, config=config)
-        self.base_url = (self.config.get("base_url") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-        self.image_model = self.config.get("image_model") or os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
+        Read from the binding's declared geometry rather than from the model id: the
+        old test was ``startswith("gpt-image-2")``, which quietly made every future id
+        a non-match.
+        """
+        return not self.constraints.geometry.pixel_sizes
 
     def _auth(self, cred):
         base, headers = super()._auth(cred)
-        if os.getenv("OPENAI_ORG"):
-            headers["OpenAI-Organization"] = os.environ["OPENAI_ORG"]
-        if os.getenv("OPENAI_PROJECT"):
-            headers["OpenAI-Project"] = os.environ["OPENAI_PROJECT"]
-        return base, headers
+        return base, {**headers, **self._scoping_headers()}
 
     # ---- discovery -------------------------------------------------------
-    def models(self) -> list[str]:
-        return OPENAI.discoverable_ids()
-
-    def default_model(self, modality: Modality | None) -> str | None:
-        # Image-only provider: no default video model.
-        return None if modality == Modality.VIDEO else self.image_model
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        model = model or self.image_model
-        spec = OPENAI.require(model)   # raises for a removed model, naming its replacement
-        arbitrary = _is_gpt_image_2(model)
-        options = ("moderation", "output_compression")
-        if _supports_input_fidelity(model):
-            options += ("input_fidelity",)
-        return apply_spec(ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(
-                operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.BOTH,
-                # `_size` maps any aspect ratio (landscape/portrait/square), so don't
-                # pre-reject ratios; the pixel size it produces is what's validated.
-                aspect_ratios=(),
-                named_sizes=(),
-                pixel_sizes=() if arbitrary else _FIXED_GPT_SIZES,
-                pixel_multiple=_GI2_PIXEL_MULTIPLE if arbitrary else None,
-                pixel_max=(_GI2_MAX_EDGE, _GI2_MAX_EDGE) if arbitrary else None,
-                pixel_total_min=_GI2_TOTAL_MIN if arbitrary else None,
-                pixel_total_max=_GI2_TOTAL_MAX if arbitrary else None,
-                max_edge_ratio=_GI2_MAX_EDGE_RATIO if arbitrary else None,
-                max_count=10, output_formats=("png", "jpeg", "webp"),
-                supports_quality=True,
-                supports_transparency=not arbitrary,  # gpt-image-2 rejects transparent
-                supports_mask=True, max_references=16,
-                options=options,
-            ),
-        ), spec)
-
     # ---- size mapping ----------------------------------------------------
     def _size(self, model: str, req: ImageRequest) -> str:
         geo = req.geometry
@@ -138,7 +94,7 @@ class OpenAIProvider(HttpProvider):
                 ) from None
             landscape = fa > fb
             portrait = fa < fb
-            if _is_gpt_image_2(model):  # arbitrary sizes → pick a documented tier
+            if self.arbitrary_sizes:  # arbitrary sizes → pick a documented tier
                 tier = (geo.resolution or "").lower()
                 if landscape:
                     return {"4k": "3840x2160", "2k": "2048x1152"}.get(tier, "1536x1024")
@@ -155,7 +111,6 @@ class OpenAIProvider(HttpProvider):
         # Refuse a retired model here as well as in capabilities(), so the two agree:
         # a caller must never be able to send a request for something discovery says
         # is gone.
-        OPENAI.require(model)
         client, headers = self._prepare()
         if req.operation == Operation.IMAGE_EDIT or req.references or req.mask:
             data = self._edit(client, headers, model, req)
@@ -199,7 +154,7 @@ class OpenAIProvider(HttpProvider):
                 fields[k] = req.options[k]
         # input_fidelity is a knob only on gpt-image-1 / gpt-image-1.5; never
         # forward it to a model that rejects it (gpt-image-2, mini).
-        if "input_fidelity" in req.options and _supports_input_fidelity(model):
+        if "input_fidelity" in req.options and "input_fidelity" in self.constraints.options:
             fields["input_fidelity"] = req.options["input_fidelity"]
         return fields
 

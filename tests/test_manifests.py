@@ -6,11 +6,10 @@ and how it authenticates — and these tests fail if any of that is missing, mal
 or contradicts itself. What used to be a paragraph in a contributing guide is a set
 of assertions.
 
-Two checks are deliberately absent until the adapter interface lands: that every
-``provider.adapter`` imports, and that each adapter implements the scenes its
-bindings declare. Both need the ``Adapter`` base class, so they arrive with it.
-Until then :func:`test_adapter_reference_is_well_formed` pins the *shape* of the
-reference, which is what can be checked without the class existing.
+The two checks that matter most are the ones tying data to code: every
+``provider.adapter`` must import, and it must implement every scene the manifests
+name. Without them a manifest could promise anything — the failure mode a
+declarative layer invites, caught here where it is free rather than at a call.
 """
 
 from __future__ import annotations
@@ -79,10 +78,28 @@ def test_deprecated_bindings_name_a_replacement(binding_id):
 
 
 @pytest.mark.parametrize("provider_name", sorted(builtin_catalog().providers))
-def test_adapter_reference_is_well_formed(provider_name):
-    module, _, cls = CATALOG.providers[provider_name].adapter.partition(":")
-    assert module.startswith("media_ai.") or "." in module
-    assert cls and cls[0].isupper()
+def test_the_declared_adapter_imports(provider_name):
+    from media_ai.core.adapter import Adapter
+    from media_ai.core.registry import load_adapter_class
+
+    cls = load_adapter_class(CATALOG.providers[provider_name].adapter)
+    assert issubclass(cls, Adapter)
+
+
+@pytest.mark.parametrize("binding_id", BINDING_IDS)
+def test_every_declared_scene_is_implemented(binding_id):
+    """A manifest cannot advertise a scene whose code was never written.
+
+    This is the join between the two halves of a backend. The declaration is free to
+    write and the implementation is not, so nothing but a test keeps them honest.
+    """
+    from media_ai.core.registry import load_adapter_class
+
+    b = CATALOG.get(binding_id)
+    adapter = load_adapter_class(CATALOG.providers[b.provider].adapter)
+    implemented = adapter.supported_scenes(adapter.__new__(adapter))
+    missing = sorted(s.value for s in b.scenes - implemented)
+    assert not missing, f"{binding_id} declares scenes its adapter does not implement: {missing}"
 
 
 @pytest.mark.parametrize("provider_name", sorted(builtin_catalog().providers))

@@ -13,156 +13,70 @@ https://www.volcengine.com/docs/82379/1520757 ; query 1521309 ; cancel 1521720.
 from __future__ import annotations
 
 import base64
-import os
 import signal
 import time
-from dataclasses import replace
 from pathlib import Path
 
-from ..core.capabilities import GeometryMode, ImageCaps, ModelCapabilities, Operation, VideoCaps
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import normalize_ratio
-from ..core.modelspec import apply_spec
 from ..core.mediaref import to_data_uri
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
-from ..core.types import ImageRequest, JobRef, Modality, VideoRequest
+from ..core.scene import Scene
+from ..core.types import ImageRequest, JobRef, VideoRequest
 from ..core.usage import record_usage
-from ._base import HttpProvider
-from ._catalog import VOLC
-from ._volc_errors import classify, parse_error_body, task_failure_error, to_media_error
+from ._base import HttpAdapter
+from ._volc_ark_errors import classify, parse_error_body, task_failure_error, to_media_error
 
-_ARK_MIN_IMAGE_PIXELS = 2560 * 1440  # Seedream method-2 floor
+_DEFAULT_TIER = "2K"  # what a request with no geometry asks Ark for
 _TERMINAL = {"succeeded", "failed", "cancelled", "canceled", "expired"}
 
 
-class VolcProvider(HttpProvider):
-    name = "volc-ark"
-    catalog = VOLC
-    auth_scheme = "bearer"
+class VolcArkAdapter(HttpAdapter):
+    """Ark's wire: images are synchronous, video is a task you create, poll and cancel.
 
-    def __init__(self, *, credentials=None, config=None) -> None:
-        super().__init__(credentials=credentials, config=config)
-        # `or` (not getenv defaults) so a set-but-empty env var (e.g. an unset CI
-        # secret, which GitHub materializes as "") falls back to the default.
-        self.base_url = (self.config.get("base_url") or os.getenv("ARK_BASE_URL")
-                         or "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
-        self.image_model = self.config.get("image_model") or os.getenv("ARK_IMAGE_MODEL") or "doubao-seedream-4-5-251128"
-        self.video_model = self.config.get("video_model") or os.getenv("ARK_VIDEO_MODEL") or "doubao-seedance-2-0-260128"
-        self.poll_interval = float(os.getenv("ARK_POLL_INTERVAL", "5") or 5)
-        self.poll_timeout = float(os.getenv("ARK_POLL_TIMEOUT", "900") or 900)
+    The binding says which of those this is — its declared scenes do — so nothing here
+    guesses a modality from the model id. That guess is what made an ``ep-…`` custom
+    endpoint ambiguous: the same id claimed image editing when asked about images and
+    video generation when asked about video, because the only input was the caller's
+    question. A binding answers it before the call.
+    """
 
-    # ---- discovery -------------------------------------------------------
-    def models(self) -> list[str]:
-        return [self.image_model, self.video_model]
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset({
+            Scene.IMAGE_TEXT_TO_IMAGE, Scene.IMAGE_IMAGE_TO_IMAGE,
+            Scene.VIDEO_TEXT_TO_VIDEO, Scene.VIDEO_IMAGE_TO_VIDEO,
+            Scene.VIDEO_KEYFRAME_TO_VIDEO, Scene.VIDEO_REFERENCE_TO_VIDEO,
+        })
 
-    def default_model(self, modality: Modality | None) -> str:
-        return self.video_model if modality == Modality.VIDEO else self.image_model
+    @property
+    def poll_interval(self) -> float:
+        return self.float_option("poll_interval", 5.0)
 
-    @staticmethod
-    def _is_endpoint(model: str) -> bool:
-        # Ark custom inference endpoint IDs look like ``ep-20260214051115-zrbtw``
-        # and encode neither modality nor geometry constraints.
-        return model.lower().startswith("ep-")
-
-    def _is_video_model(self, model: str, modality: Modality | None = None) -> bool:
-        backing = self.backing_model(model)
-        if backing != model:
-            # A mapped endpoint is classified by the model it actually serves, so the
-            # answer no longer depends on what the caller happened to ask for. Same
-            # test as the unmapped path below — a configured video model that is not in
-            # the catalogue must be recognised through either route.
-            return self._catalog_is_video(backing) or backing == self.video_model
-        # Trust the modality the command declared; only guess from the name during
-        # discovery (modality is None), which is best-effort.
-        if modality is not None:
-            return modality == Modality.VIDEO
-        return self._catalog_is_video(model) or model == self.video_model
-
-    @staticmethod
-    def _catalog_is_video(model: str) -> bool:
-        """Modality from the catalogue rather than a `"seedance" in name` test."""
-        spec = VOLC.get(model)
-        return bool(spec and spec.caps.get("modality") == "video")
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        model = model or self.image_model
-        # An endpoint id names a *deployment*, not a model, so it carries no capability
-        # information of its own. If the user mapped it (see Provider.backing_model)
-        # the real model's constraints apply; otherwise we can't know the underlying
-        # version, so leave geometry unconstrained and let the Ark API be the authority
-        # rather than pre-rejecting a valid request (fail open, not closed).
-        backing = self.backing_model(model)
-        endpoint = self._is_endpoint(model) and backing == model
-        note = (
-            "custom endpoint ID: modality is taken from the requested command and "
-            "geometry is validated by the Ark API, not pre-checked"
-            if endpoint else None
-        )
-        if backing != model:
-            # Classify by the real model *name*, not the requested modality: the whole
-            # point of the mapping is that we no longer have to take the caller's word
-            # for what an opaque id can do.
-            resolved = self._capabilities_for(backing, None)
-            # Inherit the backing model's lifecycle too. Mapping an endpoint onto a
-            # deprecated model is exactly when someone needs to be told, and reporting
-            # the endpoint as `ga` would hide it behind the indirection.
-            apply_spec(resolved, VOLC.get(backing))
-            return replace(resolved, model=model, notes=resolved.notes + (f"custom endpoint for {backing}",))
-        return apply_spec(self._capabilities_for(model, modality, endpoint=endpoint, note=note),
-                          VOLC.get(model))
-
-    def _capabilities_for(
-        self, model: str, modality: Modality | None = None, *, endpoint: bool = False, note: str | None = None
-    ) -> ModelCapabilities:
-        if self._is_video_model(model, modality):
-            return ModelCapabilities(
-                provider=self.name, model=model, modalities=frozenset({Modality.VIDEO}),
-                video=VideoCaps(
-                    is_async=True,
-                    aspect_ratios=() if endpoint else ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"),
-                    resolutions=() if endpoint else ("480p", "720p", "1080p"),
-                    durations=(),  # model-version specific; left unconstrained
-                    supports_first_frame=True, supports_last_frame=True,
-                    supports_reference_images=True, supports_reference_videos=True,
-                    supports_reference_audios=True, supports_seed=True, supports_audio=True,
-                    supports_watermark_control=True, supports_return_last_frame=True,
-                    options=("camera_fixed",),
-                ),
-                # Notes for a catalogued model come from its spec via apply_spec;
-                # repeating them here printed every one twice.
-                notes=(note,) if note else (),
-            )
-        return ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(
-                operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.BOTH,
-                aspect_ratios=() if endpoint else ("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
-                named_sizes=() if endpoint else ("1K", "2K", "4K"),
-                pixel_max=None if endpoint else (4096, 4096),
-                max_count=15, output_formats=("png",),
-                supports_seed=True, max_references=9, options=("watermark",),
-            ),
-            notes=(note,) if note else (),
-        )
+    @property
+    def poll_timeout(self) -> float:
+        return self.float_option("poll_timeout", 900.0)
 
     # ---- images ----------------------------------------------------------
     def _image_size(self, req: ImageRequest) -> str:
-        override = os.getenv("ARK_IMAGE_SIZE")
-        if override:
-            return override
+        """Pixels when the model accepts them, otherwise a named tier.
+
+        The floor comes from the binding rather than one constant for all of Ark:
+        Seedream 4.5 falls back to its 2K preset below 2560x1440, while 5.0 pro accepts
+        down to 1280x720. One number for both would silently coarsen a valid request.
+        """
         geo = req.geometry
+        floor = self.constraints.geometry.pixel_total_min or 0
         if geo and geo.mode == "pixels":
-            if geo.width * geo.height >= _ARK_MIN_IMAGE_PIXELS:  # type: ignore[operator]
+            if geo.width * geo.height >= floor:  # type: ignore[operator]
                 return f"{geo.width}x{geo.height}"
-            return "2K"
+            return _DEFAULT_TIER
         if geo and geo.resolution:
             return geo.resolution
-        return "2K"
+        return _DEFAULT_TIER
 
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         client, headers = self._prepare()
-        model_id = req.model or self.image_model
+        model_id = req.model or self.model_id
         body: dict = {
             "model": model_id, "prompt": req.prompt, "size": self._image_size(req),
             "response_format": "url", "watermark": bool(req.options.get("watermark", False)),
@@ -230,7 +144,7 @@ class VolcProvider(HttpProvider):
     def _create_task(self, req: VideoRequest, client, headers) -> str:
         geo = req.geometry
         body: dict = {
-            "model": req.model or self.video_model,
+            "model": req.model or self.model_id,
             "content": self._build_content(req),
             "resolution": (geo.resolution if geo else None) or "720p",
             "ratio": normalize_ratio(geo.aspect_ratio if geo else None) or "adaptive",
@@ -258,7 +172,7 @@ class VolcProvider(HttpProvider):
         client, headers = self._prepare()
         task_id = self._create_task(req, client, headers)
         if not req.wait:
-            return JobHandle(provider=self.name, model=req.model or self.video_model, id=task_id, output=str(req.output))
+            return JobHandle(provider=self.name, model=req.model or self.model_id, id=task_id, output=str(req.output))
         return self._poll(task_id, Path(req.output), client, headers, operation=req.operation.value)
 
     def _finalize(self, res: dict, out: Path, client, headers, *, task_id: str, operation: str) -> GenerationResult:
@@ -273,7 +187,7 @@ class VolcProvider(HttpProvider):
             client.download(content["last_frame_url"], lf)
             artifacts.append(Artifact.from_path(lf, "frame", mime="image/png", role="last_frame"))
         usage = res.get("usage") or {}
-        used_model = res.get("model") or self.video_model
+        used_model = res.get("model") or self.model_id
         record_usage({"tool": operation, "operation": operation, "provider": self.name, "model": used_model,
                       "kind": "video", "seconds": res.get("duration", 0),
                       "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0)})

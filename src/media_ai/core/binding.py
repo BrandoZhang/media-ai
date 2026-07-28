@@ -187,7 +187,11 @@ class References:
     input constraints were not, so an oversized reference image cost a round trip and
     a 400 to discover."""
 
-    max: int = 0
+    max: int | None = None
+    """Ceiling on how many references may be sent. ``None`` is *undeclared* and
+    unchecked; ``0`` is a real limit meaning this binding takes none. Defaulting it to
+    0 conflated the two — the same sentinel trap ``pixel_total`` avoided — and quietly
+    skipped the check for every binding that had not declared one."""
     formats: tuple[str, ...] = ()
     max_bytes: int | None = None
     max_pixels: int | None = None
@@ -206,7 +210,7 @@ class Audio:
     voices: tuple[str, ...] = ()
     default_voice: str | None = None
     formats: tuple[str, ...] = ()
-    max_dialogue_voices: int = 0
+    max_dialogue_voices: int | None = None
     max_characters: int | None = None
     duration_ms: tuple[int, int] | None = None  # music
     duration_s: tuple[float, float] | None = None  # sound effects
@@ -408,7 +412,7 @@ def _parse_constraints(raw: dict, source: str) -> Constraints:
             max_total_images=out.get("max_total_images"),
         ),
         references=References(
-            max=int(refs.get("max", 0)),
+            max=refs.get("max"),
             formats=_str_tuple(refs, "formats", source),
             max_bytes=refs.get("max_bytes"),
             max_pixels=refs.get("max_pixels"),
@@ -423,7 +427,7 @@ def _parse_constraints(raw: dict, source: str) -> Constraints:
             voices=_str_tuple(aud, "voices", source),
             default_voice=aud.get("default_voice"),
             formats=_str_tuple(aud, "formats", source),
-            max_dialogue_voices=int(aud.get("max_dialogue_voices", 0)),
+            max_dialogue_voices=aud.get("max_dialogue_voices"),
             max_characters=aud.get("max_characters"),
             duration_ms=_pair(aud, "duration_ms", source),
             duration_s=_pair(aud, "duration_s", source, cast=float),

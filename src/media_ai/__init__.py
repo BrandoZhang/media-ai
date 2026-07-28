@@ -2,8 +2,8 @@
 
 Public API for embedding and for writing **custom backends**::
 
-    from media_ai import register_manifest, Provider, HttpProvider
-    from media_ai import ModelCapabilities, ImageCaps, VideoCaps, Operation, Modality
+    from media_ai import register_manifest, Adapter, HttpAdapter
+    from media_ai import Scene, Operation, Modality, Constraints
     from media_ai import GenerationResult, Artifact, JobHandle, MediaError
 
 A backend is a **manifest** (what it can do) plus an **adapter** (how to call it).
@@ -17,17 +17,9 @@ anywhere — including a private package wrapping an internal RPC platform. See
 docs/EXTENDING.md.
 """
 
-from .core.capabilities import (
-    AudioCaps,
-    GeometryMode,
-    ImageCaps,
-    ModelCapabilities,
-    UnsupportedPolicy,
-    VideoCaps,
-    validate_request,
-)
+from .core.adapter import Adapter
+from .core.binding import BindingSpec, Constraints, ProviderSpec
 from .core.errors import ErrorCategory, MediaError
-from .core.provider import Provider
 from .core.registry import catalog, register_manifest, unregister_manifest
 from .core.retry import retry
 from .core.scene import Scene, derive_scene
@@ -47,7 +39,8 @@ from .core.types import (
     SpeechRequest,
     VideoRequest,
 )
-from .providers._base import HttpProvider
+from .core.validate import UnsupportedPolicy, validate_request
+from .providers._base import HttpAdapter
 
 __version__ = "0.3.0"
 
@@ -58,13 +51,11 @@ __all__ = [
     "retry",
     "Scene",
     "derive_scene",
-    "Provider",
-    "HttpProvider",
-    "ModelCapabilities",
-    "ImageCaps",
-    "VideoCaps",
-    "AudioCaps",
-    "GeometryMode",
+    "Adapter",
+    "HttpAdapter",
+    "BindingSpec",
+    "ProviderSpec",
+    "Constraints",
     "UnsupportedPolicy",
     "validate_request",
     "Modality",

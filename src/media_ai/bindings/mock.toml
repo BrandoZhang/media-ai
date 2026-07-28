@@ -11,7 +11,7 @@
 name      = "mock"
 title     = "Mock (offline)"
 transport = "local"
-adapter   = "media_ai.providers.mock:MockProvider"
+adapter   = "media_ai.providers.mock:MockAdapter"
 
 [provider.auth]
 kind = "none"
@@ -51,10 +51,16 @@ last_frame       = true
 reference_images = true
 reference_videos = true
 reference_audios = true
-dialogue         = true
-timestamps       = true
-composition_plan = true
-cancel           = true
+dialogue          = true
+timestamps        = true
+composition_plan  = true
+cancel            = true
+return_last_frame = true
+watermark_control = true
+language_code     = true
+transparency      = true
+quality           = true
+group_output      = true
 
 [binding.constraints.geometry]
 mode = "both"

@@ -6,7 +6,7 @@ import json
 
 import pytest
 from media_ai.core.errors import ErrorCategory
-from media_ai.providers._volc_errors import parse_error_body, task_failure_error, to_media_error
+from media_ai.providers._volc_ark_errors import parse_error_body, task_failure_error, to_media_error
 
 # (code, http status) -> (expected category, expected retryable)
 CASES = [

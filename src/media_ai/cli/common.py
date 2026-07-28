@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from ..core.capabilities import UnsupportedPolicy
+from ..core.validate import UnsupportedPolicy
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
 from ..core.types import GeometrySpec, MediaRef

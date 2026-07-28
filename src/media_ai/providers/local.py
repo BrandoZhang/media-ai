@@ -12,31 +12,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.capabilities import ModelCapabilities, VideoCaps
-from ..core.provider import Provider
+from ..core.adapter import Adapter
+from ..core.scene import Scene
 from ..core.result import Artifact, GenerationResult
-from ..core.types import Modality
 
 
-class LocalProvider(Provider):
-    name = "local"
-    requires_credentials = False
+class LocalAdapter(Adapter):
 
-    def models(self) -> list[str]:
-        return ["ffmpeg"]
-
-    def default_model(self, modality: Modality | None = None) -> str:
-        return "ffmpeg"
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        return ModelCapabilities(
-            provider=self.name, model=model or "ffmpeg", modalities=frozenset({Modality.VIDEO}),
-            # No generation operations: this backend transforms video that already
-            # exists. Declaring the modality with an empty operation set says exactly
-            # that, rather than leaving the caps object inconsistent with itself.
-            video=VideoCaps(operations=frozenset(), is_async=False, supports_cancel=False),
-            notes=("local ffmpeg: joins clips, normalizing each to a common size first",),
-        )
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset({Scene.VIDEO_CONCAT})
 
     def concat(self, inputs: list[Path], output: Path, *, width: int, height: int) -> GenerationResult:
         from ..media import ffmpeg

@@ -4,7 +4,7 @@
 name       = "openai"
 title      = "OpenAI"
 transport  = "http"
-adapter    = "media_ai.providers.openai:OpenAIProvider"
+adapter    = "media_ai.providers.openai:OpenAIAdapter"
 docs       = "https://platform.openai.com/docs/guides/image-generation"
 setup_hint = "Create a key at https://platform.openai.com/api-keys. GPT Image may require org verification."
 

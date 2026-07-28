@@ -17,19 +17,9 @@ from pathlib import Path
 
 import pytest
 from conftest import PNG_1x1_BYTES
-from media_ai import (
-    Artifact,
-    GenerationResult,
-    ImageCaps,
-    MediaError,
-    Modality,
-    ModelCapabilities,
-    Operation,
-    Provider,
-    register_manifest,
-)
+from media_ai import Adapter, Artifact, GenerationResult, MediaError, register_manifest
 from media_ai.core import registry
-from media_ai.core.capabilities import validate_request
+from media_ai.core.validate import validate_request
 from media_ai.core.config import Config, UserBinding
 from media_ai.core.resolve import available_bindings, resolve
 from media_ai.core.scene import Scene
@@ -40,7 +30,7 @@ ACME_MANIFEST = """
 name       = "acme"
 title      = "Acme Imaging"
 transport  = "http"
-adapter    = "test_extensions:AcmeProvider"
+adapter    = "test_extensions:AcmeAdapter"
 setup_hint = "Get a key at acme.test"
 
 [provider.auth]
@@ -66,23 +56,15 @@ seed = true
 """
 
 
-class AcmeProvider(Provider):
-    """A minimal offline custom adapter with a provider-specific option."""
+class AcmeAdapter(Adapter):
+    """A minimal offline custom adapter with a provider-specific option.
 
-    name = "acme"
+    Note how little it declares: the scenes it implements, and the wire. What the
+    model can do lives in the manifest, so there is no second copy here to drift.
+    """
 
-    def models(self):
-        return ["acme-pro-2026"]
-
-    def default_model(self, modality=None):
-        return "acme-pro-2026"
-
-    def capabilities(self, model=None, modality=None):
-        return ModelCapabilities(
-            provider=self.name, model=model or "acme-pro-2026", modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(operations=frozenset({Operation.IMAGE_GENERATE}), max_count=2,
-                            supports_seed=True, options=("sticker",)),
-        )
+    def supported_scenes(self):
+        return frozenset({Scene.IMAGE_TEXT_TO_IMAGE})
 
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         out = Path(req.output)
@@ -108,7 +90,7 @@ def test_a_registered_manifest_becomes_resolvable(clean_registry):
     assert Scene.IMAGE_TEXT_TO_IMAGE in spec.scenes
 
     rb = resolve(binding="acme/acme-pro", config=_configured())
-    assert rb.provider.adapter == "test_extensions:AcmeProvider"
+    assert rb.provider.adapter == "test_extensions:AcmeAdapter"
     assert rb.model_id == "acme-pro-2026"
 
 
@@ -120,7 +102,7 @@ def test_a_custom_backend_runs_end_to_end(clean_registry, tmp_path, monkeypatch)
 
     req = ImageRequest(prompt="a fox", output=tmp_path / "fox.png", model=rb.model_id,
                        seed=3, options={"sticker": "holiday"})
-    validate_request(req, adapter.capabilities(rb.model_id))  # the provider-specific option is allowed
+    validate_request(req, rb.spec.constraints)  # the provider-specific option is allowed
     res = adapter.generate_image(req)
     assert Path(res.primary().path).is_file()
     assert res.meta["sticker"] == "holiday"
@@ -128,10 +110,10 @@ def test_a_custom_backend_runs_end_to_end(clean_registry, tmp_path, monkeypatch)
 
 def test_an_undeclared_option_is_still_rejected(clean_registry, tmp_path):
     register_manifest(ACME_MANIFEST, source="acme")
-    adapter = registry.build_adapter(resolve(binding="acme/acme-pro", config=_configured()))
+    rb = resolve(binding="acme/acme-pro", config=_configured())
     req = ImageRequest(prompt="x", output=tmp_path / "o.png", options={"not_a_real_option": 1})
     with pytest.raises(MediaError):
-        validate_request(req, adapter.capabilities("acme-pro-2026"))
+        validate_request(req, rb.spec.constraints)
 
 
 def test_a_scene_the_binding_does_not_declare_is_refused(clean_registry, tmp_path):
@@ -203,7 +185,7 @@ RPC_MANIFEST = """
 name      = "rpc"
 title     = "An internal RPC platform"
 transport = "rpc"
-adapter   = "test_extensions:RpcProvider"
+adapter   = "test_extensions:RpcAdapter"
 
 [provider.auth]
 kind = "custom"
@@ -237,23 +219,13 @@ class FakeStub:
         return b"\x89PNG-rpc-bytes"
 
 
-class RpcProvider(Provider):
-    name = "rpc"
-
-    def __init__(self, *, credentials=None, config=None):
-        super().__init__(credentials=credentials, config=config)
+class RpcAdapter(Adapter):
+    def __init__(self, binding):
+        super().__init__(binding)
         self.stub = FakeStub()
 
-    def models(self):
-        return ["rpc-pro-v1"]
-
-    def default_model(self, modality=None):
-        return "rpc-pro-v1"
-
-    def capabilities(self, model=None, modality=None):
-        return ModelCapabilities(
-            provider=self.name, model=model or "rpc-pro-v1", modalities=frozenset({Modality.IMAGE}),
-            image=ImageCaps(operations=frozenset({Operation.IMAGE_GENERATE}), supports_seed=True))
+    def supported_scenes(self):
+        return frozenset({Scene.IMAGE_TEXT_TO_IMAGE})
 
     def generate_image(self, req):
         from media_ai import retry
@@ -273,7 +245,7 @@ def test_an_rpc_backend_is_first_class(clean_registry, tmp_path, monkeypatch):
     This is the case a manifest describing request bodies could not have served, and
     the reason wire mapping stayed in code.
     """
-    from media_ai import HttpProvider
+    from media_ai import HttpAdapter
     from media_ai.core import retry as retry_mod
 
     monkeypatch.setattr(retry_mod.time, "sleep", lambda *a, **k: None)  # no real backoff
@@ -285,10 +257,10 @@ def test_an_rpc_backend_is_first_class(clean_registry, tmp_path, monkeypatch):
     assert rb.base_url is None, "an RPC provider is not given an HTTP endpoint"
 
     adapter = registry.build_adapter(rb)
-    assert not isinstance(adapter, HttpProvider)
+    assert not isinstance(adapter, HttpAdapter)
 
     req = ImageRequest(prompt="a fox", output=tmp_path / "rpc.png", model=rb.model_id, seed=1)
-    validate_request(req, adapter.capabilities(rb.model_id))
+    validate_request(req, rb.spec.constraints)
     res = adapter.generate_image(req)
 
     assert Path(res.primary().path).is_file()

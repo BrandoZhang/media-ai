@@ -18,23 +18,15 @@ import json
 import tempfile
 from pathlib import Path
 
-from ..core.capabilities import (
-    AudioCaps,
-    GeometryMode,
-    ImageCaps,
-    ModelCapabilities,
-    Operation,
-    VideoCaps,
-)
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import resolve_image_pixels, resolve_video_pixels
-from ..core.provider import Provider
+from ..core.adapter import Adapter
+from ..core.scene import Scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from ..core.types import (
     DialogueRequest,
     ImageRequest,
     JobRef,
-    Modality,
     MusicPlanRequest,
     MusicRequest,
     SoundEffectRequest,
@@ -58,80 +50,11 @@ def _video_tokens(w: int, h: int, seconds: int) -> dict:
     return {"completion_tokens": tok, "total_tokens": tok}
 
 
-class MockProvider(Provider):
-    name = "mock"
-    requires_credentials = False
+class MockAdapter(Adapter):
 
-    def models(self) -> list[str]:
-        return ["mock"]
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset(Scene) - {Scene.VIDEO_CONCAT}
 
-    def default_model(self, modality: Modality | None) -> str:
-        return "mock"
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        return ModelCapabilities(
-            provider=self.name,
-            model="mock",
-            modalities=frozenset({Modality.IMAGE, Modality.VIDEO, Modality.AUDIO}),
-            image=ImageCaps(
-                operations=frozenset({Operation.IMAGE_GENERATE, Operation.IMAGE_EDIT}),
-                geometry_mode=GeometryMode.BOTH,
-                aspect_ratios=("1:1", "16:9", "9:16", "4:3", "3:4", "21:9"),
-                named_sizes=("512", "1K", "2K", "4K"),
-                max_count=8,
-                output_formats=("png",),
-                supports_seed=True,
-                supports_negative_prompt=True,
-                supports_transparency=True,
-                supports_quality=True,
-                supports_mask=True,
-                max_references=9,
-            ),
-            video=VideoCaps(
-                operations=frozenset({Operation.VIDEO_GENERATE}),
-                is_async=True,
-                aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"),
-                resolutions=("480p", "720p", "1080p"),
-                durations=tuple(range(1, 13)),
-                supports_first_frame=True,
-                supports_last_frame=True,
-                supports_reference_images=True,
-                supports_reference_videos=True,
-                supports_reference_audios=True,
-                supports_seed=True,
-                supports_negative_prompt=True,
-                supports_audio=True,
-                supports_watermark_control=True,
-                supports_return_last_frame=True,
-            ),
-            audio=AudioCaps(
-                operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE,
-                                      Operation.MUSIC_GENERATE, Operation.MUSIC_PLAN, Operation.SOUND_GENERATE}),
-                voices=("mock-voice-a", "mock-voice-b"),
-                default_voice="mock-voice-a",
-                output_formats=("mp3_44100_128", "wav_44100"),
-                supports_seed=True,
-                supports_language_code=True,
-                supports_timestamps=True,
-                supports_dialogue=True,
-                supports_instruction=True,
-                max_dialogue_voices=10,
-                options=("stability", "similarity_boost", "style", "speed", "use_speaker_boost"),
-                supports_music=True,
-                supports_composition_plan=True,
-                music_models=("mock-music",),
-                music_output_formats=("mp3_44100_128", "wav_44100"),
-                music_min_ms=3000,
-                music_max_ms=600000,
-                music_options=("force_instrumental", "respect_sections_durations"),
-                supports_sound=True,
-                sound_output_formats=("mp3_44100_128", "wav_44100"),
-                sound_min_seconds=0.5,
-                sound_max_seconds=30.0,
-                sound_options=("loop", "prompt_influence"),
-            ),
-            notes=("offline placeholder generator; deterministic given (prompt, seed)",),
-        )
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:

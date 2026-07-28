@@ -62,15 +62,36 @@ class FakeClient:
         return out
 
 
+def bound(binding_id: str, **overrides):
+    """A :class:`ResolvedBinding` for a shipped binding, as the CLI would resolve one.
+
+    Adapters are constructed from a binding and nothing else, so a test that wants one
+    names the binding it is testing. That is more typing than the old
+    ``VolcProvider()`` and it is the point: which model, which endpoint and which
+    limits apply are now the same question, and a test has to answer it.
+    """
+    from media_ai.core.config import Config, UserBinding
+    from media_ai.core.resolve import resolve
+
+    config = Config(bindings={binding_id: UserBinding(
+        id=binding_id, credential=overrides.pop("credential", "env://MEDIA_TEST_KEY"), **overrides,
+    )})
+    return resolve(binding=binding_id, catalog=registry.catalog(), config=config)
+
+
+def adapter_for(binding_id: str, **overrides):
+    """The adapter a binding names, constructed but not stubbed."""
+    from media_ai.core.registry import build_adapter
+
+    return build_adapter(bound(binding_id, **overrides))
+
+
 @pytest.fixture
 def fake_provider(monkeypatch):
-    """Return a factory: ``make(ProviderClass, responses) -> (provider, fake_client)``
-    with the provider's HTTP layer replaced by a recording FakeClient."""
+    """``make(binding_id, responses) -> (adapter, fake_client)`` with HTTP stubbed out."""
 
-    def make(provider_cls, responses, **kwargs):
-        # kwargs reach the adapter's constructor (e.g. config={"endpoints": {…}}) so a
-        # test can vary configuration without hand-rolling the HTTP stub.
-        prov = provider_cls(**kwargs)
+    def make(binding_id, responses, **overrides):
+        prov = adapter_for(binding_id, **overrides)
         fake = FakeClient(responses)
         monkeypatch.setattr(prov, "_prepare", lambda **kw: (fake, {"Authorization": "Bearer test"}))
         return prov, fake

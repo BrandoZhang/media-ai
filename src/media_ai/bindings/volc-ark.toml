@@ -12,7 +12,7 @@
 name       = "volc-ark"
 title      = "Volcengine Ark"
 transport  = "http"
-adapter    = "media_ai.providers.volc:VolcProvider"
+adapter    = "media_ai.providers.volc_ark:VolcArkAdapter"
 docs       = "https://www.volcengine.com/docs/82379/1330310"
 setup_hint = "Enable the model in the Ark console, then create an API key. Model IDs are per-account."
 

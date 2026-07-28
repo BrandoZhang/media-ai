@@ -132,10 +132,9 @@ def load_adapter_class(reference: str):
 def build_adapter(rb):
     """Construct the adapter for a :class:`~media_ai.core.resolve.ResolvedBinding`.
 
-    The binding supplies everything the adapter may know about *where* it is calling
-    — base URL, per-binding options, and a credential source bound to this binding
-    alone. Which model id goes on the wire travels on the request.
+    The adapter gets the binding and nothing else: the endpoint, the wire id, the
+    per-binding options, and a credential scoped to it. Nothing is assembled from the
+    environment on the way in, so a binding's behaviour is fully described by the
+    config entry that names it.
     """
-    cls = load_adapter_class(rb.provider.adapter)
-    config = {k: v for k, v in {"base_url": rb.base_url, **rb.options}.items() if v is not None}
-    return cls(credentials=rb.credentials(), config=config)
+    return load_adapter_class(rb.provider.adapter)(rb)

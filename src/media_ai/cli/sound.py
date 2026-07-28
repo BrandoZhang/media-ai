@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.capabilities import validate_request
+from ..core.validate import validate_request
 from ..core.logging import get_logger
-from ..core.types import Modality, SoundEffectRequest
+from ..core.types import SoundEffectRequest
 from . import common
 
 
@@ -37,7 +37,7 @@ def _do(args) -> object:
         output_format=args.output_format, model=args.model, options=common.parse_options(args.option),
     )
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, adapter.capabilities(req.model, Modality.AUDIO), common.policy(args)):
+    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
         get_logger().warning("unsupported (proceeding): %s", w)
     return common.stamp(adapter.generate_sound(req), rb, scene)
 

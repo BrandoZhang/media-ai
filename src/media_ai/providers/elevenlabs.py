@@ -22,19 +22,16 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from pathlib import Path
 from urllib.parse import urlencode
 
-from ..core.capabilities import AudioCaps, ModelCapabilities, Operation
 from ..core.errors import ErrorCategory, MediaError
-from ..core.modelspec import apply_spec
 from ..core.mediaref import guess_mime
+from ..core.scene import Scene
 from ..core.result import Artifact, GenerationResult
-from ..core.types import DialogueRequest, Modality, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
+from ..core.types import DialogueRequest, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
 from ..core.usage import record_usage
-from ._base import HttpProvider
-from ._catalog import ELEVENLABS
+from ._base import HttpAdapter
 
 # Output formats accepted by the API (codec_samplerate[_bitrate]).
 _OUTPUT_FORMATS = (
@@ -75,77 +72,34 @@ _SOUND_OUTPUT_FORMATS = (
 )
 _SOUND_OPTIONS = ("loop", "prompt_influence")
 _SOUND_MIN_S, _SOUND_MAX_S = 0.5, 30.0
+# Used when neither the binding nor its manifest names one.
+_FALLBACK_VOICE = "JBFqnCBsd6RMkjVDRZzb"
 
 
-class ElevenLabsProvider(HttpProvider):
-    name = "elevenlabs"
-    catalog = ELEVENLABS
-    auth_scheme = "xi-api-key"
+class ElevenLabsAdapter(HttpAdapter):
 
-    def __init__(self, *, credentials=None, config=None) -> None:
-        super().__init__(credentials=credentials, config=config)
-        # Base URL is configurable (env or a --provider-profile base_url) so callers
-        # can target a regional residency endpoint (us/eu/in/sg) without a code change.
-        self.base_url = (self.config.get("base_url") or os.getenv("ELEVENLABS_BASE_URL")
-                         or "https://api.elevenlabs.io/v1").rstrip("/")
-        self.model = self.config.get("model") or os.getenv("ELEVENLABS_MODEL") or "eleven_multilingual_v2"
-        self.dialogue_model = self.config.get("dialogue_model") or os.getenv("ELEVENLABS_DIALOGUE_MODEL") or "eleven_v3"
-        self.music_model = self.config.get("music_model") or os.getenv("ELEVENLABS_MUSIC_MODEL") or "music_v1"
-        self.sound_model = self.config.get("sound_model") or os.getenv("ELEVENLABS_SOUND_MODEL") or _SOUND_MODEL
-        self.default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "JBFqnCBsd6RMkjVDRZzb"
+    def supported_scenes(self) -> frozenset[Scene]:
+        return frozenset({
+            Scene.SPEECH_TEXT_TO_SPEECH, Scene.SPEECH_DIALOGUE,
+            Scene.MUSIC_TEXT_TO_MUSIC, Scene.MUSIC_PLAN_TO_MUSIC, Scene.MUSIC_PLAN,
+            Scene.SOUND_TEXT_TO_SOUND,
+        })
+
+    @property
+    def default_voice(self) -> str:
+        """The voice used when a call names none.
+
+        From the binding, then its manifest — a house voice is a property of how this
+        integration is set up, not of the machine it happens to run on.
+        """
+        return self.option("voice") or self.constraints.audio.default_voice or _FALLBACK_VOICE
+
 
     # ---- discovery -------------------------------------------------------
-    def models(self) -> list[str]:
-        return ELEVENLABS.discoverable_ids()
-
-    def default_model(self, modality: Modality | None) -> str:
-        return self.model
-
-    def capabilities(self, model: str | None = None, modality: Modality | None = None) -> ModelCapabilities:
-        model = model or self.model
-        spec = ELEVENLABS.require(model)
-        return apply_spec(ModelCapabilities(
-            provider=self.name, model=model, modalities=frozenset({Modality.AUDIO}),
-            audio=AudioCaps(
-                operations=frozenset({Operation.SPEECH_GENERATE, Operation.SPEECH_DIALOGUE,
-                                      Operation.MUSIC_GENERATE, Operation.MUSIC_PLAN, Operation.SOUND_GENERATE}),
-                default_voice=self.default_voice,
-                output_formats=_OUTPUT_FORMATS,
-                supports_seed=True,
-                supports_language_code=True,
-                supports_timestamps=True,
-                supports_dialogue=True,
-                max_dialogue_voices=10,
-                # No client-side character cap: single-voice TTS budgets are large and
-                # model-specific, and the dialogue "total text" limit (~2000 chars) is
-                # advisory — the API is the authority and returns a clean validation error.
-                max_characters=None,
-                options=_OPTIONS,
-                # music (compose + composition plan)
-                supports_music=True,
-                supports_composition_plan=True,
-                music_models=_MUSIC_MODELS,
-                music_output_formats=_MUSIC_OUTPUT_FORMATS,
-                music_min_ms=_MUSIC_MIN_MS,
-                music_max_ms=_MUSIC_MAX_MS,
-                music_options=_MUSIC_OPTIONS,
-                # sound effects
-                supports_sound=True,
-                sound_models=(_SOUND_MODEL,),
-                sound_output_formats=_SOUND_OUTPUT_FORMATS,
-                sound_min_seconds=_SOUND_MIN_S,
-                sound_max_seconds=_SOUND_MAX_S,
-                sound_options=_SOUND_OPTIONS,
-            ),
-            notes=("mp3_44100_192 needs Creator tier+; pcm/wav 44.1kHz needs Pro tier+",
-                   "language_code is ignored by multilingual_v2 models",
-                   "music: prompt OR composition_plan; `music plan` is credit-free"),
-        ), spec)
-
     # ---- speech (text -> single voice) -----------------------------------
     def generate_speech(self, req: SpeechRequest) -> GenerationResult:
         client, headers = self._prepare()
-        model = req.model or self.model
+        model = req.model or self.model_id
         voice = req.voice or self.default_voice
         body: dict = {"text": req.text, "model_id": model}
         if req.language_code:
@@ -181,7 +135,7 @@ class ElevenLabsProvider(HttpProvider):
             raise MediaError(f"speaker(s) not in cast: {', '.join(missing)}",
                              category=ErrorCategory.VALIDATION, provider=self.name)
         client, headers = self._prepare()
-        model = req.model or self.dialogue_model
+        model = req.model or self.model_id
         body: dict = {"inputs": [{"text": t.text, "voice_id": req.cast[t.speaker]} for t in req.turns], "model_id": model}
         if req.language_code:
             body["language_code"] = req.language_code
@@ -212,7 +166,7 @@ class ElevenLabsProvider(HttpProvider):
             raise MediaError("music requires exactly one of a prompt or a composition plan",
                              category=ErrorCategory.VALIDATION, provider=self.name)
         client, headers = self._prepare()
-        model = req.model or self.music_model
+        model = req.model or self.model_id
         body: dict = {"model_id": model}
         if req.composition_plan is not None:
             body["composition_plan"] = req.composition_plan
@@ -255,7 +209,7 @@ class ElevenLabsProvider(HttpProvider):
 
     def generate_music_plan(self, req: MusicPlanRequest) -> GenerationResult:
         client, headers = self._prepare()
-        model = req.model or self.music_model
+        model = req.model or self.model_id
         body: dict = {"prompt": req.prompt, "model_id": model}
         if req.duration_ms is not None:
             body["music_length_ms"] = req.duration_ms
@@ -274,7 +228,7 @@ class ElevenLabsProvider(HttpProvider):
     # ---- sound effects ---------------------------------------------------
     def generate_sound(self, req: SoundEffectRequest) -> GenerationResult:
         client, headers = self._prepare()
-        model = req.model or self.sound_model
+        model = req.model or self.model_id
         body: dict = {"text": req.text, "model_id": model}
         if req.duration_seconds is not None:
             body["duration_seconds"] = req.duration_seconds

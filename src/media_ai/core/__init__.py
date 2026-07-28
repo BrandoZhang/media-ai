@@ -1,18 +1,12 @@
-"""Provider-agnostic core: request/response types, capability model, geometry,
-errors, usage ledger, registry. Never imports :mod:`media_ai.providers`.
+"""Provider-agnostic core: requests, scenes, binding declarations, geometry, errors,
+the usage ledger, and the registry. Never imports :mod:`media_ai.providers`.
 """
 
-from .capabilities import (
-    GeometryMode,
-    ImageCaps,
-    ModelCapabilities,
-    UnsupportedPolicy,
-    VideoCaps,
-    validate_request,
-)
+from .adapter import Adapter
+from .binding import BindingSpec, Constraints, ProviderSpec
 from .errors import ErrorCategory, MediaError
-from .provider import Provider
 from .result import Artifact, GenerationResult, JobHandle, JobStatus
+from .scene import Scene, derive_scene
 from .types import (
     GeometrySpec,
     ImageRequest,
@@ -22,11 +16,17 @@ from .types import (
     Operation,
     VideoRequest,
 )
+from .validate import UnsupportedPolicy, validate_request
 
 __all__ = [
     "MediaError",
     "ErrorCategory",
-    "Provider",
+    "Adapter",
+    "Scene",
+    "derive_scene",
+    "BindingSpec",
+    "ProviderSpec",
+    "Constraints",
     "Modality",
     "Operation",
     "MediaRef",
@@ -38,10 +38,6 @@ __all__ = [
     "Artifact",
     "JobHandle",
     "JobStatus",
-    "ModelCapabilities",
-    "ImageCaps",
-    "VideoCaps",
-    "GeometryMode",
     "UnsupportedPolicy",
     "validate_request",
 ]

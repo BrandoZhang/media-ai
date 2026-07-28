@@ -4,7 +4,7 @@ The CLI parses argv into an :class:`ImageRequest` / :class:`VideoRequest`; the
 registry stamps the resolved ``model`` onto it; the selected provider adapter
 translates it to that provider's wire format. Nothing here is provider-specific —
 concepts that only one provider understands live in the ``options`` dict and are
-capability-gated (see :mod:`media_ai.core.capabilities`).
+capability-gated (see :mod:`media_ai.core.validate`).
 """
 
 from __future__ import annotations

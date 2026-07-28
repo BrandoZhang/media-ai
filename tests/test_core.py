@@ -8,17 +8,11 @@ from pathlib import Path
 
 import pytest
 from media_ai.core import geometry, usage
-from media_ai.core.capabilities import (
-    GeometryMode,
-    ImageCaps,
-    ModelCapabilities,
-    UnsupportedPolicy,
-    VideoCaps,
-    validate_request,
-)
+from media_ai.core.binding import Audio, Constraints, Geometry, Output, References, Video
+from media_ai.core.validate import UnsupportedPolicy, validate_request
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.result import Artifact, GenerationResult, JobHandle
-from media_ai.core.types import GeometrySpec, ImageRequest, Modality, Operation, VideoRequest
+from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef, VideoRequest
 
 
 # --------------------------------------------------------------------------
@@ -90,83 +84,150 @@ def test_error_to_dict_shape():
 
 
 # --------------------------------------------------------------------------
-# capability validation
+# validation against declared constraints
 # --------------------------------------------------------------------------
 
 
-def _img_caps(**over) -> ModelCapabilities:
-    base = dict(operations=frozenset({Operation.IMAGE_GENERATE}), geometry_mode=GeometryMode.PIXELS,
-                max_count=1, supports_seed=False, supports_transparency=False, max_references=0)
-    base.update(over)
-    return ModelCapabilities(provider="p", model="m", modalities=frozenset({Modality.IMAGE}), image=ImageCaps(**base))
+def _image(**over) -> Constraints:
+    """Constraints as a manifest would declare them, with nothing implied.
+
+    Everything absent means *undeclared*, and undeclared means unchecked — so a test
+    that wants a limit enforced has to say so, exactly like a manifest does.
+    """
+    geometry = Geometry(mode=over.pop("mode", "pixels"), **over.pop("geometry", {}))
+    return Constraints(
+        supports=over.pop("supports", {}),
+        options=over.pop("options", ()),
+        geometry=geometry,
+        output=Output(**over.pop("output", {})),
+        references=References(**over.pop("references", {})),
+    )
 
 
-def test_validate_unsupported_seed_raises():
+def test_an_undeclared_capability_is_refused():
     req = ImageRequest(prompt="x", output=Path("o.png"), seed=5)
     with pytest.raises(MediaError) as ei:
-        validate_request(req, _img_caps())
+        validate_request(req, _image())
     assert ei.value.category == ErrorCategory.UNSUPPORTED
     assert ei.value.exit_code == 3
+    assert ei.value.code == "request_not_supported"
 
 
-def test_validate_transparency_gated():
-    req = ImageRequest(prompt="x", output=Path("o.png"), background="transparent")
+def test_a_declared_capability_passes():
+    req = ImageRequest(prompt="x", output=Path("o.png"), seed=5)
+    validate_request(req, _image(supports={"seed": True}))
+
+
+def test_transparency_is_gated_but_opaque_never_is():
     with pytest.raises(MediaError):
-        validate_request(req, _img_caps(supports_transparency=False))
-    # opaque is always fine
-    validate_request(ImageRequest(prompt="x", output=Path("o.png"), background="opaque"),
-                     _img_caps(supports_transparency=False))
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), background="transparent"), _image())
+    validate_request(ImageRequest(prompt="x", output=Path("o.png"), background="opaque"), _image())
 
 
-def test_validate_count_and_references():
+def test_counts_and_references_are_capped():
     with pytest.raises(MediaError):
-        validate_request(ImageRequest(prompt="x", output=Path("o.png"), count=5), _img_caps(max_count=1))
-    from media_ai.core.types import MediaRef
-
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), count=5),
+                         _image(output={"max_count": 1}))
     with pytest.raises(MediaError):
         validate_request(ImageRequest(prompt="x", output=Path("o.png"), references=[MediaRef("a.png")]),
-                         _img_caps(max_references=0))
+                         _image(references={"max": 0}))
 
 
-def test_validate_named_size_tier_gated():
-    # An image model with a fixed set of size tiers rejects an out-of-range tier
-    # (parity with video resolution validation; capabilities drive pre-flight checks).
-    caps = _img_caps(geometry_mode=GeometryMode.ASPECT_RATIO, aspect_ratios=("1:1",), named_sizes=("1K",))
+def test_a_joint_input_output_budget_is_enforced():
+    """Seedream budgets references and outputs together; neither cap alone says that."""
+    c = _image(output={"max_count": 15, "max_total_images": 15}, references={"max": 14})
+    req = ImageRequest(prompt="x", output=Path("o.png"), count=10,
+                       references=[MediaRef(f"{i}.png") for i in range(10)])
+    with pytest.raises(MediaError) as ei:
+        validate_request(req, c)
+    assert "joint limit" in ei.value.message
+
+
+def test_a_size_tier_outside_the_declared_set_is_refused():
+    c = _image(mode="aspect_ratio", geometry={"aspect_ratios": ("1:1",), "named_sizes": ("1K",)})
     with pytest.raises(MediaError) as ei:
         validate_request(ImageRequest(prompt="x", output=Path("o.png"),
-                                      geometry=GeometrySpec(aspect_ratio="1:1", resolution="4K")), caps)
-    assert ei.value.category == ErrorCategory.UNSUPPORTED and "4K" in ei.value.message
-    # a supported tier passes
+                                      geometry=GeometrySpec(aspect_ratio="1:1", resolution="4K")), c)
+    assert "4K" in ei.value.message
     validate_request(ImageRequest(prompt="x", output=Path("o.png"),
-                                  geometry=GeometrySpec(aspect_ratio="1:1", resolution="1K")), caps)
+                                  geometry=GeometrySpec(aspect_ratio="1:1", resolution="1K")), c)
 
 
-def test_validate_unknown_option_rejected_but_warn_mode_passes():
+def test_an_absent_bound_is_not_enforced():
+    """A binding that publishes no ceiling gets none applied — the API stays the authority."""
+    c = _image(geometry={"pixel_total_min": 1000})   # a floor, and deliberately no ceiling
+    validate_request(ImageRequest(prompt="x", output=Path("o.png"),
+                                  geometry=GeometrySpec(width=8000, height=8000)), c)
+    with pytest.raises(MediaError):
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"),
+                                      geometry=GeometrySpec(width=10, height=10)), c)
+
+
+def test_an_unknown_option_is_rejected_and_the_policy_can_soften_it():
     req = ImageRequest(prompt="x", output=Path("o.png"), options={"bogus": 1})
-    caps = _img_caps(options=("moderation",))
+    c = _image(options=("moderation",))
     with pytest.raises(MediaError):
-        validate_request(req, caps, UnsupportedPolicy.ERROR)
-    warnings = validate_request(req, caps, UnsupportedPolicy.WARN)
+        validate_request(req, c, UnsupportedPolicy.ERROR)
+    warnings = validate_request(req, c, UnsupportedPolicy.WARN)
     assert warnings and "bogus" in warnings[0]
-    assert validate_request(req, caps, UnsupportedPolicy.IGNORE) == []
+    assert validate_request(req, c, UnsupportedPolicy.IGNORE) == []
 
 
-def test_validate_video_duration_and_refs():
-    caps = ModelCapabilities(provider="p", model="m", modalities=frozenset({Modality.VIDEO}),
-                             video=VideoCaps(durations=(4, 8), supports_first_frame=False))
+def test_video_duration_and_flags_follow_the_declaration():
+    c = Constraints(video=Video(durations=(4, 8)))
     with pytest.raises(MediaError):
-        validate_request(VideoRequest(prompt="x", output=Path("o.mp4"), duration=5), caps)
-    from media_ai.core.types import MediaRef
+        validate_request(VideoRequest(prompt="x", output=Path("o.mp4"), duration=5), c)
+    validate_request(VideoRequest(prompt="x", output=Path("o.mp4"), duration=8), c)
+
+
+def test_a_coordinate_prompt_aimed_at_a_model_that_cannot_read_it_is_refused():
+    """The failure this catches is silent: the tags are read as prose and the image is
+    quietly wrong, with a 200 OK and a bill."""
+    req = ImageRequest(prompt="move the subject to <bbox>10 10 90 90</bbox>", output=Path("o.png"))
+    with pytest.raises(MediaError) as ei:
+        validate_request(req, _image())
+    assert "<bbox>" in ei.value.message
+    validate_request(req, _image(supports={"interactive_edit": True}))
+
+
+def test_an_oversized_local_reference_is_refused_before_the_upload(tmp_path):
+    big = tmp_path / "huge.png"
+    big.write_bytes(b"\0" * 2048)
+    c = _image(references={"max": 4, "max_bytes": 1024})
+    with pytest.raises(MediaError) as ei:
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), references=[MediaRef(str(big))]), c)
+    assert "exceeds" in ei.value.message
+
+
+def test_a_reference_in_an_undeclared_format_is_refused(tmp_path):
+    c = _image(references={"max": 4, "formats": ("png", "jpeg")})
+    with pytest.raises(MediaError) as ei:
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), references=[MediaRef("clip.gif")]), c)
+    assert "gif" in ei.value.message
+
+
+def test_a_remote_reference_is_the_providers_to_judge():
+    """Nothing local to inspect, so nothing is claimed about it."""
+    c = _image(references={"max": 4, "formats": ("png",), "max_bytes": 1})
+    validate_request(ImageRequest(prompt="x", output=Path("o.png"),
+                                  references=[MediaRef("https://example.test/a.gif")]), c)
+
+
+def test_audio_duration_ranges_are_enforced():
+    c = Constraints(audio=Audio(duration_ms=(3000, 600000)))
+    from media_ai.core.types import MusicRequest
 
     with pytest.raises(MediaError):
-        validate_request(VideoRequest(prompt="x", output=Path("o.mp4"), first_frame=MediaRef("f.png")), caps)
+        validate_request(MusicRequest(output=Path("o.mp3"), prompt="jazz", duration_ms=1000), c)
+    validate_request(MusicRequest(output=Path("o.mp3"), prompt="jazz", duration_ms=30000), c)
 
 
-def test_capabilities_to_dict_is_json_serializable():
-    d = _img_caps(options=("moderation",)).to_dict()
-    json.dumps(d)  # must not raise
-    assert d["image"]["operations"] == ["image.generate"]
-    assert d["modalities"] == ["image"]
+def test_the_error_names_the_binding_and_how_to_ask_what_it_supports():
+    with pytest.raises(MediaError) as ei:
+        validate_request(ImageRequest(prompt="x", output=Path("o.png"), seed=1), _image(),
+                         binding="acme/thing")
+    assert "acme/thing" in ei.value.message
+    assert ei.value.hint == "media-ai capabilities --binding acme/thing"
 
 
 # --------------------------------------------------------------------------

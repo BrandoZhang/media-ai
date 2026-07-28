@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.capabilities import validate_request
+from ..core.validate import validate_request
 from ..core.logging import get_logger
-from ..core.types import MediaRef, Modality, VideoRequest
+from ..core.types import MediaRef, VideoRequest
 from . import common
 
 
@@ -56,7 +56,7 @@ def _do(args) -> object:
         return_last_frame=args.return_last_frame, wait=args.wait, options=common.parse_options(args.option),
     )
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, adapter.capabilities(req.model, Modality.VIDEO), common.policy(args)):
+    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
         get_logger().warning("unsupported (proceeding): %s", w)
     return common.stamp(adapter.generate_video(req), rb, scene)
 
