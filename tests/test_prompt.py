@@ -11,6 +11,7 @@ import io
 import json
 import os
 import pty
+import signal
 import sys
 import termios
 import textwrap
@@ -172,7 +173,10 @@ class TestControlsLookDifferent:
         checkbox = {glyph(multi=True, active=a, selected=s) for a in (True, False) for s in (True, False)}
         assert not radio & checkbox
 
-    def test_the_cursor_row_is_the_only_coloured_one(self):
+    def test_the_cursor_row_is_the_only_coloured_one(self, monkeypatch):
+        # Honour NO_COLOR in production, but do not inherit it from a test runner's
+        # environment when this test is specifically asserting the coloured branch.
+        monkeypatch.delenv("NO_COLOR", raising=False)
         p, _ = drawing()
         active = p._option_row(Option("thing"), active=True, selected=False, multi=True)
         inactive = p._option_row(Option("thing"), active=False, selected=False, multi=True)
@@ -511,6 +515,28 @@ def test_get_prompter_force_fallback():
     assert isinstance(get_prompter(force_fallback=True), FallbackPrompter)
 
 
+def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):
+    """Some sandboxes deny /dev/tty but leave stdin/stderr attached to a pty."""
+    class Tty:
+        encoding = "utf-8"
+        buffer = None
+
+        def __init__(self):
+            self.buffer = self
+
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 0
+
+    stdin, stderr = Tty(), Tty()
+    monkeypatch.setattr("builtins.open", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("denied")))
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    assert isinstance(get_prompter(), TerminalPrompter)
+
+
 # ------------------------------------------------------- real terminal, via pty
 
 
@@ -528,6 +554,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
         src = "import sys\nsys.path[:0] = %r\n" % (sys.path,) + textwrap.dedent(body)
         os.execv(sys.executable, [sys.executable, "-c", src])
     os.close(w)
+    os.set_blocking(fd, False)
 
     time.sleep(0.3)
     for key in keys:
@@ -535,8 +562,8 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
         time.sleep(0.12)
         try:
             os.read(fd, 65536)
-        except OSError:
-            break
+        except (BlockingIOError, OSError):
+            pass
 
     deadline = time.time() + timeout
     captured = b""
@@ -553,12 +580,22 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
             break
         if b"\n" in captured:
             break
-    try:
-        os.read(fd, 65536)
-    except OSError:
-        pass
+    # The child result is captured from ``r`` above.  A final read from the pty master
+    # has no result to collect and can block forever once the terminal is quiet.
     os.close(r)
-    os.waitpid(pid, 0)
+    # The capture loop above is deliberately bounded.  Honour that bound when
+    # reaping the pty child too: otherwise a broken interaction turns one failed
+    # assertion into a permanently hung test run.
+    for _ in range(10):
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            break
+        time.sleep(0.05)
+    else:
+        # This is a test-child cleanup path after its deadline has already expired.
+        # SIGKILL guarantees a stuck raw-mode process cannot leave the suite waiting.
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
     return captured.decode("utf-8", "replace")
 
 
