@@ -632,17 +632,19 @@ ratio_range = [0.0625, 16]      # [1/16, 16]
 
 ## 12. 实施阶段
 
-| 阶段 | 内容 | 是否破坏现有行为 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P0** | `core/binding.py` + manifest schema + 加载器 + 第一批 manifest + CI 断言 | 否，纯新增 |
-| **P1** | `core/resolve.py` + registry 重写；CLI 切到 binding 寻址；删 profiles / model_hints / MEDIA_PROVIDER 默认 | **是**，配置格式 breaking |
-| **P2** | adapter 改造：接 `ResolvedBinding`，不读 env，声明 `supported_scenes()`。四个 provider 逐个 | 是 |
-| **P3** | 凭据收敛为显式引用；删 resolver 链 | 是 |
-| **P4** | `init` / `doctor` / `bindings` / `config` 命令由 manifest 驱动 | 是 |
-| **P5** | skill 重组（主入口 + binding 片段）+ 文档全面重写 | 是 |
-| **P6** | 删淘汰模型与机制，清理文档 | 是 |
+| **P0** | `core/binding.py` + manifest schema + 加载器 + 第一批 manifest + CI 断言 | ✅ 纯新增 |
+| **P1** | `core/resolve.py` + registry 重写、CLI binding 寻址、凭据收敛为显式引用、`init`/`doctor`/`bindings`/`config` | ✅ 配置格式 breaking |
+| **P2** | adapter 接 `ResolvedBinding`、不读 env、`supported_scenes()`；校验改读 manifest constraints；删 `capabilities.py`/`modelspec.py`/`_catalog.py` | ✅ |
+| **P3** | skill 重组（能力域主入口 + binding 片段，concat 并入 video）+ 文档全面重写 | 待做 |
+| **P4** | 删淘汰模型与残余机制，清理文档 | 待做 |
 
-每阶段独立 PR，`uv run pytest -q` + `ruff` 全绿才推进。测试仍然全离线（`FakeClient`）。
+**原 P1/P3/P4 合并成了一步。** 它们通过 config 文件格式强耦合：改格式的人必须同时改读方
+（`resolve`）、写方（`init`）和检查方（`doctor`），否则中间会出现「向导写出的配置没人读」的
+状态——正是 3 号诉求要消灭的东西。硬拆只会产生一座用完就扔的桥。
+
+每阶段独立提交，`uv run pytest -q` + `ruff` 全绿才推进。测试仍然全离线（`FakeClient`）。
 
 ## 13. 待补 / 遗留
 
