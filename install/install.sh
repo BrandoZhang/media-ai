@@ -63,6 +63,10 @@ main() {
 
   check_path
   self_test
+  # After the self-test, so a stale config is reported by a binary already proven to
+  # run — and reported rather than fatal: the install succeeded, the config is the
+  # separate problem, and `init` below is what fixes it.
+  check_existing_config
   if [ "$do_init" -eq 1 ]; then run_init "$skills_dest"; fi
   return 0
 }
@@ -168,23 +172,68 @@ self_test() {
   # ffmpeg without a key or a network call. It is named explicitly: mock is a normal
   # binding, never a fallback, and a fresh install has no scene default yet.
   #
-  # MEDIA_USAGE_LOG is redirected into the scratch directory along with the output:
-  # every generation appends a line to the ledger, which defaults to
-  # ./media_usage.jsonl — so without this the installer litters the directory it was
-  # run from, and adds a line to it every time it is re-run.
+  # Everything the CLI reads from the environment is redirected into a scratch dir, so
+  # this answers "does the thing I just installed run?" and nothing else:
+  #
+  #   MEDIA_USAGE_LOG      every generation appends a ledger line, which defaults to
+  #                        ./media_usage.jsonl — otherwise the installer litters the
+  #                        directory it was run from, once per run.
+  #   MEDIA_CONFIG_FILE    the user's real config is *not* under test. A config written
+  #   MEDIA_CREDENTIALS_FILE   by an older release is refused by design, which failed
+  #                        this self-test and aborted an install that was in fact fine
+  #                        — and `--binding mock/mock` does not even consult it. An
+  #                        upgrade must not be blocked by the file the upgrade exists
+  #                        to replace; the stale config is reported separately below.
   local tmp status=0
   tmp="$(mktemp -d)"
-  MEDIA_USAGE_LOG="$tmp/usage.jsonl" media-ai image generate --binding mock/mock --prompt "install check" \
-    --output "$tmp/probe.png" >/dev/null 2>"$tmp/err" || status=$?
+  MEDIA_USAGE_LOG="$tmp/usage.jsonl" \
+  MEDIA_CONFIG_FILE="$tmp/config.toml" \
+  MEDIA_CREDENTIALS_FILE="$tmp/credentials.toml" \
+  media-ai image generate --binding mock/mock --prompt "install check" \
+    --output "$tmp/probe.png" >"$tmp/out" 2>"$tmp/err" || status=$?
   if [ "$status" -eq 0 ]; then
     say "self-test passed (offline, no key needed)"
     rm -rf "$tmp"
   else
-    err "self-test failed:"
-    sed 's/^/    /' "$tmp/err" >&2 || true
+    # stdout first, and never omitted: the CLI's contract is one JSON object on
+    # stdout for failure as well as success, with stderr carrying only human logs.
+    # Printing stderr alone showed an empty message under every ordinary failure —
+    # "self-test failed:" and nothing else, which is worse than no diagnostic at all
+    # because it looks like the installer has nothing more to say.
+    err "self-test failed (exit $status):"
+    sed 's/^/    /' "$tmp/out" >&2 || true
+    [ -s "$tmp/err" ] && sed 's/^/    /' "$tmp/err" >&2
     rm -rf "$tmp"
     exit 1
   fi
+}
+
+check_existing_config() {
+  # A config written before the binding refactor is refused by every command, so an
+  # upgrade that stops here leaves someone with a working binary and no way to use it.
+  # Asking the CLI rather than parsing TOML in shell: it already answers this, with a
+  # stable code, and a second copy of the rule here would be one to keep in step.
+  local out status=0
+  out="$(media-ai config show 2>/dev/null)" || status=$?
+  [ "$status" -eq 0 ] && return 0
+  case "$out" in
+    *config_schema_outdated*) ;;
+    *) return 0 ;;   # some other failure; `doctor` is the place to chase it
+  esac
+  err ""
+  err "Your existing config predates this version and every command will refuse it:"
+  err "  $(printf '%s' "$out" | extract_message)"
+  err ""
+  err "  media-ai init                 # rewrite it interactively, or"
+  err "  media-ai bindings available   # see what to add, one command per binding"
+  err ""
+  err "The old file is left untouched, so you can copy the endpoints out of it first."
+}
+
+# Pull error.message out of the CLI's failure JSON without needing a JSON parser: the
+# object is one line, and `message` is the only key whose value is prose.
+extract_message() {
+  sed 's/.*"message"[[:space:]]*:[[:space:]]*"//; s/", *"retryable".*//; s/\\u2014/-/g'
 }
 
 run_init() {
