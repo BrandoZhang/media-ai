@@ -268,11 +268,9 @@ class BindingSpec:
     is dated and account-specific (``doubao-seedream-5-0-pro-260628``) while the name
     people use is not."""
     title: str = ""
-    aliases: tuple[str, ...] = ()
     scenes: frozenset[Scene] = frozenset()
     lifecycle: Lifecycle = Lifecycle.GA
     replacement: str | None = None
-    reason: str | None = None
     verified: str | None = None
     """ISO date this binding was last exercised against the live API. ``None`` means
     never, and is reported as such. Filling it in with a plausible date would convert
@@ -289,7 +287,6 @@ class BindingSpec:
 
     It never makes a binding unreachable. Asking for `--binding mock/mock` by name, or
     choosing it as a scene default, works exactly as before."""
-    usage_unit: str | None = None
     notes: tuple[str, ...] = ()
 
     @property
@@ -484,13 +481,11 @@ def _parse_binding(raw: dict, provider: ProviderSpec, source: str) -> BindingSpe
     return BindingSpec(
         id=bid, provider=prov, model=model, model_id=model_id or model,
         title=str(raw.get("title") or model),
-        aliases=_str_tuple(raw, "aliases", source),
         scenes=frozenset(scenes),
-        lifecycle=lifecycle, replacement=replacement, reason=raw.get("reason") or None,
+        lifecycle=lifecycle, replacement=replacement,
         verified=verified,
         constraints=_parse_constraints(_table(raw, "constraints", source), source),
         placeholder=bool(raw.get("placeholder", False)),
-        usage_unit=raw.get("usage_unit") or None,
         notes=_str_tuple(raw, "notes", source),
     )
 
@@ -510,10 +505,9 @@ def load_manifest(text: str, *, source: str = "<manifest>") -> tuple[ProviderSpe
     bindings = [_parse_binding(b, provider, source) for b in raw_bindings]
     seen: set[str] = set()
     for b in bindings:
-        for key in (b.id, *b.aliases):
-            if key in seen:
-                raise ManifestError(f"duplicate binding id or alias {key!r}", source=source)
-            seen.add(key)
+        if b.id in seen:
+            raise ManifestError(f"duplicate binding id {b.id!r}", source=source)
+        seen.add(b.id)
     return provider, bindings
 
 
@@ -523,28 +517,33 @@ def load_manifest(text: str, *, source: str = "<manifest>") -> tuple[ProviderSpe
 
 
 class BindingCatalog:
-    """Every declared binding, indexed the three ways callers ask for one."""
+    """Every declared binding, indexed by its one id.
+
+    One id, no second name. A binding used to be able to declare ``aliases``, and the
+    lookup here honoured them — but discovery never printed one, ``--model`` never
+    matched one, and no manifest declared one. So a rename kept "working" through a
+    channel nothing could tell you about, which is the shape of a trap rather than a
+    feature. A binding that moved says so with ``lifecycle = "deprecated"`` plus
+    ``replacement``, which discovery *does* print.
+    """
 
     def __init__(self) -> None:
         self.providers: dict[str, ProviderSpec] = {}
         self._bindings: dict[str, BindingSpec] = {}
-        self._aliases: dict[str, str] = {}
 
     def add(self, provider: ProviderSpec, bindings: list[BindingSpec], *, source: str = "<manifest>") -> None:
         if provider.name in self.providers:
             raise ManifestError(f"provider {provider.name!r} is already declared", source=source)
         self.providers[provider.name] = provider
         for b in bindings:
-            if b.id in self._bindings or b.id in self._aliases:
+            if b.id in self._bindings:
                 raise ManifestError(f"duplicate binding id {b.id!r}", source=source)
             self._bindings[b.id] = b
-            for alias in b.aliases:
-                self._aliases[alias] = b.id
 
     # -- lookup ------------------------------------------------------------
 
     def get(self, binding_id: str) -> BindingSpec | None:
-        return self._bindings.get(self._aliases.get(binding_id, binding_id))
+        return self._bindings.get(binding_id)
 
     def ids(self) -> list[str]:
         return sorted(self._bindings)

@@ -114,12 +114,13 @@ def test_credentialed_providers_declare_how_to_authenticate(provider_name):
         assert p.auth.kind is AuthKind.NONE
 
 
-def test_binding_ids_and_aliases_are_globally_unique():
+def test_binding_ids_are_globally_unique():
+    """One binding, one id. A second name for the same thing is what made "which
+    binding was billed?" unanswerable from a log line."""
     seen: set[str] = set()
     for b in BINDINGS:
-        for key in (b.id, *b.aliases):
-            assert key not in seen, f"duplicate binding key {key!r}"
-            seen.add(key)
+        assert b.id not in seen, f"duplicate binding id {b.id!r}"
+        seen.add(b.id)
 
 
 def test_every_scene_has_at_least_one_binding():

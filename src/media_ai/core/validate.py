@@ -18,7 +18,6 @@ Two rules shape what is checked here:
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
 
 from .binding import Constraints
 from .errors import ErrorCategory, MediaError
@@ -300,6 +299,3 @@ def _check_options(options: dict, allowed: tuple[str, ...], issues: _Issues) -> 
         allowed_text = ", ".join(allowed) if allowed else "none"
         issues.add(f"option:{key}", f"not supported by this binding; allowed: {allowed_text}")
 
-
-def _paths(refs: list[MediaRef]) -> list[Path]:  # pragma: no cover - debugging aid
-    return [r.path() for r in refs if r.is_local]

@@ -32,7 +32,6 @@ from importlib.resources import files
 
 from ..core.config import Config
 from ..core.registry import catalog
-from ..core.resolve import ResolvedBinding, available_bindings
 from ..core.scene import Scene, scenes_for_group
 from ._frontmatter import parse as parse_frontmatter
 
@@ -236,7 +235,3 @@ def bindings_for_skills(skills: list[str], config: Config | None = None) -> dict
             served.setdefault(spec.id, set()).update(per_scene[scene])
     return {bid: sorted(served[bid]) for bid in sorted(served)}
 
-
-def configured_bindings(config: Config) -> list[ResolvedBinding]:
-    """What this machine can already call — used to offer scene defaults."""
-    return available_bindings(catalog(), config)

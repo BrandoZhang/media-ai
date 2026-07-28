@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..credentials.reference import BindingCredentials
-from .binding import AuthKind, BindingCatalog, BindingSpec, ProviderSpec, Transport
+from .binding import AuthKind, BindingCatalog, BindingSpec, ProviderSpec
 from .config import Config, UserBinding, load_config
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
@@ -321,6 +321,3 @@ def _default_for(scene: Scene, available: list[ResolvedBinding], config: Config)
         },
     )
 
-
-def transport_of(rb: ResolvedBinding) -> Transport:
-    return rb.provider.transport
