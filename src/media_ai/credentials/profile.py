@@ -15,13 +15,13 @@ and are selected with `--provider-profile NAME` or `$MEDIA_PROFILE`:
 
     [profiles.prod_video]
     provider   = "volc"
-    model      = "ep-20260214051115-zrbtw"
+    model      = "ep-example-endpoint"
     base_url   = "https://ark.cn-beijing.volces.com/api/v3"   # optional
     credential = "cred://volc_account_b"                      # a named credential
 
     [profiles.prod_video_ha]
     provider   = "volc"
-    model      = "ep-20260214051115-zrbtw"
+    model      = "ep-example-endpoint"
     # Ordered fallback: the first reference that resolves at call time wins, so you
     # can configure more keys than you routinely use and degrade gracefully.
     credential = ["cred://volc_account_b", "cred://volc_shared", "env://ARK_API_KEY"]

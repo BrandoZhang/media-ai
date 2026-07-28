@@ -13,7 +13,7 @@ from media_ai.providers.volc import VolcProvider
 CONFIG = """
 [profiles.prod_video]
 provider   = "volc"
-model      = "ep-20260214051115-zrbtw"
+model      = "ep-example-endpoint"
 base_url   = "https://ark.example-region.volces.com/api/v3"
 credential = "env://ARK_PROD_VIDEO_KEY"
 
@@ -40,7 +40,7 @@ def test_profile_binds_provider_model_baseurl_and_key(config_file, monkeypatch):
     monkeypatch.setenv("ARK_PROD_VIDEO_KEY", "sk-video-account-B-123")
     prov, model = registry.build(profile="prod_video", modality=Modality.VIDEO)
     assert isinstance(prov, VolcProvider)
-    assert model == "ep-20260214051115-zrbtw"
+    assert model == "ep-example-endpoint"
     assert prov.base_url == "https://ark.example-region.volces.com/api/v3"
     cred = prov.credential()
     assert cred.reveal() == "sk-video-account-B-123"
@@ -61,7 +61,7 @@ def test_profile_selected_via_env(config_file, monkeypatch):
     monkeypatch.setenv("ARK_PROD_VIDEO_KEY", "k")
     monkeypatch.setenv("MEDIA_PROFILE", "prod_video")
     prov, model = registry.build(modality=Modality.VIDEO)  # no explicit profile arg
-    assert model == "ep-20260214051115-zrbtw" and prov.base_url.endswith("example-region.volces.com/api/v3")
+    assert model == "ep-example-endpoint" and prov.base_url.endswith("example-region.volces.com/api/v3")
 
 
 def test_explicit_model_and_provider_override_profile(config_file, monkeypatch):
