@@ -5,7 +5,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "media-ai"
-version = "0.2.0"
+# Read from `media_ai.__version__` (see [tool.setuptools.dynamic] below) so the
+# version lives in exactly one place. setuptools parses that assignment statically,
+# so nothing here imports the package at build time.
+dynamic = ["version"]
 description = "Provider- and model-agnostic multimodal generation CLI (image/video/audio across mock + Volcengine Ark + OpenAI + Google Gemini + ElevenLabs) with capability discovery, structured errors, secret-safe credentials, and token-cost accounting."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +29,9 @@ keychain = ["keyring>=24"]
 # The `test` extra above is kept for the pip / CI path.
 [dependency-groups]
 dev = ["pytest>=7", "ruff>=0.6"]
+
+[tool.setuptools.dynamic]
+version = { attr = "media_ai.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
