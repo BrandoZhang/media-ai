@@ -94,7 +94,6 @@ class ElevenLabsAdapter(HttpAdapter):
         return self.option("voice") or self.constraints.audio.default_voice or _FALLBACK_VOICE
 
 
-    # ---- discovery -------------------------------------------------------
     # ---- speech (text -> single voice) -----------------------------------
     def generate_speech(self, req: SpeechRequest) -> GenerationResult:
         client, headers = self._prepare()

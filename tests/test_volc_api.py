@@ -271,3 +271,40 @@ def test_modality_is_never_guessed_from_a_model_id(fake_provider):
     prov, _ = fake_provider("volc-ark/seedream-4.5", [], model_id="doubao-seedance-2-0-260128")
     assert Scene.IMAGE_TEXT_TO_IMAGE in prov.binding.spec.scenes
     assert Scene.VIDEO_TEXT_TO_VIDEO not in prov.binding.spec.scenes
+
+
+def test_a_bare_aspect_ratio_is_refused_rather_than_silently_becoming_a_tier(fake_provider, tmp_path):
+    """Ark's `size` is pixels or a named tier — there is no field for a bare ratio.
+
+    Falling through to the default tier billed the caller for a 2K square they did not
+    ask for: the same silent geometry substitution the video path was fixed for, on the
+    image path. An unusable request must not become a charge.
+    """
+    from media_ai.core.types import GeometrySpec
+
+    prov, fake = fake_provider("volc-ark/seedream-5.0", [{"data": [], "usage": {}}])
+    req = ImageRequest(prompt="x", output=tmp_path / "o.png",
+                       geometry=GeometrySpec(aspect_ratio="21:9"))
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(req)
+    assert ei.value.exit_code == 3 and ei.value.code == "geometry_not_expressible"
+    assert not fake.calls, "the refusal must happen before the request"
+
+
+def test_a_named_tier_and_explicit_pixels_still_work(fake_provider, tmp_path):
+    from media_ai.core.types import GeometrySpec
+
+    for geo, expected in ((GeometrySpec(resolution="4K"), "4K"),
+                          (GeometrySpec(width=2048, height=2048), "2048x2048")):
+        prov, fake = fake_provider("volc-ark/seedream-5.0", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+        prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", geometry=geo))
+        assert fake.calls[0]["body"]["size"] == expected
+
+
+def test_output_format_is_gated_on_the_declared_formats(fake_provider, tmp_path):
+    """An unrequested wire field is what Ark rejects with InvalidParameter — the same
+    failure the live run found for `sequential_image_generation`."""
+    prov, fake = fake_provider("volc-ark/seedream-5.0", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="x", output=tmp_path / "o.png", output_format="jpeg"))
+    body = fake.calls[0]["body"]
+    assert body["output_format"] == "jpeg"  # 5.0 declares formats, so it may receive one

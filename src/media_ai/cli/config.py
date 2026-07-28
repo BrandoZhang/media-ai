@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import argparse
 
-from ..core.config import config_path, load_config, render_config
+from ..core.config import config_path, load_config, save_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.resolve import available_bindings
 from ..core.result import SCHEMA_VERSION
 from ..core.scene import Scene
-from ..credentials.tomlwrite import write_public
 from . import common
 from .bindings import CONFIG_HEADER
 
@@ -93,7 +92,7 @@ def _set_default(args) -> dict:
     for scene in scenes:
         defaults[scene.value] = args.binding
     updated = type(config)(bindings=dict(config.bindings), defaults=defaults, path=config.path, exists=True)
-    write_public(config_path(), render_config(updated, header=CONFIG_HEADER))
+    saved = save_config(updated, header=CONFIG_HEADER)
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "binding": args.binding,
@@ -103,6 +102,7 @@ def _set_default(args) -> dict:
         # default for video" sounds like it did.
         "skipped": unsupported,
         "config": str(config_path()),
+        "backup": str(saved) if saved else None,
     }
 
 

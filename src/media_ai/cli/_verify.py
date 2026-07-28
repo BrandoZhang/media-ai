@@ -138,11 +138,38 @@ def probe(binding: str) -> str:
     The *strategy* is chosen per provider, because which request is cheap is a fact
     about the API surface. It is then run through the binding the caller named, so the
     key that gets tested is the key that binding would actually use.
+
+    The provider comes from the resolved adapter, not from the id's prefix. A binding
+    id is a name the user chose: the documented multi-account form
+    ``[bindings."volc-ark-sg/seedance-2.0"] extends = "volc-ark/seedance-2.0"`` has the
+    prefix ``volc-ark-sg``, which no strategy is keyed on — so ``--verify`` used to
+    report "unsupported" and skip the check for precisely the second-account and
+    second-region bindings ``extends`` exists to serve.
     """
-    strategy = _PROBES.get(binding.partition("/")[0])
+    strategy = _PROBES.get(_provider_of(binding))
     if strategy is None:
         return "unsupported"
     try:
         return classify(strategy(_adapter(binding)))
     except Exception:  # noqa: BLE001 - a probe must never take the wizard down
         return "unreachable"
+
+
+def _provider_of(binding: str) -> str:
+    """The provider a binding really belongs to, falling back to its id prefix.
+
+    Read from the declaration rather than from the adapter, so "is there a probe for
+    this?" stays answerable for a binding that is declared but not yet configured —
+    which is the difference between "unsupported" and "unreachable".
+    """
+    from ..core.config import load_config
+    from ..core.registry import catalog
+    from ..core.resolve import available_bindings
+
+    try:
+        for rb in available_bindings(catalog(), load_config()):
+            if rb.id == binding:
+                return rb.provider.name
+    except Exception:  # noqa: BLE001 - a probe must never take the wizard down
+        pass
+    return binding.partition("/")[0]

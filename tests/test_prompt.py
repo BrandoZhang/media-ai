@@ -556,47 +556,60 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     os.close(w)
     os.set_blocking(fd, False)
 
-    time.sleep(0.3)
-    for key in keys:
-        os.write(fd, key)
-        time.sleep(0.12)
+    def drain():
+        """Discard whatever the child has drawn. Never blocks; errors are the child
+        having exited, which the caller notices via ``r``."""
         try:
             os.read(fd, 65536)
-        except (BlockingIOError, OSError):
+        except OSError:  # BlockingIOError is an OSError — nothing to read, or gone
             pass
 
-    deadline = time.time() + timeout
-    captured = b""
-    os.set_blocking(r, False)
-    while time.time() < deadline:
-        try:
-            chunk = os.read(r, 65536)
-            if not chunk:
+    try:
+        time.sleep(0.3)
+        for key in keys:
+            os.write(fd, key)
+            time.sleep(0.12)
+            drain()
+
+        deadline = time.time() + timeout
+        captured = b""
+        os.set_blocking(r, False)
+        while time.time() < deadline:
+            # Keep draining the master while waiting. A prompt that redraws more than
+            # the pty buffer holds after the last key would otherwise block in write(2)
+            # and never reach its result, turning a real UI regression into an opaque
+            # timeout-and-SIGKILL.
+            drain()
+            try:
+                chunk = os.read(r, 65536)
+                if not chunk:
+                    break
+                captured += chunk
+            except BlockingIOError:
+                time.sleep(0.05)
+            except OSError:
                 break
-            captured += chunk
-        except BlockingIOError:
+            if b"\n" in captured:
+                break
+        os.close(r)
+        # The capture loop above is deliberately bounded.  Honour that bound when
+        # reaping the pty child too: otherwise a broken interaction turns one failed
+        # assertion into a permanently hung test run.
+        for _ in range(10):
+            reaped, _status = os.waitpid(pid, os.WNOHANG)
+            if reaped:
+                break
             time.sleep(0.05)
-        except OSError:
-            break
-        if b"\n" in captured:
-            break
-    # The child result is captured from ``r`` above.  A final read from the pty master
-    # has no result to collect and can block forever once the terminal is quiet.
-    os.close(r)
-    # The capture loop above is deliberately bounded.  Honour that bound when
-    # reaping the pty child too: otherwise a broken interaction turns one failed
-    # assertion into a permanently hung test run.
-    for _ in range(10):
-        reaped, _status = os.waitpid(pid, os.WNOHANG)
-        if reaped:
-            break
-        time.sleep(0.05)
-    else:
-        # This is a test-child cleanup path after its deadline has already expired.
-        # SIGKILL guarantees a stuck raw-mode process cannot leave the suite waiting.
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-    return captured.decode("utf-8", "replace")
+        else:
+            # This is a test-child cleanup path after its deadline has already expired.
+            # SIGKILL guarantees a stuck raw-mode process cannot leave the suite waiting.
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        return captured.decode("utf-8", "replace")
+    finally:
+        # One master fd per call, and this helper runs once per prompt test — leaking
+        # them exhausts the process limit partway through a full run.
+        os.close(fd)
 
 
 SELECT_BODY = """

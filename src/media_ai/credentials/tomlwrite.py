@@ -158,6 +158,30 @@ def atomic_write(path: Path, text: str, *, mode: int) -> None:
         raise
 
 
+def backup(path: Path) -> Path | None:
+    """Copy a config file aside before rewriting it, returning the copy (or ``None``).
+
+    :func:`dumps` cannot round-trip comments, so the original file is the only record
+    of anything hand-written in it — why a binding points at a particular endpoint, what
+    a poll timeout was raised for. Every writer of a user-owned TOML file goes through
+    here first, or an edit to one field silently discards the reasoning beside it.
+
+    Created at the *source file's* mode from the start rather than written and then
+    chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
+    order leaves them in a world-readable file for as long as the write takes — and
+    permanently if the process dies in between.
+    """
+    if not path.is_file():
+        return None
+    mode = path.stat().st_mode & 0o777
+    for n in range(1, 1000):
+        candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
+        if not candidate.exists():
+            atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
+            return candidate
+    raise OSError(f"too many backups beside {path}")
+
+
 def write_private(path: Path, text: str) -> None:
     """Write a secret-bearing file as 0600 inside a 0700 directory.
 

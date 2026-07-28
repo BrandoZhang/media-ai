@@ -29,7 +29,8 @@ from ..core.registry import catalog
 from ..core.scene import scenes_for_group
 from ..core.result import SCHEMA_VERSION
 from ..credentials import stores
-from ..credentials.tomlwrite import atomic_write, dumps, write_private, write_public
+from ..credentials.tomlwrite import dumps, write_private, write_public
+from ..credentials.tomlwrite import backup as tomlwrite_backup
 from . import common
 from ._announce import announcements
 from ._discovery import (
@@ -79,24 +80,16 @@ def _load(path: Path) -> dict:
 
 
 def _backup(path: Path) -> Path | None:
-    """Copy a file aside before rewriting it. Comments are not preserved by the
-    writer, so the original is the only record of anything hand-written.
+    """Copy a file aside before rewriting it — see :func:`tomlwrite.backup`.
 
-    Created at the *source file's* mode from the start rather than written and then
-    chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
-    order leaves them in a world-readable file for as long as the write takes — and
-    permanently if the process dies in between. Same reasoning as
-    ``tomlwrite.atomic_write``, which is what does the work here.
+    Wrapped only to turn the "too many backups" case into the CLI's error contract;
+    the mechanism lives beside ``atomic_write`` so every writer of a user-owned TOML
+    file reaches the same one.
     """
-    if not path.is_file():
-        return None
-    mode = path.stat().st_mode & 0o777
-    for n in range(1, 1000):
-        candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
-        if not candidate.exists():
-            atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
-            return candidate
-    raise MediaError(f"too many backups beside {path}", category=ErrorCategory.CLI)
+    try:
+        return tomlwrite_backup(path)
+    except OSError as exc:
+        raise MediaError(str(exc), category=ErrorCategory.CLI) from exc
 
 
 # ------------------------------------------------------------------- skills
@@ -380,18 +373,26 @@ def _ask_model_ids(bindings: list[str], prompter, *, advanced: bool) -> dict[str
     """
     cat = catalog()
     out: dict[str, str] = {}
-    account_specific = [b for b in bindings if cat.providers[cat.get(b).provider].name == "volc-ark"]
-    if account_specific:
-        prompter.note(
-            "\nVolcengine Ark model ids are account-specific: a custom endpoint (ep-…) only\n"
-            "exists on the account that created it, and the shipped defaults may not be\n"
-            "enabled on yours. Check the Ark console for your ids."
-        )
+    # Which providers have account-scoped ids is declared per provider, not listed here.
+    # A table in the wizard means the next provider with deployment names silently never
+    # gets asked, and adding it means editing setup — the maintenance cost the
+    # manifest-driven menu exists to remove.
+    account_specific = [b for b in bindings if cat.providers[cat.get(b).provider].account_specific_model_ids]
+    for note in dict.fromkeys(
+        cat.providers[cat.get(b).provider].account_specific_note for b in account_specific
+    ):
+        prompter.note("\n" + (note or "This provider's model ids are account-specific — check its console."))
+    # Default to what this machine is *already* configured with, falling back to the
+    # manifest's shipped id. Offering the shipped id to someone who has configured an
+    # account-specific `ep-…` endpoint makes pressing Enter — the safest-looking key on
+    # the keyboard — silently revert it to a model their account may not have enabled.
+    configured = {bid: b.model_id for bid, b in load_config().bindings.items() if b.model_id}
     for bid in bindings:
         spec = cat.get(bid)
         if bid not in account_specific and not advanced:
             continue
-        entered = prompter.text(f"{bid} — model id sent on the wire", default=spec.model_id)
+        current = configured.get(bid) or spec.model_id
+        entered = prompter.text(f"{bid} — model id sent on the wire", default=current)
         if entered and entered != spec.model_id:
             out[bid] = entered
     return out
@@ -669,8 +670,10 @@ def _render_config(answers: _Answers) -> str:
     bindings = dict(existing.bindings)
     for bid, entry in answers.creds.items():
         key = entry["api_key"]
-        bindings[bid] = UserBinding(
-            id=bid,
+        # Merge: re-running `init` is the documented upgrade path, so it must not drop
+        # the base_url, options or endpoint id a previous run (or a hand edit) put there.
+        # Only what this run actually asked about changes.
+        bindings[bid] = (bindings.get(bid) or UserBinding(id=bid)).merged_with(
             model_id=answers.model_ids.get(bid),
             credential=key if key.startswith("env://") else f"cred://{bid}",
         )

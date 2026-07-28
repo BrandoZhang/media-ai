@@ -246,3 +246,50 @@ def test_local_provider_may_not_require_a_credential():
     )
     with pytest.raises(ManifestError, match="local provider"):
         _load(text)
+
+
+def test_a_declared_capability_is_reachable_through_an_option():
+    """Discovery and enforcement read the same declaration so they cannot disagree.
+
+    A `supports.*` flag the caller can only act on via `--option` is a promise the
+    validator has to be able to keep: advertising `streaming: true` while rejecting
+    `--option stream=true` is discovery lying about the same manifest that refuses it.
+    """
+    for b in BINDINGS:
+        opts = set(b.constraints.options)
+        for flag, option in (("streaming", "stream"),):
+            if b.constraints.supports_flag(flag):
+                assert option in opts, (
+                    f"{b.id} declares supports.{flag} but does not accept --option {option}"
+                )
+
+
+@pytest.mark.parametrize("binding_id", [b.id for b in builtin_catalog().all()])
+def test_a_provider_specific_flag_is_honoured_by_the_adapter_that_serves_it(binding_id):
+    """The scene check, one level down: a manifest may not advertise a capability the
+    code it names has never heard of.
+
+    Seedream 5.0 declared `grounding = true` — a flag only the Gemini adapter builds a
+    wire field for — so `capabilities` reported web search on a binding whose request
+    builder ignores it, and the `--option` an agent reached for was rejected. Flags in
+    `CORE_GATED_FLAGS` are enforced before an adapter is reached and need no opt-in.
+    """
+    from media_ai.core.binding import CORE_GATED_FLAGS
+    from media_ai.core.registry import load_adapter_class
+
+    b = CATALOG.get(binding_id)
+    adapter = load_adapter_class(CATALOG.providers[b.provider].adapter)
+    declared = {k for k, v in b.constraints.supports.items() if v} - CORE_GATED_FLAGS
+    unhonoured = sorted(declared - adapter.honoured_flags(adapter.__new__(adapter)))
+    assert not unhonoured, f"{binding_id} declares {unhonoured} but its adapter honours none of them"
+
+
+def test_a_beta_or_preview_wire_id_is_not_declared_ga():
+    """`lifecycle` is what the wizard labels a choice with. A model the vendor marks
+    beta in its own id, offered as `ga`, is picked as though it were settled."""
+    for b in BINDINGS:
+        marker = next((m for m in ("-beta", "-preview", "-alpha", "-rc") if m in b.model_id.lower()), None)
+        if marker:
+            assert b.lifecycle is not Lifecycle.GA, (
+                f"{b.id} has {marker!r} in its wire id {b.model_id!r} but declares lifecycle=ga"
+            )

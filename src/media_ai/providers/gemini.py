@@ -37,7 +37,7 @@ from ._base import HttpAdapter
 
 # The 30 prebuilt TTS voices (style/tone/pace are directed via the prompt text /
 # --instruction, not a parameter). Which models exist, and their aspect-ratio sets,
-# live in the catalogue — see providers/_catalog.py.
+# live in the binding manifests — see bindings/gemini.toml.
 _GEMINI_VOICES = (
     "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
     "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
@@ -47,6 +47,10 @@ _GEMINI_VOICES = (
 
 
 class GeminiAdapter(HttpAdapter):
+
+    def honoured_flags(self) -> frozenset[str]:
+        # `candidateCount` and the Search grounding tool.
+        return frozenset({"group_output", "grounding"})
 
     def supported_scenes(self) -> frozenset[Scene]:
         return frozenset({
@@ -76,9 +80,6 @@ class GeminiAdapter(HttpAdapter):
 
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         model = req.model or self.model_id
-        # Refuse a retired model here as well as in capabilities(), so the two agree:
-        # a caller must never be able to send a request for something discovery says
-        # is gone.
         return self._native(model, req)
 
     def _native(self, model: str, req: ImageRequest) -> GenerationResult:

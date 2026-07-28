@@ -43,6 +43,10 @@ class VolcArkAdapter(HttpAdapter):
     question. A binding answers it before the call.
     """
 
+    def honoured_flags(self) -> frozenset[str]:
+        # Both become body fields below: `sequential_image_generation` and `stream`.
+        return frozenset({"group_output", "streaming"})
+
     def supported_scenes(self) -> frozenset[Scene]:
         return frozenset({
             Scene.IMAGE_TEXT_TO_IMAGE, Scene.IMAGE_IMAGE_TO_IMAGE,
@@ -72,6 +76,25 @@ class VolcArkAdapter(HttpAdapter):
             if geo.width * geo.height >= floor:  # type: ignore[operator]
                 return f"{geo.width}x{geo.height}"
             return _DEFAULT_TIER
+        # Ark's `size` is a pixel pair or a named tier — there is no field for a bare
+        # aspect ratio. Silently falling through to the default tier would bill the
+        # caller for a 2K square they did not ask for, which is the same silent geometry
+        # substitution the video path was fixed for.
+        #
+        # Raised here rather than declared as a constraint on purpose: a validator issue
+        # is suppressible with `--on-unsupported ignore`, and suppressing this one puts
+        # the silent substitution straight back. The wire simply cannot carry the
+        # request, so there is nothing to downgrade. Still before any network call, so
+        # nothing is charged.
+        if geo and geo.aspect_ratio:
+            raise MediaError(
+                f"{self.binding.id} has no wire field for a bare --aspect-ratio; "
+                f"give pixels with --size WxH, or a tier with --resolution",
+                category=ErrorCategory.UNSUPPORTED, code="geometry_not_expressible",
+                provider=self.name, model=req.model or self.model_id,
+                details={"aspect_ratio": geo.aspect_ratio,
+                         "named_sizes": list(self.constraints.geometry.named_sizes or ())},
+            )
         if geo and geo.resolution:
             return geo.resolution
         return _DEFAULT_TIER
@@ -105,7 +128,10 @@ class VolcArkAdapter(HttpAdapter):
         if req.references:
             enc = [to_data_uri(r, "image") for r in req.references]
             body["image"] = enc if len(enc) > 1 else enc[0]
-        if req.output_format is not None:
+        # Gated like every other optional wire field: only a binding declaring the
+        # formats may receive one. An unrequested parameter is exactly what Ark rejects
+        # with InvalidParameter, and only the 5.0 bindings have been run live.
+        if req.output_format is not None and self.constraints.output.formats:
             body["output_format"] = req.output_format
         if stream_requested:
             body["stream"] = stream
@@ -128,10 +154,10 @@ class VolcArkAdapter(HttpAdapter):
             raise MediaError("Ark image response had no images", category=ErrorCategory.PROVIDER,
                              provider=self.name, model=model_id)
         out = Path(req.output)
-        artifacts = [self._save_image(items[0], out, client, headers, "image")]
+        artifacts = [self._save_image(items[0], out, client, "image")]
         for i, it in enumerate(items[1:], start=2):
             p = out.with_name(f"{out.stem}_{i}{out.suffix}")
-            artifacts.append(self._save_image(it, p, client, headers, "image", role="group"))
+            artifacts.append(self._save_image(it, p, client, "image", role="group"))
         usage = data.get("usage") or {}
         used_model = data.get("model") or model_id
         self.record(derive_scene(req), model=used_model, kind="image",
@@ -142,9 +168,14 @@ class VolcArkAdapter(HttpAdapter):
             artifacts=artifacts, usage=usage, meta={"prompt": req.prompt, "size": body["size"]},
         )
 
-    @staticmethod
-    def _streamed_image_response(events: list[dict]) -> dict:
-        """Normalize Ark's image SSE events into the ordinary image response shape."""
+    def _streamed_image_response(self, events: list[dict]) -> dict:
+        """Normalize Ark's image SSE events into the ordinary image response shape.
+
+        An instance method so the error it raises can name the binding's provider from
+        the binding, like every other error. A literal here would be a second source of
+        truth for something that already has one, and it lands in output rather than in
+        a failing import.
+        """
         images: list[tuple[int, int, dict]] = []
         usage: dict = {}
         model = None
@@ -153,7 +184,7 @@ class VolcArkAdapter(HttpAdapter):
                 raise MediaError(
                     f"Ark streamed image generation failed: {event['error']}",
                     category=ErrorCategory.PROVIDER,
-                    provider="volc-ark",
+                    provider=self.name,
                 )
             if event.get("model"):
                 model = event["model"]
@@ -167,7 +198,14 @@ class VolcArkAdapter(HttpAdapter):
         return {"data": [image for _, _, image in images], "usage": usage, "model": model}
 
     @staticmethod
-    def _save_image(item: dict, out: Path, client, headers, kind: str, *, role=None) -> Artifact:
+    def _save_image(item: dict, out: Path, client, kind: str, *, role=None) -> Artifact:
+        """Write one returned image, inline or downloaded.
+
+        Takes no auth headers on purpose: Ark returns a **pre-signed** URL, and sending
+        the Bearer token to it would leak the key to whatever CDN serves it. The
+        parameter used to be threaded in and ignored, which read at the call site as
+        "downloads are authenticated".
+        """
         out.parent.mkdir(parents=True, exist_ok=True)
         if item.get("b64_json"):
             out.write_bytes(base64.b64decode(item["b64_json"]))

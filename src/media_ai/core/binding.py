@@ -141,6 +141,30 @@ class ProviderSpec:
     setup_hint: str | None = None
     """One line the wizard shows before asking for a credential — where to get a key,
     what has to be enabled first."""
+    account_specific_model_ids: bool = False
+    """This provider's model ids differ per account (Ark endpoint ids, deployment names).
+
+    Declared so the wizard can ask for one without holding a table of which providers
+    behave this way — the same reason the binding menu is generated from the manifests.
+    Without it, adding a provider with account-scoped ids means editing the wizard, and
+    forgetting to means its users silently never get asked."""
+    account_specific_note: str | None = None
+    """What the wizard says before asking. Absent = a generic line."""
+
+
+#: ``supports.*`` flags the **core** enforces for every binding, before an adapter is
+#: reached — either directly in :mod:`media_ai.core.validate` or implicitly by the scene
+#: a request derives to. A binding declaring one of these needs no adapter cooperation.
+#:
+#: Everything outside this set is provider-specific: the adapter has to build a wire
+#: field for it, so it must say so in ``Adapter.honoured_flags()``. That is what stops a
+#: manifest advertising a capability the code it names has never heard of.
+CORE_GATED_FLAGS = frozenset({
+    "seed", "negative_prompt", "transparency", "quality", "audio", "watermark_control",
+    "return_last_frame", "timestamps", "language_code", "instruction", "composition_plan",
+    "interactive_edit", "dialogue", "cancel",
+    "first_frame", "last_frame", "reference_images", "reference_videos", "reference_audios",
+})
 
 
 @dataclass(frozen=True)
@@ -202,7 +226,13 @@ class References:
 @dataclass(frozen=True)
 class Video:
     durations: tuple[int, ...] = ()
-    is_async: bool = True
+    is_async: bool | None = None
+    """Whether generation is a submit/poll job. ``None`` = not declared.
+
+    Tri-state rather than defaulting to ``True``, because a default is indistinguishable
+    from a declaration once it reaches discovery: an image-only binding was printing
+    ``"video": {"is_async": true}``, inviting an agent to read a video capability off a
+    binding that serves no video scene."""
 
 
 @dataclass(frozen=True)
@@ -250,7 +280,15 @@ class Constraints:
             ("geometry", self.geometry), ("output", self.output),
             ("references", self.references), ("video", self.video), ("audio", self.audio),
         ):
-            body = {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(block).items() if v not in (None, (), 0)}
+            # `v not in (None, (), 0)` looked equivalent and was not: `False == 0` in
+            # Python, so a deliberately declared `async = false` was dropped and the
+            # reader fell back to the opposite default. Booleans are always meaningful;
+            # only "absent" and "empty" are worth hiding.
+            body = {
+                k: (list(v) if isinstance(v, tuple) else v)
+                for k, v in vars(block).items()
+                if v is not None and v != () and (v != 0 or isinstance(v, bool))
+            }
             if body:
                 out[name] = body
         return out
@@ -384,6 +422,8 @@ def _parse_provider(data: dict, source: str) -> ProviderSpec:
     return ProviderSpec(
         name=name, title=str(raw.get("title") or name), transport=transport, adapter=adapter,
         auth=auth, base_url=base_url, docs=raw.get("docs"), setup_hint=raw.get("setup_hint"),
+        account_specific_model_ids=bool(raw.get("account_specific_model_ids", False)),
+        account_specific_note=raw.get("account_specific_note") or None,
     )
 
 
@@ -430,7 +470,7 @@ def _parse_constraints(raw: dict, source: str) -> Constraints:
         ),
         video=Video(
             durations=tuple(int(d) for d in vid.get("durations", ())),
-            is_async=bool(vid.get("async", True)),
+            is_async=None if vid.get("async") is None else bool(vid["async"]),
         ),
         audio=Audio(
             voices=_str_tuple(aud, "voices", source),

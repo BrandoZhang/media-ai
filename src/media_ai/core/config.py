@@ -68,6 +68,25 @@ class UserBinding:
     credential: str | None = None
     options: dict = field(default_factory=dict)
 
+    def merged_with(self, **changes) -> "UserBinding":
+        """This entry with only the named fields replaced; ``None`` means "leave alone".
+
+        Every writer that edits one field of an existing binding goes through here.
+        Rebuilding the entry from the arguments a command happened to receive is what
+        made `bindings add <id> --credential …` delete a hand-configured `model_id`
+        (an account-specific `ep-…` endpoint), `base_url` and `options` — and that is
+        the command every resolution error hints at, so rotating a key silently
+        un-configured the binding whose key was being rotated.
+
+        Clearing a field is therefore deliberate and explicit: pass ``""``.
+        """
+        kept = {
+            f: (getattr(self, f) if changes.get(f) is None else (changes[f] or None))
+            for f in ("extends", "model_id", "base_url", "credential")
+        }
+        options = self.options if changes.get("options") is None else changes["options"]
+        return UserBinding(id=self.id, options=dict(options or {}), **kept)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -169,6 +188,23 @@ def load_config(path: Path | None = None) -> Config:
         defaults[key] = value
 
     return Config(bindings=bindings, defaults=defaults, path=path, exists=True)
+
+
+def save_config(config: "Config", *, header: str | None = None) -> Path | None:
+    """Write the config file, backing up whatever was there. Returns the backup path.
+
+    Every command that edits the config goes through here, so "the previous file is
+    kept" is a property of the config rather than of whoever remembered. It matters
+    because :func:`render_config` cannot round-trip comments: an edit to one field
+    rewrites the whole file, and a hand-written note explaining why a binding points at
+    a particular endpoint is otherwise gone with no way back.
+    """
+    from ..credentials.tomlwrite import backup, write_public
+
+    path = config_path()
+    saved = backup(path)
+    write_public(path, render_config(config, header=header))
+    return saved
 
 
 def render_config(config: Config, *, header: str | None = None) -> str:

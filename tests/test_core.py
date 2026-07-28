@@ -320,3 +320,21 @@ def test_parse_args_help_preserves_standard_stdout(capsys):
         common.parse_args(ap, ["--help"])
     assert ei.value.code == 0
     assert "usage:" in capsys.readouterr().out
+
+
+def test_a_declared_false_survives_the_capabilities_filter():
+    """`v not in (None, (), 0)` looked like "drop the empties" and was not: `False == 0`
+    in Python, so a deliberately declared `async = false` vanished and a reader fell
+    back to the opposite default. Booleans are always meaningful."""
+    from media_ai.core.binding import Constraints, Video
+
+    body = Constraints(video=Video(is_async=False)).to_dict()
+    assert body["video"] == {"is_async": False}
+
+
+def test_an_undeclared_block_is_absent_rather_than_defaulted():
+    """An image-only binding was printing `"video": {"is_async": true}` — a video
+    capability read off a binding that serves no video scene."""
+    from media_ai.core.binding import Constraints
+
+    assert "video" not in Constraints().to_dict()

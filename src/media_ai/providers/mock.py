@@ -51,6 +51,10 @@ def _video_tokens(w: int, h: int, seconds: int) -> dict:
 
 class MockAdapter(Adapter):
 
+    def honoured_flags(self) -> frozenset[str]:
+        # The offline backend imitates whatever a manifest declares.
+        return frozenset({"group_output", "streaming", "grounding"})
+
     def supported_scenes(self) -> frozenset[Scene]:
         return frozenset(Scene) - {Scene.VIDEO_CONCAT}
 

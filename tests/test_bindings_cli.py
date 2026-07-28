@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+from pathlib import Path
 
 import pytest
 from media_ai.cli import bindings as bindings_mod
@@ -215,3 +216,48 @@ def test_a_default_survives_adding_another_binding(cfg, capsys):
     run(config_mod, "set-default", "image.text_to_image", "mock/mock", capsys=capsys)
     run(bindings_mod, "add", "openai/gpt-image-2", "--credential", "env://OPENAI_API_KEY", capsys=capsys)
     assert read(cfg)["defaults"]["image.text_to_image"] == "mock/mock"
+
+
+# --------------------------------------------------- editing must not lose fields
+
+
+def test_add_merges_into_an_existing_entry_instead_of_rebuilding_it(cfg, capsys):
+    """Rotating a key must not un-configure the binding whose key is being rotated.
+
+    `bindings add <id> --credential …` is the command every resolution error hints at,
+    so it is the one most likely to be run against a binding that already exists. It
+    used to rebuild the entry from the flags it happened to receive, deleting an
+    account-specific `model_id` (an Ark `ep-…` endpoint), the `base_url` and the
+    per-binding `options` — silently, and with no backup to recover them from.
+    """
+    cfg.write_text(
+        'schema = 2\n\n'
+        '[bindings."volc-ark/seedance-2.0"]\n'
+        'model_id = "ep-my-private-endpoint"\n'
+        'base_url = "https://ark.ap-southeast.volces.com/api/v3"\n'
+        'credential = "env://ARK_API_KEY"\n'
+        '[bindings."volc-ark/seedance-2.0".options]\n'
+        'poll_timeout = 3600\n',
+        encoding="utf-8",
+    )
+    res = run(bindings_mod, "add", "volc-ark/seedance-2.0", "--credential", "env://ARK_KEY_2", capsys=capsys)
+    entry = read(cfg)["bindings"]["volc-ark/seedance-2.0"]
+    assert entry["credential"] == "env://ARK_KEY_2", "the field that was asked for changes"
+    assert entry["model_id"] == "ep-my-private-endpoint", "the endpoint id survives"
+    assert entry["base_url"] == "https://ark.ap-southeast.volces.com/api/v3"
+    assert entry["options"] == {"poll_timeout": 3600}
+    assert res["backup"], "the previous file is kept"
+
+
+def test_every_config_write_leaves_the_previous_file_behind(cfg, capsys):
+    """`render_config` cannot round-trip comments, so an edit to one field rewrites the
+    whole file — and a hand-written note explaining an endpoint choice is otherwise
+    gone with no way back."""
+    cfg.write_text('schema = 2\n\n# why: only this endpoint is enabled on our account\n'
+                   '[bindings."mock/mock"]\n', encoding="utf-8")
+
+    add = run(bindings_mod, "add", "mock/mock", capsys=capsys)
+    assert "why: only this endpoint" in Path(add["backup"]).read_text(encoding="utf-8")
+
+    default = run(config_mod, "set-default", "image.text_to_image", "mock/mock", capsys=capsys)
+    assert default["backup"] and Path(default["backup"]).is_file()

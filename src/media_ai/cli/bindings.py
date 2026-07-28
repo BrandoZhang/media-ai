@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import argparse
 
-from ..core.config import UserBinding, config_path, load_config, render_config
+from ..core.config import UserBinding, config_path, load_config, save_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.resolve import available_bindings
 from ..core.result import SCHEMA_VERSION
 from ..credentials.reference import is_reference
-from ..credentials.tomlwrite import write_public
 from . import common
 
 CONFIG_HEADER = (
@@ -112,16 +111,21 @@ def _add(args) -> dict:
             hint="put the key in credentials.toml and refer to it as cred://<account>",
         )
 
+    # Merge, never rebuild: `add` on a binding that already exists is how a key gets
+    # rotated, and it must not take the endpoint id, base URL or per-binding options
+    # down with it. Only the flags actually passed change anything.
+    existing = config.bindings.get(args.id) or UserBinding(id=args.id)
     bindings = dict(config.bindings)
-    bindings[args.id] = UserBinding(
-        id=args.id, extends=args.extends, model_id=args.model_id,
+    bindings[args.id] = existing.merged_with(
+        extends=args.extends, model_id=args.model_id,
         base_url=args.base_url, credential=args.credential,
     )
     updated = type(config)(bindings=bindings, defaults=dict(config.defaults), path=config.path, exists=True)
-    write_public(config_path(), render_config(updated, header=CONFIG_HEADER))
+    saved = save_config(updated, header=CONFIG_HEADER)
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "binding": args.id, "config": str(config_path()),
+        "backup": str(saved) if saved else None,
         "scenes": sorted(s.value for s in spec.scenes),
     }
 

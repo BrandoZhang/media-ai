@@ -136,6 +136,22 @@ class Adapter:
         """
         raise NotImplementedError
 
+    def honoured_flags(self) -> frozenset[str]:
+        """``constraints.supports.*`` names whose ``true`` this adapter acts on.
+
+        The same guard as :meth:`supported_scenes`, one level down. A manifest can
+        declare any flag it likes; only a flag some code path reads is a capability.
+        Ark's Seedream 5.0 declared ``grounding = true`` — a flag only the Gemini
+        adapter implements — so discovery advertised web search on a binding whose
+        request builder has never heard of it, and the caller's `--option` was rejected.
+
+        Flags the *core* gates on every binding (``seed``, ``negative_prompt``,
+        geometry and reference limits, …) are validated before an adapter is reached and
+        need no entry here; this covers the ones an adapter has to opt into. The empty
+        default means "declares nothing provider-specific", which is the safe answer.
+        """
+        return frozenset()
+
     # ---- operations (override the supported ones) ------------------------
 
     def generate_image(self, req: ImageRequest):

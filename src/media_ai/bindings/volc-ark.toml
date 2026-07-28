@@ -1,9 +1,10 @@
 # Volcengine Ark — Doubao Seedream (image) + Seedance (video).
 #
-# Four bindings, one endpoint, four different sets of limits. The three Seedream
-# models share `POST /images/generations` and the same auth, yet differ in every
-# constraint that matters: resolution tiers, output formats, whether group output
-# works, reference ceilings, pixel floors. That is why constraints live per binding.
+# Several bindings, one endpoint, and no two with the same limits. The Seedream models
+# share `POST /images/generations` and the same auth, yet differ in every constraint
+# that matters: resolution tiers, output formats, whether group output works, reference
+# ceilings, pixel floors. That is why constraints live per binding — and why this
+# comment carries no count to go stale the next time one is added.
 #
 # Model IDs are account-specific and must be enabled in the console first:
 # https://www.volcengine.com/docs/82379/1330310
@@ -15,6 +16,10 @@ transport  = "http"
 adapter    = "media_ai.providers.volc_ark:VolcArkAdapter"
 docs       = "https://www.volcengine.com/docs/82379/1330310"
 setup_hint = "Enable the model in the Ark console, then create an API key. Model IDs are per-account."
+account_specific_model_ids = true
+account_specific_note = """Volcengine Ark model ids are account-specific: a custom endpoint (ep-…) only
+exists on the account that created it, and the shipped defaults may not be
+enabled on yours. Check the Ark console for your ids."""
 
 [provider.auth]
 kind   = "api_key"
@@ -94,7 +99,10 @@ seed             = true
 interactive_edit = false
 group_output     = true
 streaming        = true
-grounding        = true
+# `grounding` stays false while the note above holds: the vendor documents a web-search
+# toggle but not its wire field name, so the adapter sends nothing and honours nothing.
+# A flag discovery reports as true is a promise `--option` cannot keep.
+grounding        = false
 
 [binding.constraints.geometry]
 mode          = "both"
@@ -130,7 +138,7 @@ notes    = [
 ]
 
 [binding.constraints]
-options = ["watermark", "response_format"]
+options = ["watermark", "response_format", "stream"]
 
 [binding.constraints.supports]
 seed             = true
@@ -208,6 +216,9 @@ id       = "volc-ark/seedance-2.0-fast"
 model    = "seedance-2.0-fast"
 model_id = "seedance-2.0-fast-260128-cc-beta"
 title    = "Seedance 2.0 Fast"
+# The vendor labels it beta in the wire id itself; `ga` would tell the wizard to offer
+# it as settled, which is the one thing lifecycle exists to prevent.
+lifecycle = "preview"
 scenes   = [
   "video.text_to_video",
   "video.image_to_video",

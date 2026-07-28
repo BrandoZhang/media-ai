@@ -45,6 +45,10 @@ _SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp
 
 class OpenAIAdapter(HttpAdapter):
 
+    def honoured_flags(self) -> frozenset[str]:
+        # `n` on the Images API.
+        return frozenset({"group_output"})
+
     def supported_scenes(self) -> frozenset[Scene]:
         return frozenset({Scene.IMAGE_TEXT_TO_IMAGE, Scene.IMAGE_IMAGE_TO_IMAGE})
 
@@ -75,7 +79,6 @@ class OpenAIAdapter(HttpAdapter):
         base, headers = super()._auth(cred)
         return base, {**headers, **self._scoping_headers()}
 
-    # ---- discovery -------------------------------------------------------
     # ---- size mapping ----------------------------------------------------
     def _size(self, model: str, req: ImageRequest) -> str:
         geo = req.geometry
@@ -106,9 +109,6 @@ class OpenAIAdapter(HttpAdapter):
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         model = req.model or self.model_id
-        # Refuse a retired model here as well as in capabilities(), so the two agree:
-        # a caller must never be able to send a request for something discovery says
-        # is gone.
         client, headers = self._prepare()
         scene = derive_scene(req)
         if req.references:
