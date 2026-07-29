@@ -365,12 +365,18 @@ def _configure_one_binding(
     provider = cat.providers[spec.provider]
     model_id = endpoint_id = base_url = None
 
-    if provider.setup_base_url:
-        # Do not carry a historical/custom value forward as the visible default:
-        # the manifest is the one source of truth for the provider's recommended
-        # endpoint. A user who needs a regional gateway can still type it explicitly.
+    if provider.setup_base_url or (advanced and provider.base_url.configurable):
+        # Ark's setup must always recommend the manifest's canonical endpoint. In
+        # advanced setup, every other configurable provider also asks locally for its
+        # URL, retaining an existing custom endpoint as the least-surprising default.
+        configured = load_config().bindings.get(bid)
+        default_url = (
+            provider.base_url.default
+            if provider.setup_base_url
+            else (configured.base_url if configured and configured.base_url else provider.base_url.default)
+        )
         base_url = prompter.text(
-            f"{bid} — Base URL", default=provider.base_url.default or "",
+            f"{bid} — Base URL", default=default_url or "",
         ).strip()
 
     if provider.account_specific_model_ids:
@@ -823,13 +829,15 @@ def _report(summary: dict, prompter) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, models, and Agent Skills.")
     ap.add_argument("--verify", action="store_true", help="probe each key after writing (off by default)")
-    ap.add_argument("--advanced", action="store_true", help="also choose a model for each operation")
+    ap.add_argument("--advanced", action="store_true",
+                    help="also configure each binding's Base URL and wire model ID")
     ap.add_argument("--skills-only", action="store_true", help="only install Agent Skills")
     ap.add_argument("--skills-dest", default=None, help="install skills here without asking")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written without writing it")
     ap.add_argument("--non-interactive", action="store_true", help="never open a terminal UI")
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("--log-level", default=None)
+    ap.add_argument("--verbose", action="store_true", help="print redacted HTTP diagnostics to stderr")
     ap.add_argument("--metadata-out", default=None)
     return ap
 

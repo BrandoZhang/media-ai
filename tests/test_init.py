@@ -712,6 +712,24 @@ def test_ark_init_replaces_a_legacy_model_id_with_endpoint_id(home):
     assert summary["bindings"] == [binding]
 
 
+def test_advanced_non_ark_configures_url_model_then_key_per_binding(home):
+    binding = "openai/gpt-image-2"
+    args = make_args(skills_dest=str(home / "sk"), advanced=True)
+    summary, prompter = run(
+        args,
+        [pick("media-ai-image"), binding_index(binding), 0, None, None, SECRET],
+    )
+    questions = prompter.asked
+    base = next(i for i, q in enumerate(questions) if q == f"{binding} — Base URL")
+    model = next(i for i, q in enumerate(questions) if q == f"{binding} — model ID sent on the wire")
+    key = next(i for i, q in enumerate(questions) if q.endswith("API key"))
+    assert base < model < key
+    entry = config(home)["bindings"][binding]
+    assert entry["base_url"] == "https://api.openai.com/v1"
+    assert "model_id" not in entry, "accepting the manifest default should not restate it"
+    assert summary["bindings"] == [binding]
+
+
 # --------------------------------------------------------------- merge/backup
 
 
