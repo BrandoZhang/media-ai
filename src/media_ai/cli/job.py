@@ -17,8 +17,9 @@ from . import common
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai job", description="Query or cancel an async job.")
     sub = ap.add_subparsers(dest="op", required=True)
-    for op in ("query", "cancel"):
-        p = sub.add_parser(op)
+    for op, help_text in (("query", "poll a job and optionally download its result"),
+                          ("cancel", "cancel a queued or running job")):
+        p = sub.add_parser(op, help=help_text)
         p.add_argument("--id", required=True, help="the job/task id")
         if op == "query":
             p.add_argument("--output", default=None, help="download the finished artifact here")

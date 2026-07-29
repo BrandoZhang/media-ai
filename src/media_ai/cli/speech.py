@@ -24,14 +24,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="op", required=True)
 
     gen = sub.add_parser("generate", help="text -> speech (single voice)")
-    gen.add_argument("--text", required=True)
-    gen.add_argument("--output", required=True)
+    gen.add_argument("--text", required=True, help="text to synthesize")
+    gen.add_argument("--output", required=True, help="path for the generated audio file")
     gen.add_argument("--voice", default=None, help="provider voice id (falls back to a provider default)")
     gen.add_argument("--output-format", dest="output_format", default=None, help="e.g. mp3_44100_128")
     gen.add_argument("--language-code", dest="language_code", default=None, help="ISO 639-1")
-    gen.add_argument("--seed", type=int, default=None)
+    gen.add_argument("--seed", type=int, default=None, help="deterministic generation seed, when supported")
     gen.add_argument("--timestamps", type=common.bool_arg, default=False, help="also emit a character-alignment sidecar")
-    gen.add_argument("--option", nargs="*", default=[])
+    gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(gen)
 
     dlg = sub.add_parser("dialogue", help="multi-voice dialogue -> speech")
@@ -43,12 +43,13 @@ def _build_parser() -> argparse.ArgumentParser:
     dlg.add_argument("--script", default=None,
                      help="JSON: {\"cast\":{NAME:VOICE}, \"turns\":[{\"speaker\":..,\"text\":..}], \"instruction\"?} "
                           "or a flat [{\"speaker\":..,\"voice\":..,\"text\":..}] list")
-    dlg.add_argument("--output", required=True)
+    dlg.add_argument("--output", required=True, help="path for the generated dialogue audio file")
     dlg.add_argument("--output-format", dest="output_format", default=None, help="e.g. mp3_44100_128")
     dlg.add_argument("--language-code", dest="language_code", default=None, help="ISO 639-1")
-    dlg.add_argument("--seed", type=int, default=None)
-    dlg.add_argument("--timestamps", type=common.bool_arg, default=False)
-    dlg.add_argument("--option", nargs="*", default=[])
+    dlg.add_argument("--seed", type=int, default=None, help="deterministic generation seed, when supported")
+    dlg.add_argument("--timestamps", type=common.bool_arg, default=False,
+                     help="also emit a character-alignment sidecar")
+    dlg.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(dlg)
     return ap
 

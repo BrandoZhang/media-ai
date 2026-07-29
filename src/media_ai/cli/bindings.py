@@ -27,8 +27,9 @@ CONFIG_HEADER = (
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai bindings", description="List or configure bindings.")
     sub = ap.add_subparsers(dest="op", required=True)
-    for op in ("list", "available"):
-        common.add_global_args(sub.add_parser(op))
+    for op, help_text in (("list", "list configured and built-in bindings"),
+                          ("available", "list declared bindings not configured yet")):
+        common.add_global_args(sub.add_parser(op, help=help_text))
     add = sub.add_parser("add", help="write a binding into the config")
     add.add_argument("id", help="<provider>/<model>, or any name when using --extends")
     add.add_argument("--credential", default=None, help="env://VAR | cred://<account> | keychain://<name>")
@@ -36,7 +37,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add.add_argument("--model-id", dest="model_id", default=None, help="override the id sent on the wire")
     add.add_argument("--endpoint-id", dest="endpoint_id", default=None,
                      help="Volcengine Ark endpoint ID sent as model (e.g. ep-xxx-xxx)")
-    add.add_argument("--base-url", dest="base_url", default=None)
+    add.add_argument("--base-url", dest="base_url", default=None,
+                     help="override the provider's HTTP base URL")
     common.add_global_args(add)
     return ap
 

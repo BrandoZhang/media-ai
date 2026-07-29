@@ -36,6 +36,22 @@ _GROUPS = {
     "usage": "usage",
 }
 
+_GROUP_HELP = {
+    "init": "configure credentials, bindings, and Agent Skills",
+    "doctor": "check the installation and configuration offline",
+    "uninstall": "remove installed Agent Skills and configuration",
+    "image": "generate or edit images",
+    "video": "generate videos or concatenate clips",
+    "speech": "generate single-voice or dialogue speech",
+    "music": "compose music or build a composition plan",
+    "sound": "generate sound effects from text",
+    "job": "query, download, or cancel an asynchronous job",
+    "capabilities": "list binding capabilities",
+    "bindings": "list or configure callable bindings",
+    "config": "show or set scene defaults",
+    "usage": "summarize the local usage ledger",
+}
+
 
 def group_main(group: str):
     """The entry point for one group, imported now."""
@@ -45,9 +61,9 @@ def group_main(group: str):
 def _usage(stream) -> None:
     print("usage: media-ai <group> <op> [args...]\n\ngroups:", file=stream)
     for name in _GROUPS:
-        print(f"  {name}", file=stream)
+        print(f"  {name:<14} {_GROUP_HELP[name]}", file=stream)
     print("\nexamples:", file=stream)
-    print("  media-ai init                      # first-run setup: keys, models, skills", file=stream)
+    print("  media-ai init                      # configure keys, bindings, and skills", file=stream)
     print("  media-ai doctor                    # check the install offline (PATH, ffmpeg, keys, skills)", file=stream)
     print("  media-ai uninstall                 # remove the skills; keeps config unless asked", file=stream)
     print("  media-ai image generate --prompt 'a red bicycle' --output bike.png", file=stream)

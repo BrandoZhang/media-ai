@@ -22,7 +22,7 @@ from .bindings import CONFIG_HEADER
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai config", description="Show or change configuration.")
     sub = ap.add_subparsers(dest="op", required=True)
-    common.add_global_args(sub.add_parser("show"))
+    common.add_global_args(sub.add_parser("show", help="show configured bindings and scene defaults"))
     sd = sub.add_parser("set-default", help="which binding a scene uses when none is named")
     sd.add_argument("scene", help="e.g. video.text_to_video, or a group like 'video' for all its scenes")
     sd.add_argument("binding", help="the binding id to use")

@@ -21,8 +21,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="op", required=True)
 
     gen = sub.add_parser("generate", help="text -> sound effect")
-    gen.add_argument("--text", required=True)
-    gen.add_argument("--output", required=True)
+    gen.add_argument("--text", required=True, help="text description of the sound effect")
+    gen.add_argument("--output", required=True, help="path for the generated audio file")
     gen.add_argument("--duration-seconds", dest="duration_seconds", type=float, default=None,
                      help="0.5-30s; omit to let the model choose")
     gen.add_argument("--output-format", dest="output_format", default=None, help="e.g. mp3_44100_128")

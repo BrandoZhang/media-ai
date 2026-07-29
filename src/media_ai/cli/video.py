@@ -30,31 +30,44 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai video", description="Generate a video.")
     sub = ap.add_subparsers(dest="op", required=True)
     gen = sub.add_parser("generate", help="text / frames / references -> video")
-    gen.add_argument("--prompt", default="")
-    gen.add_argument("--output", required=True)
-    gen.add_argument("--first-frame", dest="first_frame", default=None)
-    gen.add_argument("--last-frame", dest="last_frame", default=None)
-    gen.add_argument("--reference-image", dest="reference_image", nargs="*", default=[])
-    gen.add_argument("--reference-video", dest="reference_video", nargs="*", default=[])
-    gen.add_argument("--reference-audio", dest="reference_audio", nargs="*", default=[])
+    gen.add_argument("--prompt", default="", help="text instruction for the video; optional with visual references")
+    gen.add_argument("--output", required=True, help="path for the generated video file")
+    gen.add_argument("--first-frame", dest="first_frame", default=None,
+                     help="image to use as the video's opening frame")
+    gen.add_argument("--last-frame", dest="last_frame", default=None,
+                     help="image to use as the video's final frame")
+    gen.add_argument("--reference-image", dest="reference_image", nargs="*", default=[],
+                     help="reference image path(s) or one JSON array")
+    gen.add_argument("--reference-video", dest="reference_video", nargs="*", default=[],
+                     help="reference video path(s) or one JSON array")
+    gen.add_argument("--reference-audio", dest="reference_audio", nargs="*", default=[],
+                     help="reference audio path(s) or one JSON array")
     gen.add_argument("--continue-from", dest="continue_from", default=None,
                      help="continue from the end of this clip (video.extend); some backends require a URI")
-    gen.add_argument("--duration", "--seconds", dest="duration", type=int, default=None)
-    gen.add_argument("--seed", type=int, default=None)
-    gen.add_argument("--audio", type=common.bool_arg, default=None)
-    gen.add_argument("--watermark", type=common.bool_arg, default=None)
-    gen.add_argument("--negative-prompt", dest="negative_prompt", default=None)
-    gen.add_argument("--return-last-frame", dest="return_last_frame", type=common.bool_arg, default=False)
-    gen.add_argument("--wait", type=common.bool_arg, default=True)
-    gen.add_argument("--option", nargs="*", default=[])
+    gen.add_argument("--duration", "--seconds", dest="duration", type=int, default=None,
+                     help="requested video duration in seconds")
+    gen.add_argument("--seed", type=int, default=None, help="deterministic generation seed, when supported")
+    gen.add_argument("--audio", type=common.bool_arg, default=None,
+                     help="whether to generate audio (true or false, when supported)")
+    gen.add_argument("--watermark", type=common.bool_arg, default=None,
+                     help="whether to add a watermark (true or false, when supported)")
+    gen.add_argument("--negative-prompt", dest="negative_prompt", default=None,
+                     help="content to avoid, when the binding supports it")
+    gen.add_argument("--return-last-frame", dest="return_last_frame", type=common.bool_arg, default=False,
+                     help="also return the video's final frame when supported")
+    gen.add_argument("--wait", type=common.bool_arg, default=True,
+                     help="wait for completion; false returns a job for `media-ai job query`")
+    gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_geometry_args(gen, resolution_help="480p|720p|1080p (provider-dependent)")
     common.add_global_args(gen)
 
     cat = sub.add_parser("concat", help="join finished clips into one film (local ffmpeg)")
     cat.add_argument("--inputs", required=True, nargs="+", help="ordered clip paths or a JSON array")
-    cat.add_argument("--output", required=True)
-    cat.add_argument("--width", type=int, default=ffmpeg.DEFAULT_W)
-    cat.add_argument("--height", type=int, default=ffmpeg.DEFAULT_H)
+    cat.add_argument("--output", required=True, help="path for the concatenated video file")
+    cat.add_argument("--width", type=int, default=ffmpeg.DEFAULT_W,
+                     help="output width in pixels (default: %(default)s)")
+    cat.add_argument("--height", type=int, default=ffmpeg.DEFAULT_H,
+                     help="output height in pixels (default: %(default)s)")
     common.add_global_args(cat)
     return ap
 

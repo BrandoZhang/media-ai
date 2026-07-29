@@ -827,18 +827,19 @@ def _report(summary: dict, prompter) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, models, and Agent Skills.")
+    ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, bindings, and Agent Skills.")
     ap.add_argument("--verify", action="store_true", help="probe each key after writing (off by default)")
     ap.add_argument("--advanced", action="store_true",
-                    help="also configure each binding's wire model ID")
-    ap.add_argument("--skills-only", action="store_true", help="only install Agent Skills")
-    ap.add_argument("--skills-dest", default=None, help="install skills here without asking")
+                    help="also configure each binding's wire identifier (Ark endpoint ID where applicable)")
+    ap.add_argument("--skills-only", action="store_true",
+                    help="install or refresh Agent Skills without changing credentials or bindings")
+    ap.add_argument("--skills-dest", default=None, help="Agent Skills destination directory; skip the destination prompt")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written without writing it")
     ap.add_argument("--non-interactive", action="store_true", help="never open a terminal UI")
-    ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--log-level", default=None)
+    ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
+    ap.add_argument("--log-level", default=None, help="stderr log level: debug, info, warning, or error")
     ap.add_argument("--verbose", action="store_true", help="print redacted HTTP diagnostics to stderr")
-    ap.add_argument("--metadata-out", default=None)
+    ap.add_argument("--metadata-out", default=None, help="also write the secret-free result JSON to this path")
     return ap
 
 

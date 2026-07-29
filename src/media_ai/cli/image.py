@@ -13,15 +13,18 @@ from . import common
 
 
 def _add_common(ap: argparse.ArgumentParser) -> None:
-    ap.add_argument("--prompt", required=True)
-    ap.add_argument("--output", required=True)
+    ap.add_argument("--prompt", required=True, help="text instruction for the image to generate or edit")
+    ap.add_argument("--output", required=True, help="path for the generated image file")
     ap.add_argument("--reference", nargs="*", default=[], help="reference image path(s) or a JSON array")
     ap.add_argument("--count", type=int, default=1, help="request N images (a related group)")
-    ap.add_argument("--seed", type=int, default=None)
-    ap.add_argument("--negative-prompt", dest="negative_prompt", default=None)
-    ap.add_argument("--background", choices=["transparent", "opaque", "auto"], default=None)
-    ap.add_argument("--quality", choices=["low", "medium", "high", "auto"], default=None)
-    ap.add_argument("--format", dest="format", default=None, help="png|jpeg|webp")
+    ap.add_argument("--seed", type=int, default=None, help="deterministic generation seed, when the binding supports it")
+    ap.add_argument("--negative-prompt", dest="negative_prompt", default=None,
+                    help="content to avoid, when the binding supports it")
+    ap.add_argument("--background", choices=["transparent", "opaque", "auto"], default=None,
+                    help="requested background treatment")
+    ap.add_argument("--quality", choices=["low", "medium", "high", "auto"], default=None,
+                    help="requested quality tier, when the binding supports it")
+    ap.add_argument("--format", dest="format", default=None, help="output image format: png, jpeg, or webp")
     ap.add_argument("--option", nargs="*", default=[], help="provider-specific key=value (capability-gated)")
     common.add_geometry_args(ap, resolution_help="named tier, e.g. 1K|2K|4K")
     common.add_global_args(ap)

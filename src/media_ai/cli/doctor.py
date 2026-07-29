@@ -261,9 +261,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="media-ai doctor",
         description="Check the installation offline: PATH, ffmpeg, file modes, credential sources, installed skills.",
     )
-    ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--log-level", default=None)
-    ap.add_argument("--metadata-out", default=None)
+    ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
+    ap.add_argument("--log-level", default=None, help="stderr log level: debug, info, warning, or error")
+    ap.add_argument("--metadata-out", default=None, help="also write the secret-free result JSON to this path")
     return ap
 
 
