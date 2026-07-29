@@ -22,12 +22,9 @@ reference images.
 
 ## Traps
 
-- **Model ids are account-specific.** The shipped `model_id` may simply not be enabled
-  on the account behind the key. A `not_found` (exit 9) usually means "enable it in the
-  Ark console", not "wrong id".
-- **A custom endpoint id (`ep-…`) names a deployment, not a model.** Configure it with
-  `extends` so its capabilities come from the model it actually serves — otherwise
-  nothing can answer what it supports.
+- **Endpoint IDs are account-specific.** Configure the Ark `endpoint_id` in the wizard
+  (format `ep-…`); it is sent as the API's `model` field. A `not_found` (exit 9) usually
+  means "check the endpoint in the Ark console", not "wrong model".
 - **Cancellation is real and worth using.** A blocking `--wait true` cancels the billed
   task on SIGTERM/SIGINT/timeout. Do not kill the process with `-9` unless you mean to
   leave a paid task running.

@@ -38,6 +38,7 @@ def _show(args) -> dict:
         "exists": config.exists,
         "bindings": {
             bid: {k: v for k, v in (("extends", b.extends), ("model_id", b.model_id),
+                                    ("endpoint_id", b.endpoint_id),
                                     ("base_url", b.base_url), ("credential", b.credential)) if v}
             for bid, b in sorted(config.bindings.items())
         },

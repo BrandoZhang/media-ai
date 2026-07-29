@@ -4,11 +4,10 @@ Image generation is synchronous (``/images/generations``); video generation is a
 async task (``/contents/generations/tasks`` create → poll → optional cancel).
 Migrated from the original ``VolcBackend`` onto the provider-agnostic core.
 
-Ark model ids are account-specific and must be enabled in the console, and some
-accounts address a model by an opaque endpoint id (``ep-…``) instead. Both are one
-mechanism now: a config binding that ``extends`` a shipped one and overrides
-``model_id``, so the id lives beside the credential that can reach it rather than in
-an environment variable the adapter reads behind the config's back.
+Ark calls its account-specific wire value an endpoint id (``ep-…``). A config binding
+stores it as ``endpoint_id`` beside the credential that can reach it; the adapter
+sends that value in Ark's required ``model`` request field rather than reading an
+environment variable behind the config's back.
 Refs: image https://www.volcengine.com/docs/82379/1541523 ; video create
 https://www.volcengine.com/docs/82379/1520757 ; query 1521309 ; cancel 1521720.
 """

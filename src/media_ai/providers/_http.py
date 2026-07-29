@@ -28,9 +28,27 @@ from pathlib import Path
 from typing import Callable
 
 from ..core.errors import ErrorCategory, MediaError
-from ..credentials.redaction import redact
+from ..core.logging import get_logger
+from ..credentials.redaction import redact, redact_obj
 
 _RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_DEBUG_BODY_LIMIT = 8_000
+
+
+def _debug_body(data: bytes | None, headers: dict) -> str:
+    """Render an outbound body for diagnostics without leaking credentials or blobs."""
+    if data is None:
+        return "<empty>"
+    content_type = str(headers.get("Content-Type", "")).lower()
+    if "application/json" not in content_type:
+        return f"<{len(data)} bytes; {content_type or 'binary'} body omitted>"
+    try:
+        rendered = json.dumps(redact_obj(json.loads(data)), ensure_ascii=False, sort_keys=True)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return f"<{len(data)} bytes; malformed JSON body omitted>"
+    if len(rendered) > _DEBUG_BODY_LIMIT:
+        return f"{rendered[:_DEBUG_BODY_LIMIT]}… <truncated; {len(rendered)} chars total>"
+    return rendered
 
 
 class HttpClient:
@@ -108,6 +126,19 @@ class HttpClient:
         boundary = uuid.uuid4().hex
         body = _encode_multipart(boundary, fields, files)
         hdrs = {"Content-Type": f"multipart/form-data; boundary={boundary}", **(headers or {})}
+        # Raw multipart bytes can contain large images/audio. Keep the diagnostic
+        # useful without dumping the binary payload into a terminal scrollback.
+        get_logger().debug(
+            "HTTP multipart body: fields=%s files=%s",
+            json.dumps(redact_obj(fields), ensure_ascii=False, sort_keys=True),
+            json.dumps(
+                [
+                    {"field": field, "filename": filename, "mime": mime, "bytes": len(content)}
+                    for field, filename, mime, content in files
+                ],
+                ensure_ascii=False,
+            ),
+        )
         raw = self._send(method, self._url(path), data=body, headers=hdrs)
         return json.loads(raw) if raw else {}
 
@@ -136,9 +167,22 @@ class HttpClient:
             req = urllib.request.Request(url, data=data, method=method)
             for k, v in headers.items():
                 req.add_header(k, v)
+            # A Request normalizes header names and adds its own framing headers, so
+            # log it only after construction. ``redact_obj`` masks Authorization and
+            # every known secret-shaped field before it reaches stderr.
+            get_logger().debug(
+                "HTTP request: attempt=%d method=%s url=%s headers=%s body=%s",
+                attempt + 1, method, url,
+                json.dumps(redact_obj(dict(req.header_items())), ensure_ascii=False, sort_keys=True),
+                _debug_body(data, headers),
+            )
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
                     raw = resp.read()
+                    get_logger().debug(
+                        "HTTP response: method=%s url=%s status=%s bytes=%d",
+                        method, url, getattr(resp, "status", 200), len(raw),
+                    )
                     return raw.decode("utf-8") if decode else raw
             except urllib.error.HTTPError as e:
                 status = e.code
@@ -153,17 +197,29 @@ class HttpClient:
                 # a retry it knows is pointless (e.g. quota exhausted).
                 retryable = status == 429 or (status in self.retry_statuses and idempotent)
                 if retryable and attempt < self.max_retries and self._retry_ok(status, raw):
+                    get_logger().debug(
+                        "HTTP response: method=%s url=%s status=%d retrying=true", method, url, status,
+                    )
                     self._sleep(e, attempt)
                     continue
+                get_logger().debug(
+                    "HTTP response: method=%s url=%s status=%d retrying=false", method, url, status,
+                )
                 raise self.error_mapper(status, redact(raw[:800]))
             except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, http.client.HTTPException) as exc:
                 is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
                     getattr(exc, "reason", None), (socket.timeout, TimeoutError)
                 )
                 if idempotent and attempt < self.max_retries:
+                    get_logger().debug(
+                        "HTTP failure: method=%s url=%s retrying=true error=%s", method, url, redact(str(exc)),
+                    )
                     time.sleep(self.retry_base * (2**attempt) + random.uniform(0, 0.5))
                     continue
                 cat = ErrorCategory.TIMEOUT if is_timeout else ErrorCategory.PROVIDER
+                get_logger().debug(
+                    "HTTP failure: method=%s url=%s retrying=false error=%s", method, url, redact(str(exc)),
+                )
                 raise MediaError(
                     f"{self.provider} request failed: {redact(str(exc))}", category=cat, provider=self.provider
                 ) from None

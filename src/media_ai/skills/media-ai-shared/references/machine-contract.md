@@ -100,6 +100,8 @@ a scene belonged to the earlier process that submitted the job.
 - `--metadata-out path.json` — also write the (secret-free) result JSON to a file
   (pretty). Parent dirs are created; a write failure only logs a warning.
 - `--pretty` — indent the stdout JSON (human-readable; still one object).
+- `--verbose` — print redacted binding and HTTP request diagnostics to stderr; stdout
+  stays machine-readable.
 - **List flags accept a single JSON-array string** — how agent tool layers pass lists:
   `--reference '["a.png","b.png"]'`, `--inputs '["a.mp4","b.mp4"]'`. Plain
   space-separated paths also work: `--reference a.png b.png`.

@@ -26,7 +26,7 @@ Text / frames / references → video. Async on every real provider; `--wait true
 | `--return-last-frame {true,false}` | `false` | also emit the final frame as an artifact |
 | `--wait {true,false}` | `true` | block+poll vs async submit |
 | `--option key=value ...` | `[]` | provider-specific, capability-gated |
-| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
+| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level`, `--verbose` |
 
 ## The input modes
 

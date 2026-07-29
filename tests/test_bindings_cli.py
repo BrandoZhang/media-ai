@@ -61,6 +61,40 @@ def test_add_writes_a_reference_and_never_a_key(cfg, capsys):
     assert written["schema"] == 2
 
 
+def test_ark_endpoint_id_is_stored_by_its_vendor_name_and_resolves_to_model(cfg, capsys):
+    endpoint = "ep-20260728-seedream50"
+    run(
+        bindings_mod, "add", "volc-ark/seedream-5.0", "--credential", "env://ARK_API_KEY",
+        "--endpoint-id", endpoint, "--base-url", "https://ark.cn-beijing.volces.com/api/v3", capsys=capsys,
+    )
+    entry = read(cfg)["bindings"]["volc-ark/seedream-5.0"]
+    assert entry["endpoint_id"] == endpoint and "model_id" not in entry
+    listed = {b["binding"]: b for b in run(bindings_mod, "list", capsys=capsys)["bindings"]}
+    assert listed["volc-ark/seedream-5.0"]["model_id"] == endpoint
+
+
+def test_ark_endpoint_id_shape_is_checked_before_writing_config(cfg, capsys):
+    res = run(
+        bindings_mod, "add", "volc-ark/seedream-5.0", "--credential", "env://ARK_API_KEY",
+        "--endpoint-id", "seedream-5", expect=2, capsys=capsys,
+    )
+    assert res["error"]["code"] == "endpoint_id_invalid"
+    assert not cfg.exists()
+
+
+def test_ark_endpoint_id_replaces_legacy_model_id_without_ambiguity(cfg, capsys):
+    cfg.write_text(
+        'schema = 2\n\n[bindings."volc-ark/seedream-5.0"]\n'
+        'model_id = "ep-20260728-legacy"\ncredential = "env://ARK_API_KEY"\n', encoding="utf-8",
+    )
+    run(
+        bindings_mod, "add", "volc-ark/seedream-5.0", "--credential", "env://ARK_API_KEY",
+        "--endpoint-id", "ep-20260728-current", capsys=capsys,
+    )
+    entry = read(cfg)["bindings"]["volc-ark/seedream-5.0"]
+    assert entry["endpoint_id"] == "ep-20260728-current" and "model_id" not in entry
+
+
 def test_a_raw_key_is_refused_before_it_reaches_the_shareable_file(cfg, capsys):
     """`config.toml` is the file people paste into issues and commit to repos.
 

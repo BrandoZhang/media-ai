@@ -34,6 +34,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add.add_argument("--credential", default=None, help="env://VAR | cred://<account> | keychain://<name>")
     add.add_argument("--extends", default=None, help="inherit the capabilities of another binding")
     add.add_argument("--model-id", dest="model_id", default=None, help="override the id sent on the wire")
+    add.add_argument("--endpoint-id", dest="endpoint_id", default=None,
+                     help="Volcengine Ark endpoint ID sent as model (e.g. ep-xxx-xxx)")
     add.add_argument("--base-url", dest="base_url", default=None)
     common.add_global_args(add)
     return ap
@@ -110,6 +112,25 @@ def _add(args) -> dict:
             category=ErrorCategory.AUTH, code="credential_is_raw_key",
             hint="put the key in credentials.toml and refer to it as cred://<account>",
         )
+    if args.model_id and args.endpoint_id:
+        raise MediaError(
+            "use either --model-id or --endpoint-id, not both", category=ErrorCategory.CLI,
+            code="wire_id_ambiguous",
+        )
+    if args.endpoint_id:
+        if provider.name != "volc-ark":
+            raise MediaError(
+                "--endpoint-id is only valid for Volcengine Ark bindings", category=ErrorCategory.CLI,
+                code="endpoint_id_unsupported",
+            )
+        if provider.wire_id_pattern:
+            import re
+
+            if not re.fullmatch(provider.wire_id_pattern, args.endpoint_id):
+                raise MediaError(
+                    f"--endpoint-id must match {provider.wire_id_hint or provider.wire_id_pattern}",
+                    category=ErrorCategory.CLI, code="endpoint_id_invalid",
+                )
 
     # Merge, never rebuild: `add` on a binding that already exists is how a key gets
     # rotated, and it must not take the endpoint id, base URL or per-binding options
@@ -117,7 +138,9 @@ def _add(args) -> dict:
     existing = config.bindings.get(args.id) or UserBinding(id=args.id)
     bindings = dict(config.bindings)
     bindings[args.id] = existing.merged_with(
-        extends=args.extends, model_id=args.model_id,
+        extends=args.extends,
+        model_id="" if args.endpoint_id else args.model_id,
+        endpoint_id="" if args.model_id else args.endpoint_id,
         base_url=args.base_url, credential=args.credential,
     )
     updated = type(config)(bindings=bindings, defaults=dict(config.defaults), path=config.path, exists=True)

@@ -665,6 +665,53 @@ def test_blank_key_configures_nothing(home):
     assert not (home / "credentials.toml").exists()
 
 
+def test_ark_is_configured_url_then_endpoint_then_key(home):
+    """Ark's endpoint and credential are one configuration unit, in wire order."""
+    binding = "volc-ark/seedream-5.0"
+    endpoint = "ep-20260728-seedream50"
+    args = make_args(skills_dest=str(home / "sk"))
+    summary, prompter = run(
+        args,
+        [pick("media-ai-image"), binding_index(binding), 0, None, endpoint, SECRET],
+    )
+    questions = prompter.asked
+    base = next(i for i, q in enumerate(questions) if q == f"{binding} — Base URL")
+    wire = next(i for i, q in enumerate(questions) if "endpoint ID sent as model" in q)
+    key = next(i for i, q in enumerate(questions) if q.endswith("API key"))
+    assert base < wire < key
+    entry = config(home)["bindings"][binding]
+    assert entry["base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
+    assert entry["endpoint_id"] == endpoint
+    assert "model_id" not in entry
+    assert creds(home)[binding]["api_key"] == SECRET
+    assert summary["bindings"] == [binding]
+
+
+def test_ark_endpoint_id_must_use_the_documented_shape(home):
+    binding = "volc-ark/seedream-5.0"
+    args = make_args(skills_dest=str(home / "sk"))
+    with pytest.raises(MediaError) as ei:
+        run(args, [pick("media-ai-image"), binding_index(binding), 0, None, "not-an-endpoint"])
+    assert ei.value.code == "endpoint_id_invalid"
+    assert not (home / "config.toml").exists()
+
+
+def test_ark_init_replaces_a_legacy_model_id_with_endpoint_id(home):
+    binding = "volc-ark/seedream-5.0"
+    (home / "config.toml").write_text(
+        f'schema = 2\n\n[bindings."{binding}"]\n'
+        'model_id = "ep-20260728-legacy"\ncredential = "env://OLD_ARK_KEY"\n', encoding="utf-8",
+    )
+    endpoint = "ep-20260728-current"
+    summary, _ = run(
+        make_args(skills_dest=str(home / "sk")),
+        [pick("media-ai-image"), binding_index(binding), 0, None, endpoint, SECRET],
+    )
+    entry = config(home)["bindings"][binding]
+    assert entry["endpoint_id"] == endpoint and "model_id" not in entry
+    assert summary["bindings"] == [binding]
+
+
 # --------------------------------------------------------------- merge/backup
 
 

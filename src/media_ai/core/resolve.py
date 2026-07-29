@@ -127,7 +127,14 @@ def _resolved(
         id=bid,
         spec=spec,
         provider=provider,
-        model_id=(user.model_id if user and user.model_id else spec.model_id),
+        # ``model_id`` remains the generic resolved wire value.  Ark calls this
+        # value an endpoint id and writes it as ``endpoint_id`` in its config; the
+        # adapter still sends it in the API's ``model`` field.
+        model_id=(
+            user.endpoint_id if user and user.endpoint_id else
+            user.model_id if user and user.model_id else
+            spec.model_id
+        ),
         base_url=(user.base_url if user and user.base_url else provider.base_url.default),
         credential=(user.credential if user else None),
         options=dict(user.options) if user else {},
@@ -320,4 +327,3 @@ def _default_for(scene: Scene, available: list[ResolvedBinding], config: Config)
             ),
         },
     )
-

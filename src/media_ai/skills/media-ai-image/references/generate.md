@@ -26,7 +26,7 @@ is that `edit` requires at least one `--reference` and fails with exit 2
 | `--aspect-ratio R` / `--ratio R` | none | ratio geometry; needs `geometry.mode` `aspect_ratio` or `both` |
 | `--resolution TIER` | none | named tier, e.g. `1K\|2K\|4K` |
 | `--option key=value ...` | `[]` | per-binding extras, gated on `constraints.options[]` (unknown key → exit 3) |
-| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level` |
+| global | | `--binding`, `--provider`, `--model`, `--on-unsupported`, `--pretty`, `--metadata-out`, `--log-level`, `--verbose` |
 
 ## Geometry, in detail
 

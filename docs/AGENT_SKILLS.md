@@ -82,6 +82,8 @@ carries the candidates or alternatives in `details`.
 ## Machine-friendly flags
 
 - `--metadata-out path.json` — also write the (secret-free) result JSON to a file.
+- `--verbose` — print redacted binding and HTTP request diagnostics to stderr; stdout
+  remains the one JSON result.
 - lists accept a JSON array string: `--reference '["a.png","b.png"]'`.
 - `--binding <provider>/<model>` names one exactly; `--provider`+`--model` is the same
   in two parts; `--model` alone works only when one configured binding serves it.

@@ -96,7 +96,7 @@ so `media-ai video generate --prompt "…" --output clip.mp4` works. Reach for
 region.
 
 Other global flags: `--on-unsupported {error,warn,ignore}` (default `error`),
-`--pretty`, `--metadata-out <path>`, `--log-level`.
+`--pretty`, `--metadata-out <path>`, `--log-level`, `--verbose` (redacted HTTP diagnostics on stderr).
 
 ## Scenes
 

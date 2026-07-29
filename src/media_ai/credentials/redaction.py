@@ -29,8 +29,8 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 
 # Structured-object keys whose values must never be serialized.
 _SENSITIVE_KEYS = frozenset(
-    {"authorization", "api_key", "apikey", "x-goog-api-key", "xi-api-key", "token", "secret",
-     "password", "ark_api_key", "openai_api_key", "gemini_api_key", "elevenlabs_api_key", "access_token"}
+    {"authorization", "api_key", "api-key", "apikey", "x-api-key", "x-goog-api-key", "xi-api-key", "token", "secret",
+     "password", "ark_api_key", "openai_api_key", "gemini_api_key", "elevenlabs_api_key", "access_token", "x-media-session"}
 )
 
 _MASK = "***"
