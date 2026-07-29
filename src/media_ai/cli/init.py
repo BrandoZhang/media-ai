@@ -365,10 +365,10 @@ def _configure_one_binding(
     provider = cat.providers[spec.provider]
     model_id = endpoint_id = base_url = None
 
-    if provider.setup_base_url or (advanced and provider.base_url.configurable):
-        # Ark's setup must always recommend the manifest's canonical endpoint. In
-        # advanced setup, every other configurable provider also asks locally for its
-        # URL, retaining an existing custom endpoint as the least-surprising default.
+    if provider.base_url.configurable:
+        # Every HTTP binding owns its endpoint, so setup always makes that endpoint
+        # explicit. Ark must always recommend its manifest's canonical endpoint; for
+        # other providers a re-run preserves an existing custom URL as the default.
         configured = load_config().bindings.get(bid)
         default_url = (
             provider.base_url.default
@@ -830,7 +830,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, models, and Agent Skills.")
     ap.add_argument("--verify", action="store_true", help="probe each key after writing (off by default)")
     ap.add_argument("--advanced", action="store_true",
-                    help="also configure each binding's Base URL and wire model ID")
+                    help="also configure each binding's wire model ID")
     ap.add_argument("--skills-only", action="store_true", help="only install Agent Skills")
     ap.add_argument("--skills-dest", default=None, help="install skills here without asking")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written without writing it")

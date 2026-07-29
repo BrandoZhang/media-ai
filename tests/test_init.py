@@ -375,23 +375,21 @@ class TestGoingBack:
         the same property that makes Ctrl-C safe."""
         args = make_args(skills_dest=str(home / "sk"))
         with pytest.raises(Cancelled):
-            run(args, [pick("media-ai-image"), [0], 0, Cancelled])
+            run(args, [pick("media-ai-image"), [0], 0, None, Cancelled])
         assert not (home / "sk").exists(), "skills were installed before the last question"
 
     def test_back_inside_the_credentials_step_re_asks_one_provider(self, home):
         """`run_steps` rewinds a *step*, but this step asks one question per provider —
         unwinding all of them would throw away keys already typed."""
         args = make_args(skills_dest=str(home / "sk"))
-        # volc is left out: its model step asks unconditional questions of its own.
         needed = sorted(init_mod.bindings_for_skills(["media-ai-image"]))
-        # Ark bindings are left out: their model-id step asks unconditional questions.
         two = [b for b in needed if not b.startswith("volc-ark/")][:2]
         picked = [needed.index(p) for p in two]
-        # skills -> two bindings -> mode -> key, key, (back at the 2nd) -> key -> default
+        # skills -> two bindings -> mode -> URL, key, URL, key; then back one binding.
         _summary, prompter = run(
             args,
-            [pick("media-ai-image"), picked, 0, f"sk-{two[0]}", GoBack, f"sk-{two[0]}-again",
-             "sk-second-try", 0],
+            [pick("media-ai-image"), picked, 0, None, f"sk-{two[0]}", None, GoBack,
+             None, f"sk-{two[0]}-again", None, "sk-second-try", 0],
         )
         assert prompter.asked.count("How should keys be stored?") == 1, "the whole step restarted"
         assert creds(home)[two[0]]["api_key"] == f"sk-{two[0]}-again"
@@ -407,7 +405,7 @@ class TestGoingBack:
         and writing it anyway would store a credential the user's final answer said
         not to configure."""
         args = make_args(skills_dest=str(home / "sk"))
-        # skills -> providers -> mode -> (key: go back) -> providers: none
+        # skills -> providers -> mode -> (Base URL: go back) -> providers: none
         summary, _ = run(args, [pick("media-ai-image"), [0], 0, GoBack, []])
         assert summary["bindings"] == []
         assert not (home / "credentials.toml").exists()
@@ -440,7 +438,7 @@ class TestVerifyProbesAfterTheWritesAndOnlyWhenAsked:
 
         monkeypatch.setattr(verify_mod, "probe", lambda b: f"ok:{b}")
         args = make_args(skills_dest=str(home / "sk"), verify=True)
-        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, None, SECRET])
         # Probed *by binding id*: the credential belongs to the binding, so verifying
         # one and reporting for its siblings would clear a key nothing touched.
         assert summary["verified"] == {"openai/gpt-image-2": "ok:openai/gpt-image-2"}
@@ -451,7 +449,7 @@ class TestVerifyProbesAfterTheWritesAndOnlyWhenAsked:
 
         monkeypatch.setattr(verify_mod, "probe", lambda b: pytest.fail(f"probed {b} without --verify"))
         args = make_args(skills_dest=str(home / "sk"))
-        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, None, SECRET])
         assert "verified" not in summary
 
     def test_going_back_over_the_verify_step_is_not_an_error(self, home, monkeypatch):
@@ -463,7 +461,7 @@ class TestVerifyProbesAfterTheWritesAndOnlyWhenAsked:
         args = make_args(skills_dest=str(home / "sk"), verify=True)
         summary, _ = run(
             args,
-            [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET, GoBack, 0, SECRET],
+            [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, None, SECRET, GoBack, 0, None, SECRET],
         )
         assert summary["ok"] is True and summary["verified"] == {"openai/gpt-image-2": "ok"}
 
@@ -475,7 +473,7 @@ class TestVerifyProbesAfterTheWritesAndOnlyWhenAsked:
 
         monkeypatch.setattr(verify_mod, "probe", lambda b: pytest.fail(f"probed {b} on a dry run"))
         args = make_args(skills_dest=str(home / "sk"), verify=True, dry_run=True)
-        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, SECRET])
+        summary, _ = run(args, [pick("media-ai-image"), binding_index("openai/gpt-image-2"), 0, None, SECRET])
         assert "verified" not in summary
 
 
@@ -515,7 +513,7 @@ class TestRerunIsANoOp:
 
     @staticmethod
     def flow(home):
-        return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], 0, SECRET]
+        return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], 0, None, SECRET]
 
     def test_the_second_run_writes_no_skill_files(self, home):
         args, answers = self.flow(home)
@@ -552,7 +550,7 @@ class TestRerunIsANoOp:
         args, answers = self.flow(home)
         run(args, answers)
         args2, _ = self.flow(home)
-        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, "sk-a-different-key-4242"])
+        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, None, "sk-a-different-key-4242"])
         assert summary["backed_up"], "overwriting a key must keep the old file"
 
     def test_a_rerun_repairs_a_loose_credentials_mode(self, home):
@@ -580,7 +578,7 @@ class TestRerunIsANoOp:
         args, answers = self.flow(home)
         run(args, answers)
         args2, _ = self.flow(home)
-        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, "sk-a-different-key-4242"])
+        summary, _ = run(args2, [pick("media-ai-image"), [0], 0, None, "sk-a-different-key-4242"])
         backup = Path(summary["backed_up"][0])
         assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 
@@ -602,7 +600,7 @@ class TestRerunIsANoOp:
         run(args, answers)
         (home / "sk" / "media-ai-image" / "SKILL.md").write_text("my own version", encoding="utf-8")
         args2, _ = self.flow(home)
-        summary, prompter = run(args2, [pick("media-ai-image"), 1, [0], 0, SECRET])  # 1 = keep mine
+        summary, prompter = run(args2, [pick("media-ai-image"), 1, [0], 0, None, SECRET])  # 1 = keep mine
         assert any("differs from the packaged skill" in q for q in prompter.asked)
         assert "media-ai-image" in summary["skills"][0]["skipped"]
         assert (home / "sk" / "media-ai-image" / "SKILL.md").read_text() == "my own version"
@@ -612,8 +610,8 @@ class TestRerunIsANoOp:
 
 
 def image_only_flow(home, *, key=SECRET, mode=0):
-    """skills=[image] -> dest -> providers=[first] -> storage mode -> key."""
-    return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], mode, key]
+    """skills=[image] -> dest -> providers=[first] -> storage mode -> Base URL -> key."""
+    return make_args(skills_dest=str(home / "sk")), [pick("media-ai-image"), [0], mode, None, key]
 
 
 def test_pasted_key_lands_in_credentials_toml(home):
@@ -642,7 +640,7 @@ def test_env_reference_mode_keeps_the_key_off_disk(home):
     """
     args = make_args(skills_dest=str(home / "sk"))
     # mode 1 = reference an env var; then accept the suggested variable name
-    summary, _ = run(args, [pick("media-ai-image"), [0], 1, None])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 1, None, None])
     binding = summary["bindings"][0]
     assert not (home / "credentials.toml").exists()
 
@@ -663,6 +661,19 @@ def test_blank_key_configures_nothing(home):
     summary, _ = run(args, answers)
     assert summary["bindings"] == []
     assert not (home / "credentials.toml").exists()
+
+
+def test_non_ark_always_prompts_for_base_url_with_the_manifest_default(home):
+    binding = "openai/gpt-image-2"
+    summary, prompter = run(
+        make_args(skills_dest=str(home / "sk")),
+        [pick("media-ai-image"), binding_index(binding), 0, None, SECRET],
+    )
+    base = next(i for i, q in enumerate(prompter.asked) if q == f"{binding} — Base URL")
+    key = next(i for i, q in enumerate(prompter.asked) if q.endswith("API key"))
+    assert base < key
+    assert config(home)["bindings"][binding]["base_url"] == "https://api.openai.com/v1"
+    assert summary["bindings"] == [binding]
 
 
 def test_ark_is_configured_url_then_endpoint_then_key(home):
@@ -778,7 +789,7 @@ def test_unreadable_existing_config_is_an_error_not_an_overwrite(home):
 
 def test_dry_run_writes_nothing(home):
     args = make_args(skills_dest=str(home / "sk"), dry_run=True)
-    summary, _ = run(args, [pick("media-ai-image"), [0], 0, SECRET])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 0, None, SECRET])
     assert summary["dry_run"] is True
     assert not (home / "credentials.toml").exists()
     assert not (home / "sk").exists()
@@ -786,7 +797,7 @@ def test_dry_run_writes_nothing(home):
 
 def test_dry_run_still_reports_what_it_would_write(home):
     args = make_args(skills_dest=str(home / "sk"), dry_run=True)
-    summary, _ = run(args, [pick("media-ai-image"), [0], 0, SECRET])
+    summary, _ = run(args, [pick("media-ai-image"), [0], 0, None, SECRET])
     assert summary["wrote"], "dry run should still name the files"
     assert summary["skills"][0]["installed"]
 
@@ -805,10 +816,10 @@ def test_cancel_maps_to_the_cli_exit_code(home, monkeypatch):
 
 def test_cancel_midway_writes_nothing(home, monkeypatch):
     """Cancelling after answering some questions must not leave a partial config."""
-    # skills, destinations, providers answered; then the user aborts at the key prompt.
+    # skills, destinations, providers and the Base URL answered; then abort at the key prompt.
     monkeypatch.setattr(
         init_mod, "get_prompter",
-        lambda **kw: ScriptedPrompter([pick("media-ai-image"), [0], 0, Cancelled]),
+        lambda **kw: ScriptedPrompter([pick("media-ai-image"), [0], 0, None, Cancelled]),
     )
     with pytest.raises(MediaError):
         init_mod._do(make_args(skills_dest=str(home / "sk")))
