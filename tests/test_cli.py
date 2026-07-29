@@ -38,13 +38,17 @@ def env(tmp_path):
     tests are where that claim gets proved.
     """
     from media_ai.core.config import Config, UserBinding, render_config
+    from media_ai.core.registry import catalog
     from media_ai.core.scene import Scene
 
+    # Which scenes go to the local backend is read from its manifest rather than listed:
+    # `local/ffmpeg` serves everything the mock deliberately does not implement, and a
+    # hardcoded list here would quietly point a new one at a backend that refuses it.
+    local = catalog().get("local/ffmpeg").scenes
     config = tmp_path / "config.toml"
     config.write_text(render_config(Config(
         bindings={"mock/mock": UserBinding(id="mock/mock")},
-        defaults={s.value: "mock/mock" for s in Scene if s is not Scene.VIDEO_CONCAT}
-                 | {Scene.VIDEO_CONCAT.value: "local/ffmpeg"},
+        defaults={s.value: ("local/ffmpeg" if s in local else "mock/mock") for s in Scene},
     )), encoding="utf-8")
 
     e = dict(os.environ)

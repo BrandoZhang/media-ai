@@ -23,6 +23,7 @@ from .binding import Constraints
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 from .types import (
+    AnimationRequest,
     DialogueRequest,
     GeometrySpec,
     ImageRequest,
@@ -245,6 +246,21 @@ def _validate_sound(req: SoundEffectRequest, c: Constraints, issues: _Issues) ->
     issues.in_range("duration-seconds", req.duration_seconds, c.audio.duration_s, label="duration", unit="s")
 
 
+def _validate_animation(req: AnimationRequest, c: Constraints, issues: _Issues) -> None:
+    """What the *manifest* can say about an animated-image export.
+
+    Deliberately little. The interesting numbers here — a speed of 0, a key similarity
+    above 1, ``--end`` before ``--start`` — are not capabilities some binding might
+    declare differently; they are the arguments contradicting themselves, and they are
+    checked where they are turned into a filter graph (:mod:`media_ai.media.animation`).
+    Restating them as constraints would put the same rule in two places and invite
+    ``--on-unsupported ignore`` to switch one copy off.
+    """
+    _check_geometry(req.geometry, c, issues, video=False)
+    issues.one_of("format", req.output_format, c.output.formats, label="animation format")
+    issues.needs("transparent", req.transparent, c, "transparency", label="--transparent")
+
+
 _VALIDATORS = (
     (ImageRequest, _validate_image),
     (VideoRequest, _validate_video),
@@ -253,6 +269,7 @@ _VALIDATORS = (
     (MusicPlanRequest, _validate_music_plan),
     (MusicRequest, _validate_music),
     (SoundEffectRequest, _validate_sound),
+    (AnimationRequest, _validate_animation),
 )
 
 

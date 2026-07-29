@@ -25,6 +25,7 @@ from ..credentials.secret import Credential
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 from .types import (
+    AnimationRequest,
     DialogueRequest,
     ImageRequest,
     JobRef,
@@ -174,6 +175,9 @@ class Adapter:
 
     def generate_sound(self, req: SoundEffectRequest):
         raise self._unsupported("sound-effect generation")
+
+    def generate_animation(self, req: AnimationRequest):
+        raise self._unsupported("animated-image export")
 
     def get_job(self, ref: JobRef, *, output: Path | None = None):
         raise self._unsupported("async jobs")

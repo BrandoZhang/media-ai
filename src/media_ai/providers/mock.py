@@ -56,7 +56,12 @@ class MockAdapter(Adapter):
         return frozenset({"group_output", "streaming", "grounding"})
 
     def supported_scenes(self) -> frozenset[Scene]:
-        return frozenset(Scene) - {Scene.VIDEO_CONCAT}
+        # Subtracted by name rather than derived from a group, because every entry is a
+        # scene this adapter has no code for: `video.concat` and `animation.*` are real
+        # ffmpeg work with real output, and imitating them would mean writing a file that
+        # is not an animation of anything. `local/ffmpeg` needs no key and costs nothing,
+        # so there is nothing for a placeholder to stand in for here.
+        return frozenset(Scene) - {Scene.VIDEO_CONCAT, Scene.ANIMATION_FROM_VIDEO, Scene.ANIMATION_FROM_FRAMES}
 
 
     # ---- images ----------------------------------------------------------

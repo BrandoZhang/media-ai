@@ -151,6 +151,8 @@ media-ai music generate --prompt "upbeat lofi hip hop" --output song.mp3
 media-ai sound generate --text "a spacious cinematic braam" --output sfx.mp3
 media-ai video generate --continue-from <uri> --prompt "she keeps walking" --output next.mp4
 media-ai video concat         --inputs '["a.mp4","b.mp4"]' --output film.mp4
+media-ai animation export --input clip.mp4 --output demo.webp --max-width 640 --fps 12
+media-ai animation export --frames matted/ --output sticker.gif --transparent
 media-ai job    query   --binding <id> --id <op> --output clip.mp4
 media-ai bindings       list | available | add <id> --credential env://VAR
 media-ai config         show | set-default <scene|group> <binding>
@@ -252,7 +254,7 @@ media-ai usage
 
 ## Docs
 
-- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per command group (image, video, speech, music, sound, job, capabilities, usage) plus the shared contract
+- [src/media_ai/skills/](src/media_ai/skills/) — packaged Agent Skills, one per command group (image, video, speech, music, sound, animation, job, capabilities, usage) plus the shared contract
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — uv-based dev environment + workflow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered design + request-flow diagrams
 - [docs/BINDINGS.md](docs/BINDINGS.md) — what a binding is, configuring one, `extends`, per-binding options

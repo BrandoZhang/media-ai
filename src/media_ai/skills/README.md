@@ -26,6 +26,7 @@ so a skill covers exactly the scenes under its name and nothing overlaps.
 | [`media-ai-speech`](media-ai-speech/SKILL.md) | optional | `speech.*` — text→speech, multi-voice dialogue | `speech generate`, `speech dialogue` |
 | [`media-ai-music`](media-ai-music/SKILL.md) | optional | `music.*` — prompt→song, plan→song, prompt→plan | `music generate`, `music plan` |
 | [`media-ai-sound`](media-ai-sound/SKILL.md) | optional | `sound.*` — text→sound effect | `sound generate` |
+| [`media-ai-animation`](media-ai-animation/SKILL.md) | optional | `animation.*` — clip or stills→animated image (GIF, WebP, APNG), with keying to alpha | `animation export` |
 | [`media-ai-job`](media-ai-job/SKILL.md) | dependency | Poll, finalize, or cancel async jobs | `job query`, `job cancel` |
 
 ### Install tiers
@@ -98,3 +99,10 @@ done
 ```
 
 Skills are portable to any agent runtime that reads the `SKILL.md` format.
+
+> **Installing into this repo leaves no trace in `git status`.** `.gitignore` drops
+> `media-ai-*` from every agent directory the wizard offers, because those are copies
+> of *this* folder: committing them would mean maintaining each file twice, and the
+> copy goes stale the moment the packaged one is edited (`media-ai doctor` reports the
+> drift). Install freely while working on the CLI. A skill this project writes by hand
+> is not `media-ai-*`, so it still tracks normally.

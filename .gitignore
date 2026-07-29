@@ -16,3 +16,15 @@ media_usage.jsonl
 # real credential / profile config (only the *.example templates are committed)
 credentials.toml
 config.toml
+
+# Agent Skills that `media-ai init` installed into this checkout. The source of truth
+# is src/media_ai/skills/; these are copies, so committing them means maintaining the
+# same file twice and the copy goes stale the moment the packaged one is edited — which
+# is exactly what happened, and what `media-ai doctor` reports as drift. Re-run
+# `media-ai init` to get them back locally; they will no longer show up in a diff.
+# Scoped to `media-ai-*`, so a skill this project writes by hand still tracks normally.
+/.claude/skills/media-ai-*/
+/.agents/skills/media-ai-*/
+/.codex/skills/media-ai-*/
+/.trae/skills/media-ai-*/
+/.openclaw/skills/media-ai-*/

@@ -18,8 +18,50 @@ kind = "none"
 id     = "local/ffmpeg"
 model  = "ffmpeg"
 title  = "ffmpeg"
-scenes = ["video.concat"]
-notes  = ["clips are normalized to a common size before joining"]
+scenes = [
+  "video.concat",
+  "animation.from_video",
+  "animation.from_frames",
+]
+notes  = [
+  "clips are normalized to a common size before joining",
+  "animated output is a still-image container: no audio track, and no interframe motion compensation, so keep it to a few seconds",
+  "gif carries 1-bit alpha — a pixel is opaque or invisible — so a keyed subject with soft edges looks jagged; webp and apng carry a real alpha channel",
+  "keying is chroma-distance only, so the source has to be shot on a solid colour; arbitrary footage needs per-frame matting fed back in through animation.from_frames",
+]
+
+[binding.constraints]
+# Encoder knobs. Everything semantic — the trim, the rate, the size, the keying — is a
+# first-class flag, because those are what a caller *asks for*; these are how the same
+# request is squeezed into a container, and they exist to be tuned when the default
+# output is too large or bands too visibly. Anything not listed here is rejected before
+# ffmpeg is reached, so a typo is a typo rather than a silently ignored parameter.
+options = [
+  "max_colors",          # gif palette size, 2-256
+  "palette_stats_mode",  # full | diff | single — `diff` optimises for what moves
+  "dither",              # none | bayer | floyd_steinberg | sierra2 | sierra2_4a | sierra3 | heckbert
+  "bayer_scale",         # bayer only: pattern coarseness
+  "diff_mode",           # gif: restrict rewrites to the changed rectangle
+  "alpha_threshold",     # gif + --transparent: where the 1-bit alpha cuts, 0-255
+  "lossless",            # webp
+  "quality",             # webp, lossy only, 0-100
+  "compression_level",   # webp: effort, 0-6
+  "pix_fmt",             # override the container's pixel format
+]
 
 [binding.constraints.output]
-formats = ["mp4"]
+# What `--format` accepts. Only the animation scenes take one; `video.concat` always
+# writes mp4 and has no flag to say otherwise, so mp4 is deliberately absent — a name in
+# this list that the only scene reading it would refuse is a false declaration, and this
+# list is what the validator gates on.
+formats = ["gif", "webp", "apng"]
+
+[binding.constraints.geometry]
+# Pixels only. Nothing here is choosing a shape — the source already has one — so an
+# aspect ratio would have nothing to apply to, and `--resolution 1080p` would be a tier
+# with no model to interpret it. `--max-width`/`--max-height` are the fit-inside form.
+mode = "pixels"
+
+[binding.constraints.supports]
+transparency = true
+seed         = false
