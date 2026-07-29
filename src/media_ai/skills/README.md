@@ -99,3 +99,10 @@ done
 ```
 
 Skills are portable to any agent runtime that reads the `SKILL.md` format.
+
+> **Installing into this repo leaves no trace in `git status`.** `.gitignore` drops
+> `media-ai-*` from every agent directory the wizard offers, because those are copies
+> of *this* folder: committing them would mean maintaining each file twice, and the
+> copy goes stale the moment the packaged one is edited (`media-ai doctor` reports the
+> drift). Install freely while working on the CLI. A skill this project writes by hand
+> is not `media-ai-*`, so it still tracks normally.
