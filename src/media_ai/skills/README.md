@@ -26,6 +26,7 @@ so a skill covers exactly the scenes under its name and nothing overlaps.
 | [`media-ai-speech`](media-ai-speech/SKILL.md) | optional | `speech.*` — text→speech, multi-voice dialogue | `speech generate`, `speech dialogue` |
 | [`media-ai-music`](media-ai-music/SKILL.md) | optional | `music.*` — prompt→song, plan→song, prompt→plan | `music generate`, `music plan` |
 | [`media-ai-sound`](media-ai-sound/SKILL.md) | optional | `sound.*` — text→sound effect | `sound generate` |
+| [`media-ai-animation`](media-ai-animation/SKILL.md) | optional | `animation.*` — clip or stills→animated image (GIF, WebP, APNG), with keying to alpha | `animation export` |
 | [`media-ai-job`](media-ai-job/SKILL.md) | dependency | Poll, finalize, or cancel async jobs | `job query`, `job cancel` |
 
 ### Install tiers

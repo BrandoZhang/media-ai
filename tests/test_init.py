@@ -741,6 +741,69 @@ def test_advanced_non_ark_configures_url_model_then_key_per_binding(home):
     assert summary["bindings"] == [binding]
 
 
+# --------------------------------------------------------------- scene defaults
+
+
+def test_a_credential_free_binding_still_gets_a_scene_default(home):
+    """A default is what makes a call that names no binding work, and needing no key has
+    nothing to do with that.
+
+    ``local/ffmpeg`` never appeared in ``creds``, so the wizard wrote no default for the
+    scenes only it serves — and ``media-ai video concat`` on a completely fresh install
+    answered ``no_default_binding`` while naming, in its own hint, the free offline
+    binding it should have used.
+    """
+    args = make_args(non_interactive=True, skills_dest=str(home / "sk"))
+    summary, _ = run(args, [])
+
+    assert summary["bindings"] == []                     # nothing was configured at all
+    assert summary["defaults"]["video.concat"] == "local/ffmpeg"
+    assert summary["defaults"]["animation.from_video"] == "local/ffmpeg"
+    assert summary["defaults"]["animation.from_frames"] == "local/ffmpeg"
+    assert config(home)["defaults"]["video.concat"] == "local/ffmpeg"
+
+
+def test_a_local_scene_keeps_its_default_when_the_group_goes_to_a_model(home):
+    """The other half of the same bug: with two generators configured, the group *is*
+    asked — and the answer is a model, which does not serve ``video.concat``. Writing
+    defaults only for the scenes the chosen binding serves dropped that one on the floor.
+    """
+    picked = ["gemini/veo-3.1", "volc-ark/seedance-2.0"]
+    offered = sorted(init_mod.bindings_for_skills(["media-ai-video"]))
+    args = make_args(skills_dest=str(home / "sk"))
+    summary, prompter = run(args, [
+        pick("media-ai-video"),
+        [offered.index(b) for b in picked],
+        0,                                      # how keys are stored
+        None, SECRET,                           # gemini: base URL, key
+        None, "ep-20260101-abc", SECRET,        # ark: base URL, endpoint id, key
+        0,                                      # the group question: the first generator
+    ])
+
+    assert any("Default for `media-ai video`" in q for q in prompter.asked), "the group was not contested"
+    defaults = summary["defaults"]
+    assert defaults["video.text_to_video"] == "gemini/veo-3.1"
+    assert defaults["video.concat"] == "local/ffmpeg", "the local scene lost its default"
+
+
+def test_the_offline_placeholder_is_never_proposed_as_a_default(home):
+    """`mock/mock` needs no credential either, and a default is the strongest possible
+    recommendation — it is what a call with no `--binding` silently gets."""
+    args = make_args(non_interactive=True, skills_dest=str(home / "sk"))
+    summary, _ = run(args, [])
+    assert "mock/mock" not in summary["defaults"].values()
+    assert "mock/mock" not in init_mod._configuration_free_bindings()
+
+
+def test_skills_only_writes_no_defaults(home):
+    """`--skills-only` is "without changing credentials or bindings", and a default is
+    configuration like any other."""
+    args = make_args(skills_only=True, non_interactive=True, skills_dest=str(home / "sk"))
+    summary, _ = run(args, [])
+    assert summary["defaults"] == {}
+    assert not (home / "config.toml").exists()
+
+
 # --------------------------------------------------------------- merge/backup
 
 

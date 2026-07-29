@@ -238,6 +238,65 @@ class SoundEffectRequest:
         return Modality.AUDIO
 
 
+@dataclass
+class AnimationRequest:
+    """Export an animated image — GIF, animated WebP, APNG — from a clip or stills.
+
+    The last mile of a render: something that autoplays in a README, a chat message or
+    a docs page, where a ``<video>`` tag is unwelcome. Local, offline, no credential.
+
+    ``transparent`` is a field rather than a scene on purpose. It takes exactly the
+    inputs the opaque case takes and changes only the output, and a capability that does
+    not change the input roles is not a scene (see :mod:`media_ai.core.scene`). What
+    *is* a second scene is ``frames``: a set of stills is a different input role from
+    one video, and it is how footage matted frame by frame comes back in.
+    """
+
+    output: Path
+    source: MediaRef | None = None
+    frames: list[MediaRef] = field(default_factory=list)
+    output_format: str | None = None  # gif | webp | apng; inferred from `output` if absent
+
+    # what part of the source
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+    duration_seconds: float | None = None
+
+    # timing
+    fps: float | None = None
+    speed: float | None = None
+    """``None`` = the source's own rate. Not defaulted to ``1.0``: an earlier version
+    coerced it with ``speed or 1.0``, which silently turned a requested ``0`` — an
+    invalid speed worth refusing — into "unchanged"."""
+    reverse: bool = False
+    bounce: bool = False
+    """Play forwards then backwards, so a short loop reads as continuous motion."""
+    loop: int = 0
+    """0 = forever, 1 = once, N = N plays. Each container spells this differently."""
+
+    # geometry — reuses the shared spec for the pixel case, plus a fit-inside bound
+    geometry: GeometrySpec | None = None
+    max_width: int | None = None
+    max_height: int | None = None
+    scale_filter: str | None = None
+
+    # transparency
+    transparent: bool = False
+    key_color: str | None = None
+    key_mode: str | None = None  # chromakey | colorkey
+    similarity: float | None = None
+    blend: float | None = None
+    despill: bool = True
+
+    model: str | None = None
+    options: dict = field(default_factory=dict)
+
+    @property
+    def modality(self) -> Modality:
+        # The output is an image even though a video may have gone in.
+        return Modality.IMAGE
+
+
 @dataclass(frozen=True)
 class JobRef:
     """Identifies an async job for ``job query`` / ``job cancel``."""

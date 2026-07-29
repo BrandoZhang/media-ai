@@ -1,7 +1,8 @@
 """Unified dispatcher: ``media-ai <group> <op> [args...]``.
 
 Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
-``music``, ``sound``, ``job``, ``capabilities``, ``bindings``, ``config``, ``usage``.
+``music``, ``sound``, ``animation``, ``job``, ``capabilities``, ``bindings``,
+``config``, ``usage``.
 Each group is also reachable directly; this umbrella reshapes argv so the group's own
 argparse sees a clean program name.
 
@@ -29,6 +30,7 @@ _GROUPS = {
     "speech": "speech",
     "music": "music",
     "sound": "sound",
+    "animation": "animation",
     "job": "job",
     "capabilities": "capabilities",
     "bindings": "bindings",
@@ -45,6 +47,7 @@ _GROUP_HELP = {
     "speech": "generate single-voice or dialogue speech",
     "music": "compose music or build a composition plan",
     "sound": "generate sound effects from text",
+    "animation": "export an animated image (GIF, animated WebP, APNG)",
     "job": "query, download, or cancel an asynchronous job",
     "capabilities": "list binding capabilities",
     "bindings": "list or configure callable bindings",
@@ -72,6 +75,7 @@ def _usage(stream) -> None:
     print("  media-ai speech generate --text 'hello there' --output hi.mp3", file=stream)
     print("  media-ai music generate --prompt 'lofi hip hop beat' --output song.mp3", file=stream)
     print("  media-ai sound generate --text 'a spooky whoosh' --output sfx.mp3", file=stream)
+    print("  media-ai animation export --input clip.mp4 --output demo.webp --max-width 640", file=stream)
     print("  media-ai bindings list              # what this machine can call, and what is default", file=stream)
     print("  media-ai bindings available         # declared but not configured yet", file=stream)
     print("  media-ai config set-default video.text_to_video volc-ark/seedance-2.0", file=stream)

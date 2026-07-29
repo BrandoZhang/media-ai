@@ -126,7 +126,8 @@ passed rather than chosen by a flag: `video.text_to_video`, `video.image_to_vide
 `video.keyframe_to_video`, `video.reference_to_video`, `video.extend`,
 `video.concat`, `image.text_to_image`, `image.image_to_image`,
 `speech.text_to_speech`, `speech.dialogue`, `music.{text_to,plan_to}_music`,
-`music.plan`, `sound.text_to_sound`.
+`music.plan`, `sound.text_to_sound`, `animation.from_video`,
+`animation.from_frames`.
 
 Scene is the **semantic role of the inputs, not their file type** — a video passed as
 reference material and a video passed to continue from are different scenes, which is
@@ -135,7 +136,13 @@ why `--reference-video` and `--continue-from` are separate flags.
 The corollary bounds it: a capability that does not change the input roles is not a
 scene. Seedream 5.0 pro's coordinate editing takes exactly the inputs of
 image-to-image and differs only in prompt syntax, so it is a capability flag plus a
-documented technique.
+documented technique. Neither is exporting a *transparent* animation: it takes the same
+inputs as an opaque one and changes only the output, so it is `--transparent`, while a
+frame sequence — genuinely a different input role — is the second animation scene.
+
+A group carries the modality of what it **produces**, which is why `animation` is its
+own group rather than a scene under `video`: an animated GIF/WebP/APNG is served as an
+image whichever way it was made, and `modality` is the field a consumer branches on.
 
 ## Nothing falls back
 

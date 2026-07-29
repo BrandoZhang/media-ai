@@ -7,6 +7,7 @@ material versus one handed in to continue from, and the precedence between them.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -85,10 +86,36 @@ def test_music_scene_distinguishes_prompt_from_plan():
 
 
 def test_scene_groups_match_cli_command_groups():
-    """A skill covers a command group, so the groups are what skills are cut along."""
-    assert {s.group for s in Scene} == {"image", "video", "speech", "music", "sound"}
+    """A skill covers a command group, so the groups are what skills are cut along.
+
+    Read out of the dispatcher rather than restated here: a hardcoded list only asserts
+    that someone updated two places, while this asserts the thing that has to be true —
+    every scene is reachable from a command, and every generation command drives scenes.
+    Adding ``animation.*`` without registering ``media-ai animation`` fails here, which
+    is the mistake worth catching, because a scene no command can express is one a
+    binding can declare and nothing can call.
+    """
+    from media_ai.__main__ import _GROUPS
+
+    groups = {s.group for s in Scene}
+    assert groups <= set(_GROUPS), f"scene group(s) with no CLI command: {sorted(groups - set(_GROUPS))}"
+    for group in groups:
+        assert group in _GROUPS
+        importlib.import_module(f"media_ai.cli.{_GROUPS[group]}")
     assert Scene.VIDEO_CONCAT in scenes_for_group("video")
     assert scenes_for_group("nothing") == frozenset()
+
+
+def test_every_group_carries_the_modality_of_what_it_produces():
+    """``animation`` is the case that makes this worth asserting: a video goes in and an
+    *image* comes out, and ``modality`` is the field a consumer branches on. Grouping it
+    under ``video`` — the tempting reading, since the input is a clip — would have
+    reported an animated GIF as a video."""
+    from media_ai.core.types import Modality
+
+    assert Scene.ANIMATION_FROM_VIDEO.modality is Modality.IMAGE
+    assert Scene.ANIMATION_FROM_FRAMES.modality is Modality.IMAGE
+    assert Scene.VIDEO_CONCAT.modality is Modality.VIDEO
 
 
 def test_unknown_request_type_is_an_error_not_a_guess():

@@ -91,10 +91,16 @@ name a vendor's own documentation uses.
 
 ## Local backends
 
-`local/ffmpeg` (clip joining) and `mock/mock` (offline placeholders) declare
-`auth.kind = "none"`, so they are always available and never appear in a credential
-prompt. `mock` is an ordinary binding you must ask for — it is not what an
-unconfigured machine falls back to.
+`local/ffmpeg` (clip joining and animated-image export) and `mock/mock` (offline
+placeholders) declare `auth.kind = "none"`, so they are always available and never
+appear in a credential prompt. `mock` is an ordinary binding you must ask for — it is
+not what an unconfigured machine falls back to.
+
+Needing no credential is not the same as needing no *configuration*: a call that names
+no binding still resolves through the scene default, so `media-ai init` writes one for
+these too. It used to write them only for bindings it had asked a key for, which left
+`video concat` refusing on a fresh install with `no_default_binding` — naming, in the
+hint, the free binding sitting right there.
 
 ## Adding a model
 

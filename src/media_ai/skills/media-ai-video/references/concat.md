@@ -25,7 +25,11 @@ configure.
 
 ## When it is the wrong tool
 
-- **Trimming, cropping, speed, overlays** — not implemented. Call ffmpeg directly.
+- **An animated GIF / WebP / APNG** — that is `media-ai animation export`
+  (the `media-ai-animation` skill), which also covers trimming, frame rate, speed,
+  ping-pong looping, resizing and background keying *for animated-image output*.
+- **Trimming, cropping or speed on a video** — not implemented here. Call ffmpeg
+  directly.
 - **Joining audio** — this joins video. Use the audio your clips already carry, or
   mux separately.
 - **Transitions** — this is a hard cut between clips. Anything else needs a real

@@ -20,6 +20,23 @@ def bool_arg(s) -> bool:
     return str(s).strip().lower() in _TRUE
 
 
+def add_toggle(ap: argparse.ArgumentParser, *names: str, dest: str | None = None,
+               default: bool, help: str) -> None:  # noqa: A002 - argparse's own keyword
+    """A boolean flag that accepts both ``--flag`` and ``--flag false``.
+
+    Two callers write these commands and they write them differently: a person types
+    ``--transparent``, while an agent filling a schema emits ``--transparent true``.
+    Either spelling alone makes the other an argparse error, and "unrecognized
+    arguments" is a poor answer to a request that was perfectly clear.
+
+    Used for flags whose off-switch is worth having. A tri-state option — where *unset*
+    has to stay distinguishable from ``false``, as with Volc's ``camera_fixed``, which is
+    omitted from the wire entirely unless asked for — is still ``type=bool_arg,
+    default=None``: a ``const`` would collapse exactly the distinction that matters.
+    """
+    ap.add_argument(*names, dest=dest, type=bool_arg, nargs="?", const=True, default=default, help=help)
+
+
 def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--binding", default=None,
                     help="<provider>/<model>, e.g. volc-ark/seedance-2.0 (see: media-ai bindings list)")

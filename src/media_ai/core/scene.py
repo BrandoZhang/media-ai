@@ -33,6 +33,7 @@ from __future__ import annotations
 from enum import Enum
 
 from .types import (
+    AnimationRequest,
     DialogueRequest,
     ImageRequest,
     Modality,
@@ -72,6 +73,9 @@ class Scene(str, Enum):
 
     SOUND_TEXT_TO_SOUND = "sound.text_to_sound"
 
+    ANIMATION_FROM_VIDEO = "animation.from_video"
+    ANIMATION_FROM_FRAMES = "animation.from_frames"
+
     @property
     def group(self) -> str:
         """The CLI command group this scene belongs to (``video``, ``speech``, …)."""
@@ -90,6 +94,11 @@ _GROUP_MODALITY: dict[str, Modality] = {
     "speech": Modality.AUDIO,
     "music": Modality.AUDIO,
     "sound": Modality.AUDIO,
+    # An animated GIF/WebP/APNG is served as an image — `image/gif`, an `<img>` tag —
+    # even though a video went in. The group carries the *output* modality, which is why
+    # this is its own group rather than a scene under `video`: there it would have been
+    # reported as a video, and the modality field is what a consumer branches on.
+    "animation": Modality.IMAGE,
 }
 
 
@@ -123,6 +132,14 @@ def derive_scene(req) -> Scene:
 
     if isinstance(req, SoundEffectRequest):
         return Scene.SOUND_TEXT_TO_SOUND
+
+    if isinstance(req, AnimationRequest):
+        # One source video, or a set of stills. Those are genuinely different input
+        # roles — a frame sequence is where footage that had to be matted frame by frame
+        # comes back in — so they are two scenes. **Transparency is not**: it takes the
+        # same inputs and changes only the output, which by this module's own rule makes
+        # it a request field, not a scene.
+        return Scene.ANIMATION_FROM_FRAMES if req.frames else Scene.ANIMATION_FROM_VIDEO
 
     raise TypeError(f"no scene derivation for {type(req).__name__}")
 

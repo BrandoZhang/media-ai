@@ -17,6 +17,7 @@ import pytest
 from conftest import CATALOG, adapter_for
 from media_ai.core.scene import Scene
 from media_ai.core.types import (
+    AnimationRequest,
     DialogueRequest,
     DialogueTurn,
     ImageRequest,
@@ -68,6 +69,10 @@ def _minimal(scene: Scene, tmp_path: Path, voice: str = "v1"):
         return MusicPlanRequest(prompt="lofi", output=out)
     if scene is Scene.SOUND_TEXT_TO_SOUND:
         return SoundEffectRequest(text="a whoosh", output=out)
+    if scene is Scene.ANIMATION_FROM_VIDEO:
+        return AnimationRequest(output=out, source=_ref(tmp_path, "clip.mp4"))
+    if scene is Scene.ANIMATION_FROM_FRAMES:
+        return AnimationRequest(output=out, frames=[_ref(tmp_path, "f01.png")])
     raise AssertionError(f"no minimal request for {scene}")
 
 

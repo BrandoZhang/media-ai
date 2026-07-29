@@ -24,6 +24,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core.binding import AuthKind
 from ..core.config import Config, config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
@@ -455,24 +456,31 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
     Asked per *group* and stored per *scene*. A group is the decision people actually
     make ("images go here"); storing it expanded means refining one scene later — text
     to image on one binding, editing on another — needs no schema change.
+
+    The question is only asked about the scenes where there is genuinely something to
+    choose. A scene with a single candidate is not a decision, and it used to be skipped
+    entirely whenever the group's answer went to a binding that did not serve it: choose
+    a model for ``media-ai video`` and ``video.concat`` — served by ``local/ffmpeg``
+    alone, offered in the same list, and never the answer anyone gives to "which model
+    generates my video" — was left with no default at all, so a fresh install refused
+    ``video concat`` while naming the binding it should have used in the hint.
     """
     cat = catalog()
     out: dict[str, str] = {}
     for group in sorted({group_of(s) for s in skills}):
-        scenes = scenes_for_group(group)
-        if not scenes:
-            continue
-        candidates = [b for b in bindings if cat.get(b).scenes & scenes]
-        if not candidates:
-            continue
-        if len(candidates) == 1:
-            chosen = candidates[0]
-        else:
-            idx = prompter.select(f"Default for `media-ai {group}` when no binding is named", 
-                                  [Option(b, hint=cat.get(b).title, value=b) for b in candidates])
-            chosen = candidates[idx]
-        for scene in sorted(scenes & cat.get(chosen).scenes, key=lambda s: s.value):
-            out[scene.value] = chosen
+        scenes = sorted(scenes_for_group(group), key=lambda s: s.value)
+        serves = {scene: [b for b in bindings if scene in cat.get(b).scenes] for scene in scenes}
+        contested = sorted({b for candidates in serves.values() if len(candidates) > 1 for b in candidates})
+        chosen = None
+        if contested:
+            idx = prompter.select(f"Default for `media-ai {group}` when no binding is named",
+                                  [Option(b, hint=cat.get(b).title, value=b) for b in contested])
+            chosen = contested[idx]
+        for scene, candidates in serves.items():
+            if chosen in candidates:
+                out[scene.value] = chosen
+            elif len(candidates) == 1:
+                out[scene.value] = candidates[0]
     return out
 
 
@@ -655,11 +663,37 @@ def _ask_defaults(args, prompter, answers: _Answers) -> None:
     Worth asking even when a group has one candidate: without a default, a call that
     names no binding fails, and "it worked in the wizard" is the wrong lesson to draw
     from a setup that configured a key and stopped short of making it reachable.
+
+    The candidates are the bindings configured here **plus the ones that need no
+    configuring**. Leaving those out was a bug with teeth: ``local/ffmpeg`` requires no
+    credential, so it never appeared in ``creds``, so no default was ever written for the
+    scenes only it serves — and ``media-ai video concat`` on a fresh install answered
+    ``no_default_binding`` for a binding that was sitting right there, free and offline.
+    Whether a binding needs a key has nothing to do with whether a caller may omit its
+    name, and this step is the one that decides the latter.
     """
     answers.defaults = {}
-    if not answers.creds:
+    if args.skills_only:
+        return  # "without changing credentials or bindings" — a default is config
+    candidates = sorted(set(answers.creds) | set(_configuration_free_bindings()))
+    if not candidates:
         return
-    answers.defaults = _ask_scene_defaults(sorted(answers.creds), answers.skills, prompter)
+    answers.defaults = _ask_scene_defaults(candidates, answers.skills, prompter)
+
+
+def _configuration_free_bindings() -> list[str]:
+    """Bindings callable with nothing configured — minus the placeholder.
+
+    ``mock/mock`` is equally free and is deliberately excluded: proposing it as a scene
+    default is exactly the recommendation ``placeholder`` exists to suppress, and a
+    default is the strongest form of one, since it is what a call with no ``--binding``
+    silently gets. It stays callable by name.
+    """
+    cat = catalog()
+    return [
+        spec.id for spec in cat.all()
+        if cat.providers[spec.provider].auth.kind is AuthKind.NONE and not spec.placeholder
+    ]
 
 
 def _ask_verify(args, prompter, answers: _Answers) -> None:
