@@ -26,6 +26,16 @@ def test_text2image_body_uses_model_size_and_sequential(fake_provider, tmp_path)
     assert res.primary().path.endswith("o.png") and Path(res.primary().path).is_file()
 
 
+def test_configured_endpoint_id_is_sent_in_ark_model_field(fake_provider, tmp_path):
+    endpoint_id = "ep-20260728-seedream50"
+    prov, fake = fake_provider(
+        "volc-ark/seedream-5.0", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}], endpoint_id=endpoint_id,
+    )
+    prov.generate_image(ImageRequest(prompt="dune", output=tmp_path / "o.png"))
+    assert prov.model_id == endpoint_id
+    assert fake.calls[0]["body"]["model"] == endpoint_id
+
+
 def test_group_sets_sequential_options(fake_provider, tmp_path):
     prov, fake = fake_provider("volc-ark/seedream-4.5", [{"data": [{"b64_json": PNG_1x1}, {"b64_json": PNG_1x1}], "usage": {}}])
     prov.generate_image(ImageRequest(prompt="team", output=tmp_path / "o.png", count=2,

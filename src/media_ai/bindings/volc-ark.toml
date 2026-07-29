@@ -15,11 +15,15 @@ title      = "Volcengine Ark"
 transport  = "http"
 adapter    = "media_ai.providers.volc_ark:VolcArkAdapter"
 docs       = "https://www.volcengine.com/docs/82379/1330310"
-setup_hint = "Enable the model in the Ark console, then create an API key. Model IDs are per-account."
+setup_hint = "Enable the model in the Ark console, create an endpoint, then create an API key. Endpoint IDs are per-account."
 account_specific_model_ids = true
-account_specific_note = """Volcengine Ark model ids are account-specific: a custom endpoint (ep-…) only
+account_specific_note = """Volcengine Ark endpoint IDs are account-specific: an endpoint (ep-…) only
 exists on the account that created it, and the shipped defaults may not be
-enabled on yours. Check the Ark console for your ids."""
+enabled on yours. Check the Ark console for your endpoint IDs."""
+setup_base_url = true
+wire_id_label = "endpoint ID"
+wire_id_hint = "ep-xxx-xxx"
+wire_id_pattern = "^ep-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$"
 
 [provider.auth]
 kind   = "api_key"

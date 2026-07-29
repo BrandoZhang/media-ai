@@ -264,9 +264,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--keep-credentials", action="store_true", help="leave credentials.toml (API keys)")
     ap.add_argument("--yes", "-y", action="store_true", help="don't ask; remove everything not kept by a flag")
     ap.add_argument("--dry-run", action="store_true", help="report what would be removed without removing it")
-    ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--log-level", default=None)
-    ap.add_argument("--metadata-out", default=None)
+    ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
+    ap.add_argument("--log-level", default=None, help="stderr log level: debug, info, warning, or error")
+    ap.add_argument("--metadata-out", default=None, help="also write the secret-free result JSON to this path")
     return ap
 
 

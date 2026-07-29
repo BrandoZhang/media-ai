@@ -51,7 +51,7 @@ credential = "cred://volc-ark-sg"
 # serves; the wire keeps the id the API accepts.
 [bindings."volc-ark/my-endpoint"]
 extends    = "volc-ark/seedream-4.5"
-model_id   = "ep-example-endpoint"
+endpoint_id = "ep-example-endpoint"
 credential = "env://ARK_API_KEY"
 
 # ---------------------------------------------------------------- defaults

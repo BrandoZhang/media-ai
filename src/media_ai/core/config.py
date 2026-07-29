@@ -5,7 +5,7 @@ Two tables, both non-secret::
     schema = 2
 
     [bindings."volc-ark/seedance-2.0"]
-    model_id   = "doubao-seedance-2-0-260128"
+    endpoint_id = "ep-example-endpoint"
     base_url   = "https://ark.cn-beijing.volces.com/api/v3"
     credential = "env://ARK_API_KEY"
 
@@ -27,7 +27,7 @@ costs a hop every time something breaks.
 
     [bindings."volc-ark/my-endpoint"]         # an opaque deployment id
     extends    = "volc-ark/seedream-4.5"      # …whose capabilities are the real model's
-    model_id   = "ep-example-endpoint"
+    endpoint_id = "ep-example-endpoint"
 
 One mechanism covers multi-account, multi-region, and deployment ids, because all
 three are "the same declared capabilities, reached differently".
@@ -64,6 +64,7 @@ class UserBinding:
     id: str
     extends: str | None = None
     model_id: str | None = None
+    endpoint_id: str | None = None
     base_url: str | None = None
     credential: str | None = None
     options: dict = field(default_factory=dict)
@@ -73,7 +74,7 @@ class UserBinding:
 
         Every writer that edits one field of an existing binding goes through here.
         Rebuilding the entry from the arguments a command happened to receive is what
-        made `bindings add <id> --credential …` delete a hand-configured `model_id`
+        made `bindings add <id> --credential …` delete a hand-configured `endpoint_id`
         (an account-specific `ep-…` endpoint), `base_url` and `options` — and that is
         the command every resolution error hints at, so rotating a key silently
         un-configured the binding whose key was being rotated.
@@ -82,7 +83,7 @@ class UserBinding:
         """
         kept = {
             f: (getattr(self, f) if changes.get(f) is None else (changes[f] or None))
-            for f in ("extends", "model_id", "base_url", "credential")
+            for f in ("extends", "model_id", "endpoint_id", "base_url", "credential")
         }
         options = self.options if changes.get("options") is None else changes["options"]
         return UserBinding(id=self.id, options=dict(options or {}), **kept)
@@ -120,10 +121,18 @@ def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
     options = raw.get("options", {})
     if not isinstance(options, dict):
         raise _fail(f'{path}: [bindings."{bid}"].options must be a table')
+    model_id = raw.get("model_id")
+    endpoint_id = raw.get("endpoint_id")
+    if model_id is not None and endpoint_id is not None:
+        raise _fail(
+            f'{path}: [bindings."{bid}"] must use either model_id or endpoint_id, not both',
+            code="wire_id_ambiguous",
+        )
     return UserBinding(
         id=bid,
         extends=raw.get("extends"),
-        model_id=raw.get("model_id"),
+        model_id=model_id,
+        endpoint_id=endpoint_id,
         base_url=raw.get("base_url"),
         credential=credential,
         options=dict(options),
@@ -223,6 +232,7 @@ def render_config(config: Config, *, header: str | None = None) -> str:
                 for k, v in (
                     ("extends", b.extends),
                     ("model_id", b.model_id),
+                    ("endpoint_id", b.endpoint_id),
                     ("base_url", b.base_url),
                     ("credential", b.credential),
                     ("options", b.options or None),

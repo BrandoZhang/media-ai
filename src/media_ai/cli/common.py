@@ -27,6 +27,8 @@ def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--model", default=None, help="model name; used alone only when one binding serves it")
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
     ap.add_argument("--log-level", default=None, help="debug|info|warning|error")
+    ap.add_argument("--verbose", action="store_true",
+                    help="print redacted binding and HTTP request diagnostics to stderr")
     ap.add_argument("--metadata-out", default=None, help="also write the result JSON to this path (secret-free)")
     ap.add_argument("--on-unsupported", default="error", choices=[p.value for p in UnsupportedPolicy],
                     help="what to do with unsupported options (default: error)")
@@ -59,6 +61,10 @@ def bind(args, req):
     )
     rb.check_scene(scene, available)
     req.model = rb.model_id
+    get_logger().debug(
+        "binding resolved: binding=%s scene=%s provider=%s base_url=%s wire_id=%s",
+        rb.id, scene.value, rb.provider.name, rb.base_url, rb.model_id,
+    )
     return build_adapter(rb), rb, scene
 
 
@@ -202,7 +208,7 @@ def parse_args(parser: argparse.ArgumentParser, argv=None):
 def run(build_and_call, args) -> int:
     """Configure logging, run the command, and turn any failure into the JSON
     error contract + a category-specific exit code."""
-    configure(getattr(args, "log_level", None))
+    configure("debug" if getattr(args, "verbose", False) else getattr(args, "log_level", None))
     try:
         result = build_and_call(args)
         return emit_result(result, args)

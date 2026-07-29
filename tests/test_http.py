@@ -14,6 +14,7 @@ import urllib.error
 
 import pytest
 from media_ai.core.errors import ErrorCategory, MediaError
+from media_ai.core.logging import configure
 from media_ai.providers import _http
 from media_ai.providers._http import HttpClient
 
@@ -166,3 +167,19 @@ def test_sse_json_rejects_malformed_events(client, monkeypatch):
     with pytest.raises(MediaError) as ei:
         client.request_sse_json("POST", "/images", body={"stream": True})
     assert ei.value.category == ErrorCategory.PROVIDER
+
+
+def test_verbose_http_diagnostics_show_redacted_headers_and_json_body(client, monkeypatch, capsys):
+    _install(monkeypatch, [b'{"ok": true}'])
+    configure("debug")
+    try:
+        client.request_json(
+            "POST", "/tasks", headers={"Authorization": "Bearer ark-secret-123456", "X-API-Key": "header-secret"},
+            body={"prompt": "visible", "api_key": "also-secret"},
+        )
+    finally:
+        configure()
+    stderr = capsys.readouterr().err
+    assert "HTTP request:" in stderr and '"Authorization": "***"' in stderr and '"X-api-key": "***"' in stderr
+    assert '"prompt": "visible"' in stderr and '"api_key": "***"' in stderr
+    assert "ark-secret-123456" not in stderr and "header-secret" not in stderr and "also-secret" not in stderr

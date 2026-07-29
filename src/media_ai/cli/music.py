@@ -26,20 +26,21 @@ def _build_parser() -> argparse.ArgumentParser:
     gen = sub.add_parser("generate", help="prompt or composition plan -> song")
     gen.add_argument("--prompt", default=None, help="text prompt (mutually exclusive with --plan)")
     gen.add_argument("--plan", default=None, help="composition-plan JSON file (mutually exclusive with --prompt)")
-    gen.add_argument("--output", required=True)
+    gen.add_argument("--output", required=True, help="path for the generated audio file")
     gen.add_argument("--duration-ms", dest="duration_ms", type=int, default=None, help="song length (prompt mode)")
     gen.add_argument("--output-format", dest="output_format", default=None, help="e.g. mp3_44100_128 or auto")
     gen.add_argument("--seed", type=int, default=None, help="composition-plan mode only")
     gen.add_argument("--detailed", type=common.bool_arg, default=False, help="also write a <output>.metadata.json sidecar")
-    gen.add_argument("--option", nargs="*", default=[])
+    gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(gen)
 
     plan = sub.add_parser("plan", help="prompt -> composition plan (JSON; credit-free)")
-    plan.add_argument("--prompt", required=True)
+    plan.add_argument("--prompt", required=True, help="text instruction for the composition plan")
     plan.add_argument("--output", required=True, help="where to write the composition-plan JSON")
-    plan.add_argument("--duration-ms", dest="duration_ms", type=int, default=None)
+    plan.add_argument("--duration-ms", dest="duration_ms", type=int, default=None,
+                      help="target song length in milliseconds")
     plan.add_argument("--source-plan", dest="source_plan", default=None, help="optional source composition-plan JSON to refine")
-    plan.add_argument("--option", nargs="*", default=[])
+    plan.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(plan)
     return ap
 

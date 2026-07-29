@@ -16,7 +16,8 @@ media-ai capabilities --binding <id> --pretty
 ## Configuring one
 
 ```bash
-media-ai bindings add volc-ark/seedance-2.0 --credential env://ARK_API_KEY
+media-ai bindings add volc-ark/seedance-2.0 --credential env://ARK_API_KEY \
+  --endpoint-id ep-xxx-xxx --base-url https://ark.cn-beijing.volces.com/api/v3
 media-ai config set-default video volc-ark/seedance-2.0
 ```
 
@@ -49,7 +50,7 @@ credential = "cred://volc-ark-sg"
 # an opaque deployment id, whose capabilities are the real model's
 [bindings."volc-ark/my-endpoint"]
 extends    = "volc-ark/seedream-4.5"
-model_id   = "ep-example-endpoint"         # what goes on the wire
+endpoint_id = "ep-example-endpoint"        # sent as Ark's `model` field
 credential = "env://ARK_API_KEY"
 ```
 

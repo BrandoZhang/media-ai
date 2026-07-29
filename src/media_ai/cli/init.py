@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -280,17 +281,19 @@ def _env_already_set(env: tuple[str, ...]) -> str | None:
     return None
 
 
-def _collect_credentials(bindings: dict[str, list[str]], prompter) -> dict[str, dict]:
-    """Ask how to store keys once, then collect one **per binding**.
+def _configure_bindings(
+    bindings: dict[str, list[str]], prompter, *, advanced: bool
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str], dict[str, str]]:
+    """Configure one binding at a time, including its account-specific wire id.
 
-    Per binding, not per provider: a binding carries its own credential reference, so
-    picking three Seedream models is three questions. That is the cost of the config
-    saying outright which key each call uses, instead of a shared entry a reader has
-    to go and look up.
+    A binding is the unit of configuration, so its endpoint and its key must remain
+    adjacent in the wizard.  Asking for all keys first and all endpoint ids later is
+    particularly error-prone for Ark: after choosing several Seedream/Seedance
+    bindings, there is no reliable way to know which id belongs to which key.
 
-    The storage *mechanism* is the same for all of them, so the how-question is asked
-    once. Returns ``{binding id: {"api_key": …}}`` — a raw key to store, or an
-    ``env://VAR`` reference to write instead.
+    Returns credentials plus generic model-id overrides, Ark endpoint ids and base
+    URL overrides, all keyed by binding id.  The storage mechanism is deliberately
+    asked once; then each binding is completed from its URL/id through its key.
     """
     modes = [
         Option("paste the key", hint="stored in credentials.toml, chmod 600"),
@@ -298,28 +301,114 @@ def _collect_credentials(bindings: dict[str, list[str]], prompter) -> dict[str, 
     ]
     mode = prompter.select("How should keys be stored?", modes)
 
+    cat = catalog()
+    notes = dict.fromkeys(
+        cat.providers[cat.get(bid).provider].account_specific_note
+        for bid in bindings
+        if cat.providers[cat.get(bid).provider].account_specific_model_ids
+    )
+    for note in notes:
+        prompter.note("\n" + (note or "This provider's wire IDs are account-specific — check its console."))
+
     # Esc inside this loop steps back one *binding*, not out of the whole step: with
     # several configured one after another, letting it unwind to the driver would
     # throw away every key already typed. Going back from the first one — or from the
     # storage question — still leaves the step, which is what the user means.
     creds: dict[str, dict] = {}
+    model_ids: dict[str, str] = {}
+    endpoint_ids: dict[str, str] = {}
+    base_urls: dict[str, str] = {}
     order = sorted(bindings)
     i = 0
     while i < len(order):
         bid = order[i]
         try:
-            entry = _ask_one_credential(bid, bindings[bid], mode, prompter)
+            entry, model_id, endpoint_id, base_url = _configure_one_binding(
+                bid, bindings[bid], mode, prompter, advanced=advanced,
+            )
         except GoBack:
             if i == 0:
                 raise
             creds.pop(order[i - 1], None)
+            model_ids.pop(order[i - 1], None)
+            endpoint_ids.pop(order[i - 1], None)
+            base_urls.pop(order[i - 1], None)
             i -= 1
             continue
         creds.pop(bid, None)
+        model_ids.pop(bid, None)
+        endpoint_ids.pop(bid, None)
+        base_urls.pop(bid, None)
         if entry:
             creds[bid] = entry
+            if model_id:
+                model_ids[bid] = model_id
+            if endpoint_id:
+                endpoint_ids[bid] = endpoint_id
+            if base_url:
+                base_urls[bid] = base_url
         i += 1
-    return {bid: creds[bid] for bid in order if bid in creds}
+    return (
+        {bid: creds[bid] for bid in order if bid in creds},
+        {bid: model_ids[bid] for bid in order if bid in model_ids},
+        {bid: endpoint_ids[bid] for bid in order if bid in endpoint_ids},
+        {bid: base_urls[bid] for bid in order if bid in base_urls},
+    )
+
+
+def _configure_one_binding(
+    bid: str, skills: list[str], mode: int, prompter, *, advanced: bool
+) -> tuple[dict | None, str | None, str | None, str | None]:
+    """Ask all setup questions for one binding in the order they take effect."""
+    cat = catalog()
+    spec = cat.get(bid)
+    provider = cat.providers[spec.provider]
+    model_id = endpoint_id = base_url = None
+
+    if provider.base_url.configurable:
+        # Every HTTP binding owns its endpoint, so setup always makes that endpoint
+        # explicit. Ark must always recommend its manifest's canonical endpoint; for
+        # other providers a re-run preserves an existing custom URL as the default.
+        configured = load_config().bindings.get(bid)
+        default_url = (
+            provider.base_url.default
+            if provider.setup_base_url
+            else (configured.base_url if configured and configured.base_url else provider.base_url.default)
+        )
+        base_url = prompter.text(
+            f"{bid} — Base URL", default=default_url or "",
+        ).strip()
+
+    if provider.account_specific_model_ids:
+        configured = load_config().bindings.get(bid)
+        # A legacy ``model_id = \"ep-…\"`` remains usable, and makes a subsequent
+        # init run migrate naturally to the accurately named ``endpoint_id`` field.
+        current = (configured.endpoint_id or configured.model_id) if configured else ""
+        if provider.wire_id_pattern and current and not re.fullmatch(provider.wire_id_pattern, current):
+            current = ""
+        hint = f" (for example {provider.wire_id_hint})" if provider.wire_id_hint else ""
+        endpoint_id = prompter.text(
+            f"{bid} — {provider.wire_id_label} sent as model{hint}", default=current,
+        ).strip()
+        if not endpoint_id:
+            raise MediaError(
+                f"{bid} needs an {provider.wire_id_label}", category=ErrorCategory.CLI,
+                code="endpoint_id_missing", hint=f"enter an {provider.wire_id_hint or provider.wire_id_label}",
+            )
+        if provider.wire_id_pattern and not re.fullmatch(provider.wire_id_pattern, endpoint_id):
+            raise MediaError(
+                f"{bid} {provider.wire_id_label} must match {provider.wire_id_hint or provider.wire_id_pattern}",
+                category=ErrorCategory.CLI, code="endpoint_id_invalid",
+                hint=f"enter an {provider.wire_id_hint or provider.wire_id_label}",
+            )
+    elif advanced:
+        configured = load_config().bindings.get(bid)
+        current = (configured.model_id if configured and configured.model_id else spec.model_id)
+        entered = prompter.text(f"{bid} — model ID sent on the wire", default=current).strip()
+        if entered and entered != spec.model_id:
+            model_id = entered
+
+    return _ask_one_credential(bid, skills, mode, prompter), model_id, endpoint_id, base_url
 
 
 def _ask_one_credential(bid: str, skills: list[str], mode: int, prompter) -> dict | None:
@@ -342,9 +431,6 @@ def _ask_one_credential(bid: str, skills: list[str], mode: int, prompter) -> dic
     return {"api_key": key.strip()} if key.strip() else None
 
 
-# ------------------------------------------------------------------ model ids
-
-
 def _binding_choice(bid: str, skills: list[str]) -> Option:
     """One binding as a menu row, labelled with what it costs to trust it.
 
@@ -361,41 +447,6 @@ def _binding_choice(bid: str, skills: list[str]) -> Option:
     bits.append(f"verified {spec.verified}" if spec.verified else "never live-tested")
     bits.append(", ".join(s.removeprefix("media-ai-") for s in skills))
     return Option(bid, hint=" · ".join(bits), value=bid)
-
-
-def _ask_model_ids(bindings: list[str], prompter, *, advanced: bool) -> dict[str, str]:
-    """Per-binding overrides for the id that goes on the wire.
-
-    Only asked where the manifest's default cannot be trusted: Ark model ids are
-    account-specific, so the shipped one may simply not exist on the account being
-    configured. Everywhere else the manifest is right and the question is noise —
-    behind ``--advanced`` for anyone who wants it anyway.
-    """
-    cat = catalog()
-    out: dict[str, str] = {}
-    # Which providers have account-scoped ids is declared per provider, not listed here.
-    # A table in the wizard means the next provider with deployment names silently never
-    # gets asked, and adding it means editing setup — the maintenance cost the
-    # manifest-driven menu exists to remove.
-    account_specific = [b for b in bindings if cat.providers[cat.get(b).provider].account_specific_model_ids]
-    for note in dict.fromkeys(
-        cat.providers[cat.get(b).provider].account_specific_note for b in account_specific
-    ):
-        prompter.note("\n" + (note or "This provider's model ids are account-specific — check its console."))
-    # Default to what this machine is *already* configured with, falling back to the
-    # manifest's shipped id. Offering the shipped id to someone who has configured an
-    # account-specific `ep-…` endpoint makes pressing Enter — the safest-looking key on
-    # the keyboard — silently revert it to a model their account may not have enabled.
-    configured = {bid: b.model_id for bid, b in load_config().bindings.items() if b.model_id}
-    for bid in bindings:
-        spec = cat.get(bid)
-        if bid not in account_specific and not advanced:
-            continue
-        current = configured.get(bid) or spec.model_id
-        entered = prompter.text(f"{bid} — model id sent on the wire", default=current)
-        if entered and entered != spec.model_id:
-            out[bid] = entered
-    return out
 
 
 def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dict[str, str]:
@@ -453,6 +504,8 @@ class _Answers:
     bindings: list[str] = field(default_factory=list)            # the ones picked
     creds: dict = field(default_factory=dict)                    # binding id -> {"api_key": …}
     model_ids: dict[str, str] = field(default_factory=dict)      # binding id -> wire id override
+    endpoint_ids: dict[str, str] = field(default_factory=dict)   # binding id -> Ark endpoint id
+    base_urls: dict[str, str] = field(default_factory=dict)      # binding id -> explicit setup URL
     defaults: dict[str, str] = field(default_factory=dict)       # scene -> binding id
     verify: dict[str, bool] = field(default_factory=dict)
 
@@ -481,8 +534,7 @@ def _wizard(args, prompter) -> dict:
             lambda: _ask_custom_dest(args, prompter, answers),
             lambda: _ask_collisions(args, prompter, answers),
             lambda: _ask_bindings(args, prompter, answers),
-            lambda: _ask_credentials(args, prompter, answers),
-            lambda: _ask_model_id_overrides(args, prompter, answers),
+            lambda: _ask_binding_configuration(args, prompter, answers),
             lambda: _ask_defaults(args, prompter, answers),
             lambda: _ask_verify(args, prompter, answers),
         ],
@@ -583,18 +635,18 @@ def _ask_bindings(args, prompter, answers: _Answers) -> None:
     answers.bindings = [choices[i].value for i in picked]
 
 
-def _ask_credentials(args, prompter, answers: _Answers) -> None:
-    answers.creds = {}
+def _ask_binding_configuration(args, prompter, answers: _Answers) -> None:
+    answers.creds, answers.model_ids, answers.endpoint_ids, answers.base_urls = {}, {}, {}, {}
     if not answers.bindings:
         return
-    answers.creds = _collect_credentials({b: answers.needed[b] for b in answers.bindings}, prompter)
-
-
-def _ask_model_id_overrides(args, prompter, answers: _Answers) -> None:
-    answers.model_ids = {}
-    if not answers.creds:
-        return
-    answers.model_ids = _ask_model_ids(sorted(answers.creds), prompter, advanced=args.advanced)
+    (
+        answers.creds,
+        answers.model_ids,
+        answers.endpoint_ids,
+        answers.base_urls,
+    ) = _configure_bindings(
+        {b: answers.needed[b] for b in answers.bindings}, prompter, advanced=args.advanced,
+    )
 
 
 def _ask_defaults(args, prompter, answers: _Answers) -> None:
@@ -674,7 +726,11 @@ def _render_config(answers: _Answers) -> str:
         # the base_url, options or endpoint id a previous run (or a hand edit) put there.
         # Only what this run actually asked about changes.
         bindings[bid] = (bindings.get(bid) or UserBinding(id=bid)).merged_with(
-            model_id=answers.model_ids.get(bid),
+            # ``endpoint_id`` replaces a legacy Ark ``model_id``; keeping both would
+            # make the next config read deliberately reject the ambiguous wire id.
+            model_id="" if bid in answers.endpoint_ids else answers.model_ids.get(bid),
+            endpoint_id=answers.endpoint_ids.get(bid),
+            base_url=answers.base_urls.get(bid),
             credential=key if key.startswith("env://") else f"cred://{bid}",
         )
     merged = Config(
@@ -771,16 +827,19 @@ def _report(summary: dict, prompter) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, models, and Agent Skills.")
+    ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, bindings, and Agent Skills.")
     ap.add_argument("--verify", action="store_true", help="probe each key after writing (off by default)")
-    ap.add_argument("--advanced", action="store_true", help="also choose a model for each operation")
-    ap.add_argument("--skills-only", action="store_true", help="only install Agent Skills")
-    ap.add_argument("--skills-dest", default=None, help="install skills here without asking")
+    ap.add_argument("--advanced", action="store_true",
+                    help="also configure each binding's wire identifier (Ark endpoint ID where applicable)")
+    ap.add_argument("--skills-only", action="store_true",
+                    help="install or refresh Agent Skills without changing credentials or bindings")
+    ap.add_argument("--skills-dest", default=None, help="Agent Skills destination directory; skip the destination prompt")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written without writing it")
     ap.add_argument("--non-interactive", action="store_true", help="never open a terminal UI")
-    ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--log-level", default=None)
-    ap.add_argument("--metadata-out", default=None)
+    ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
+    ap.add_argument("--log-level", default=None, help="stderr log level: debug, info, warning, or error")
+    ap.add_argument("--verbose", action="store_true", help="print redacted HTTP diagnostics to stderr")
+    ap.add_argument("--metadata-out", default=None, help="also write the secret-free result JSON to this path")
     return ap
 
 

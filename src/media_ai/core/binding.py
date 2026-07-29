@@ -150,6 +150,14 @@ class ProviderSpec:
     forgetting to means its users silently never get asked."""
     account_specific_note: str | None = None
     """What the wizard says before asking. Absent = a generic line."""
+    setup_base_url: bool = False
+    """Whether setup must ask for this binding's base URL, even when it has a default."""
+    wire_id_label: str = "model ID"
+    """The vendor's name for an account-specific id shown in setup."""
+    wire_id_hint: str | None = None
+    """Short example shown beside the setup prompt (for example ``ep-xxx-xxx``)."""
+    wire_id_pattern: str | None = None
+    """Full-match pattern accepted by setup for an account-specific wire id."""
 
 
 #: ``supports.*`` flags the **core** enforces for every binding, before an adapter is
@@ -419,11 +427,22 @@ def _parse_provider(data: dict, source: str) -> ProviderSpec:
     if transport is Transport.LOCAL and auth.needs_credential:
         raise ManifestError("a local provider cannot require a credential", source=source)
 
+    wire_id_pattern = raw.get("wire_id_pattern") or None
+    if wire_id_pattern is not None:
+        try:
+            re.compile(str(wire_id_pattern))
+        except re.error as exc:
+            raise ManifestError(f"provider.wire_id_pattern is invalid: {exc}", source=source) from None
+
     return ProviderSpec(
         name=name, title=str(raw.get("title") or name), transport=transport, adapter=adapter,
         auth=auth, base_url=base_url, docs=raw.get("docs"), setup_hint=raw.get("setup_hint"),
         account_specific_model_ids=bool(raw.get("account_specific_model_ids", False)),
         account_specific_note=raw.get("account_specific_note") or None,
+        setup_base_url=bool(raw.get("setup_base_url", False)),
+        wire_id_label=str(raw.get("wire_id_label") or "model ID"),
+        wire_id_hint=raw.get("wire_id_hint") or None,
+        wire_id_pattern=wire_id_pattern,
     )
 
 
