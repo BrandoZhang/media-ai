@@ -324,3 +324,25 @@ def test_every_config_write_leaves_the_previous_file_behind(cfg, capsys):
 
     default = run(config_mod, "set-default", "image.text_to_image", "mock/mock", capsys=capsys)
     assert default["backup"] and Path(default["backup"]).is_file()
+
+
+@pytest.mark.parametrize("line, field", [
+    ('base_url = 8080', "base_url"),
+    ('model_id = 3', "model_id"),
+    ('endpoint_id = true', "endpoint_id"),
+    ('extends = 42', "extends"),
+    ('base_url = ""', "base_url"),
+])
+def test_a_mistyped_config_value_names_the_file_and_the_field(cfg, capsys, line, field):
+    """This file is hand-editable, so a typo in it is a config error like any other.
+
+    Every one of these reaches code that assumes a string — `base_url` is `.rstrip`-ed
+    into the HTTP client, `model_id` goes on the wire — so `base_url = 8080` surfaced
+    one command later as exit 1 `unknown` reading "'int' object has no attribute
+    'rstrip'", naming neither the file nor the field. `credential` and `options` were
+    already checked here; these are the rest of the same table.
+    """
+    cfg.write_text(f'schema = 2\n\n[bindings."mock/mock"]\n{line}\n', encoding="utf-8")
+    res = run(bindings_mod, "list", expect=2, capsys=capsys)
+    assert res["error"]["code"] == "config_invalid"
+    assert field in res["error"]["message"] and str(cfg) in res["error"]["message"]

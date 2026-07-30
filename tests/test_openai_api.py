@@ -89,7 +89,7 @@ def test_malformed_aspect_ratio_raises_validation_not_valueerror():
         req = ImageRequest(prompt="x", output=Path("o.png"), model="gpt-image-2",
                            geometry=GeometrySpec(aspect_ratio=bad))
         with pytest.raises(MediaError) as ei:
-            prov._size("gpt-image-2", req)
+            prov._size(req)
         assert ei.value.category == ErrorCategory.VALIDATION, bad
 
 
@@ -144,3 +144,34 @@ def test_edit_uses_multipart_with_reference_images(fake_provider, tmp_path):
     call = fake.calls[0]
     assert call["path"] == "/images/edits" and call["multipart"]
     assert [name for name, *_ in call["files"]] == ["image[]"]
+
+
+@pytest.mark.parametrize("geo, size", [
+    # The tier is the whole request when no ratio is given: answer it as a square, the
+    # same size `--aspect-ratio 1:1 --resolution <tier>` produces. It used to fall
+    # through to "auto" — the API then chose a size, `meta.size` echoed that choice
+    # back, and nothing said the tier had been dropped.
+    (GeometrySpec(resolution="2K"), "2048x2048"),
+    (GeometrySpec(resolution="4K"), "2048x2048"),
+    (GeometrySpec(resolution="1K"), "1024x1024"),
+    # …and every mapping that already worked keeps working.
+    (GeometrySpec(aspect_ratio="16:9", resolution="4K"), "3840x2160"),
+    (GeometrySpec(aspect_ratio="16:9", resolution="2K"), "2048x1152"),
+    (GeometrySpec(aspect_ratio="9:16", resolution="2K"), "1152x2048"),
+    (GeometrySpec(aspect_ratio="16:9"), "1536x1024"),
+    (GeometrySpec(aspect_ratio="9:16"), "1024x1536"),
+    (GeometrySpec(aspect_ratio="1:1"), "1024x1024"),
+    (GeometrySpec(width=1024, height=1536), "1024x1536"),
+    (None, "auto"),  # no geometry at all is the one request that means "you choose"
+])
+def test_every_geometry_the_caller_can_ask_for_reaches_the_wire(geo, size):
+    prov = adapter_for("openai/gpt-image-2")
+    req = ImageRequest(prompt="x", output=Path("o.png"), model="gpt-image-2", geometry=geo)
+    assert prov._size(req) == size
+
+
+def test_a_tier_alone_is_sent_as_a_size_not_auto(fake_provider, tmp_path):
+    prov, fake = fake_provider("openai/gpt-image-2", [{"data": [{"b64_json": PNG_1x1}], "usage": {}}])
+    prov.generate_image(ImageRequest(prompt="p", output=tmp_path / "o.png", model="gpt-image-2",
+                                     geometry=GeometrySpec(resolution="4K")))
+    assert fake.calls[0]["body"]["size"] == "2048x2048"

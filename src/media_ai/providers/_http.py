@@ -32,6 +32,9 @@ from ..core.logging import get_logger
 from ..credentials.redaction import redact, redact_obj
 
 _RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+#: Longest ``Retry-After`` this client will wait out. Past it the error is handed back
+#: instead — see :meth:`HttpClient._retry_delay`.
+_RETRY_AFTER_MAX = 60.0
 _DEBUG_BODY_LIMIT = 8_000
 
 
@@ -62,6 +65,7 @@ class HttpClient:
         timeout: float = 120.0,
         max_retries: int = 4,
         retry_base: float = 2.0,
+        retry_after_max: float = _RETRY_AFTER_MAX,
         retry_statuses: frozenset[int] = _RETRY_STATUSES,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -74,6 +78,7 @@ class HttpClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_base = retry_base
+        self.retry_after_max = retry_after_max
         self.retry_statuses = retry_statuses
 
     # ---- public helpers --------------------------------------------------
@@ -81,7 +86,7 @@ class HttpClient:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         hdrs = {"Content-Type": "application/json", **(headers or {})}
         raw = self._send(method, self._url(path), data=data, headers=hdrs)
-        return json.loads(raw) if raw else {}
+        return self._json(raw, self._url(path))
 
     def request_sse_json(self, method: str, path: str, *, body: dict | None = None, headers: dict | None = None) -> list[dict]:
         """Return JSON payloads from a completed server-sent-event response.
@@ -140,7 +145,7 @@ class HttpClient:
             ),
         )
         raw = self._send(method, self._url(path), data=body, headers=hdrs)
-        return json.loads(raw) if raw else {}
+        return self._json(raw, self._url(path))
 
     def request_bytes(self, method: str, path: str, *, body: dict | None = None, headers: dict | None = None) -> bytes:
         """Return the raw response bytes (e.g. audio/video). ``body`` (optional) is
@@ -155,6 +160,36 @@ class HttpClient:
         data = self._send("GET", url, data=None, headers=headers or {}, decode=False, timeout=max(self.timeout, 180))
         out.write_bytes(data)
         return out
+
+    def _json(self, raw: str, url: str) -> dict:
+        """Parse a response body that is supposed to be JSON, or say whose it was.
+
+        A 200 carrying something else is not exotic: a proxy or gateway that answers with
+        an HTML page, a captive portal, a base URL pointing at a web root. ``json.loads``
+        raising here escaped the whole adapter layer — past the error mapper, past
+        ``MediaError`` — and surfaced as an exit-1 ``unknown`` reading "Expecting value:
+        line 1 column 1 (char 0)": no category to branch on, no provider named, and a
+        message about a Python parser rather than about the request. A body that is
+        valid JSON but not an object is the same problem one step later, since every
+        caller immediately does ``.get``.
+        """
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise MediaError(
+                f"{self.provider} returned a non-JSON response from {url}: {redact(raw[:200])}",
+                category=ErrorCategory.PROVIDER, code="malformed_response", provider=self.provider,
+                details={"url": url},
+            ) from exc
+        if not isinstance(data, dict):
+            raise MediaError(
+                f"{self.provider} returned {type(data).__name__}, not a JSON object, from {url}",
+                category=ErrorCategory.PROVIDER, code="malformed_response", provider=self.provider,
+                details={"url": url},
+            )
+        return data
 
     # ---- core send + retry ----------------------------------------------
     def _url(self, path: str) -> str:
@@ -196,11 +231,13 @@ class HttpClient:
                 # 5xx/network only on idempotent methods. A classifier may then veto
                 # a retry it knows is pointless (e.g. quota exhausted).
                 retryable = status == 429 or (status in self.retry_statuses and idempotent)
-                if retryable and attempt < self.max_retries and self._retry_ok(status, raw):
+                delay = self._retry_delay(e, attempt) if retryable else None
+                if retryable and delay is not None and attempt < self.max_retries and self._retry_ok(status, raw):
                     get_logger().debug(
-                        "HTTP response: method=%s url=%s status=%d retrying=true", method, url, status,
+                        "HTTP response: method=%s url=%s status=%d retrying=true in=%.1fs",
+                        method, url, status, delay,
                     )
-                    self._sleep(e, attempt)
+                    time.sleep(delay)
                     continue
                 get_logger().debug(
                     "HTTP response: method=%s url=%s status=%d retrying=false", method, url, status,
@@ -235,10 +272,22 @@ class HttpClient:
         except Exception:  # noqa: BLE001
             return True
 
-    def _sleep(self, err: urllib.error.HTTPError, attempt: int) -> None:
+    def _retry_delay(self, err: urllib.error.HTTPError, attempt: int) -> float | None:
+        """How long to wait before retrying, or ``None`` to stop retrying now.
+
+        ``Retry-After`` is honoured up to ``retry_after_max`` and **not beyond**. The
+        header is where a provider reports a *daily* cap — Gemini and Ark both answer a
+        quota 429 with hours — and sleeping on it turned a rate-limit error into a
+        blocked process: four attempts × one hour, with nothing on stdout and no way for
+        the caller to reconsider. Handing the error back instead costs nothing, because
+        it arrives categorized ``rate_limit`` with ``retryable: true``: an agent that
+        wants to wait an hour can, and one that wants to switch bindings can too.
+        """
         retry_after = err.headers.get("Retry-After") if err.headers else None
-        delay = float(retry_after) if (retry_after and str(retry_after).isdigit()) else self.retry_base * (2**attempt)
-        time.sleep(delay + random.uniform(0, 0.5))
+        if retry_after and str(retry_after).strip().isdigit():
+            wait = float(str(retry_after).strip())
+            return None if wait > self.retry_after_max else wait + random.uniform(0, 0.5)
+        return self.retry_base * (2**attempt) + random.uniform(0, 0.5)
 
     def _default_error(self, status: int, body: str) -> MediaError:
         # An unenumerated 4xx (409, 413, 422 …) is something about the *request*: not

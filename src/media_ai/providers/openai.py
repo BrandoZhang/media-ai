@@ -42,6 +42,17 @@ _GI2_MAX_EDGE_RATIO = 3.0
 # flag a mismatch between the caller's filename and the format the API actually returned.
 _SUFFIX_FORMAT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp"}
 
+# shape -> tier -> documented gpt-image-2 size; "" is the tier a request did not name.
+# One table for both halves of the question (which shape, how big) so a tier cannot be
+# read in one branch and dropped in another.
+_TIER_SIZES = {
+    "landscape": {"": "1536x1024", "2k": "2048x1152", "4k": "3840x2160"},
+    "portrait": {"": "1024x1536", "2k": "1152x2048", "4k": "2160x3840"},
+    "square": {"": "1024x1024", "2k": "2048x2048", "4k": "2048x2048"},
+}
+# The older GPT Image tiers take a fixed 1.5-MP enum, with no tier to choose.
+_FIXED_SIZES = {"landscape": "1536x1024", "portrait": "1024x1536", "square": "1024x1024"}
+
 
 class OpenAIAdapter(HttpAdapter):
 
@@ -80,31 +91,38 @@ class OpenAIAdapter(HttpAdapter):
         return base, {**headers, **self._scoping_headers()}
 
     # ---- size mapping ----------------------------------------------------
-    def _size(self, model: str, req: ImageRequest) -> str:
+    def _size(self, req: ImageRequest) -> str:
+        """The ``size`` field for this request: pixels, a mapped shape+tier, or ``auto``.
+
+        ``auto`` is only for a request that asked for no geometry at all. A ``--resolution``
+        with no ``--aspect-ratio`` used to land there too, which dropped it: the API then
+        chose its own size, ``meta.size`` echoed that choice back, and nothing said the
+        tier had been ignored. A tier is a request about how *big*, so it is answered —
+        as a square, the same size ``--aspect-ratio 1:1 --resolution <tier>`` produces.
+        """
         geo = req.geometry
-        if geo and geo.mode == "pixels":
+        if geo is None:
+            return "auto"
+        if geo.mode == "pixels":
             return f"{geo.width}x{geo.height}"
-        if geo and geo.aspect_ratio:
-            a, b = (geo.aspect_ratio.split(":", 1) + ["1"])[:2]
-            try:
-                fa, fb = float(a), float(b)
-            except ValueError:
-                raise MediaError(
-                    f"invalid --aspect-ratio {geo.aspect_ratio!r}; expected W:H like 16:9",
-                    category=ErrorCategory.VALIDATION, provider=self.name,
-                ) from None
-            landscape = fa > fb
-            portrait = fa < fb
-            if self.arbitrary_sizes:  # arbitrary sizes → pick a documented tier
-                tier = (geo.resolution or "").lower()
-                if landscape:
-                    return {"4k": "3840x2160", "2k": "2048x1152"}.get(tier, "1536x1024")
-                if portrait:
-                    return {"4k": "2160x3840", "2k": "1152x2048"}.get(tier, "1024x1536")
-                return "2048x2048" if tier in ("2k", "4k") else "1024x1024"
-            # pre-gpt-image-2 GPT Image: fixed 1.5-MP sizes only
-            return "1536x1024" if landscape else "1024x1536" if portrait else "1024x1024"
-        return "auto"
+        if not geo.aspect_ratio and not geo.resolution:
+            return "auto"
+        shape = self._shape(geo.aspect_ratio) if geo.aspect_ratio else "square"
+        if not self.arbitrary_sizes:  # pre-gpt-image-2 GPT Image: fixed 1.5-MP sizes only
+            return _FIXED_SIZES[shape]
+        sizes = _TIER_SIZES[shape]
+        return sizes.get((geo.resolution or "").lower(), sizes[""])
+
+    def _shape(self, ratio: str) -> str:
+        a, b = (ratio.split(":", 1) + ["1"])[:2]
+        try:
+            fa, fb = float(a), float(b)
+        except ValueError:
+            raise MediaError(
+                f"invalid --aspect-ratio {ratio!r}; expected W:H like 16:9",
+                category=ErrorCategory.VALIDATION, provider=self.name,
+            ) from None
+        return "landscape" if fa > fb else "portrait" if fa < fb else "square"
 
     # ---- images ----------------------------------------------------------
     def generate_image(self, req: ImageRequest) -> GenerationResult:
@@ -131,7 +149,7 @@ class OpenAIAdapter(HttpAdapter):
         self.record(scene, model=model, kind="image", generated_images=len(items),
                     input_tokens=usage.get("input_tokens", 0), output_tokens=usage.get("output_tokens", 0),
                     total_tokens=usage.get("total_tokens", 0))
-        meta = {"prompt": req.prompt, "size": data.get("size") or self._size(model, req)}
+        meta = {"prompt": req.prompt, "size": data.get("size") or self._size(req)}
         # Surface the settings the API echoed back (what it actually did) for traceability.
         for k in ("output_format", "quality", "background", "created"):
             if data.get(k) is not None:
@@ -140,7 +158,7 @@ class OpenAIAdapter(HttpAdapter):
                                 artifacts=artifacts, usage=usage, meta=meta)
 
     def _common_fields(self, model: str, req: ImageRequest) -> dict:
-        fields: dict = {"model": model, "prompt": req.prompt, "n": req.count, "size": self._size(model, req)}
+        fields: dict = {"model": model, "prompt": req.prompt, "n": req.count, "size": self._size(req)}
         if req.quality:
             fields["quality"] = req.quality
         if req.background:

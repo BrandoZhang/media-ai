@@ -107,6 +107,15 @@ def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
 def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
     if not isinstance(raw, dict):
         raise _fail(f"{path}: [bindings.\"{bid}\"] must be a table")
+    # Every one of these reaches code that assumes a string — `base_url` is `.rstrip`-ed
+    # into the HTTP client, `model_id` goes on the wire. A hand-edited `base_url = 8080`
+    # used to surface, one command later, as exit 1 `unknown` reading "'int' object has
+    # no attribute 'rstrip'", naming neither the file nor the field. This file is
+    # hand-editable, so a typo in it is a config error like any other.
+    for field_name in ("extends", "model_id", "endpoint_id", "base_url"):
+        value = raw.get(field_name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise _fail(f'{path}: [bindings."{bid}"].{field_name} must be a non-empty string, got {value!r}')
     credential = raw.get("credential")
     if credential is not None:
         if not isinstance(credential, str) or not credential:

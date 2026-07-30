@@ -202,3 +202,84 @@ def test_default_error_categorizes_by_status(client, status, category):
     assert err.category is category
     assert err.details["status"] == status
     assert err.retryable is (category in {ErrorCategory.RATE_LIMIT, ErrorCategory.TIMEOUT, ErrorCategory.PROVIDER})
+
+
+# ---- a response body that is not what it claims to be ---------------------
+
+
+@pytest.mark.parametrize("body", [
+    b"<html><body>502 Bad Gateway</body></html>",   # a proxy or gateway answering for the API
+    b"Service Unavailable",                          # a load balancer's plain text
+    b"{not json at all",                             # a truncated body
+])
+def test_a_non_json_200_is_a_provider_error_not_a_traceback(client, monkeypatch, body):
+    """`json.loads` raising here escaped the whole adapter layer.
+
+    Past the error mapper, past MediaError, out to `run()`'s last-resort handler — so a
+    proxy answering with an HTML page surfaced as exit 1 `unknown` reading "Expecting
+    value: line 1 column 1 (char 0)": nothing to branch on, nobody named.
+    """
+    _install(monkeypatch, [body])
+    with pytest.raises(MediaError) as ei:
+        client.request_json("GET", "/x")
+    assert ei.value.category is ErrorCategory.PROVIDER and ei.value.code == "malformed_response"
+    assert ei.value.provider == "test" and "/x" in ei.value.details["url"]
+
+
+def test_valid_json_that_is_not_an_object_is_the_same_refusal(client, monkeypatch):
+    # Every caller does `.get` on the result; a list or a string would crash one step later.
+    _install(monkeypatch, [b"[1, 2, 3]"])
+    with pytest.raises(MediaError) as ei:
+        client.request_json("GET", "/x")
+    assert ei.value.code == "malformed_response" and "list" in ei.value.message
+
+
+def test_an_empty_body_is_still_an_empty_object(client, monkeypatch):
+    # A 200 with no body (DELETE/cancel) is legitimate and must not become an error.
+    _install(monkeypatch, [b""])
+    assert client.request_json("DELETE", "/tasks/abc") == {}
+
+
+# ---- Retry-After is honoured, but not to the point of hanging -------------
+
+
+def _retry_after(monkeypatch, seconds: str, *, status: int = 429):
+    slept: list[float] = []
+    monkeypatch.setattr(_http.time, "sleep", lambda s: slept.append(s))
+    err = urllib.error.HTTPError("http://x", status, "slow down", {"Retry-After": seconds},
+                                 io.BytesIO(b'{"error":"quota"}'))
+    _install(monkeypatch, [err, b'{"ok": true}'])
+    monkeypatch.setattr(_http.time, "sleep", lambda s: slept.append(s))  # _install re-stubs it
+    return slept
+
+
+def test_a_short_retry_after_is_waited_out(client, monkeypatch):
+    slept = _retry_after(monkeypatch, "5")
+    assert client.request_json("GET", "/x") == {"ok": True}
+    assert 5 <= slept[0] <= 5.5  # the server's number, plus jitter
+
+
+def test_a_retry_after_beyond_the_cap_hands_the_error_back_instead_of_sleeping(client, monkeypatch):
+    """A daily-quota 429 answers `Retry-After: 3600`, and four attempts of that is four
+    hours of a blocked process with nothing on stdout. The error already says
+    `rate_limit`/`retryable: true` — waiting is the caller's decision to make."""
+    slept = _retry_after(monkeypatch, "3600")
+    with pytest.raises(MediaError) as ei:
+        client.request_json("GET", "/x")
+    assert ei.value.category is ErrorCategory.RATE_LIMIT and ei.value.retryable is True
+    assert slept == [], "nothing should have been slept on"
+
+
+def test_the_cap_is_per_client(monkeypatch):
+    slept = _retry_after(monkeypatch, "120")
+    c = HttpClient(base_url="https://api.test/v1", provider="test", max_retries=4, retry_base=0,
+                   retry_after_max=300)
+    assert c.request_json("GET", "/x") == {"ok": True}
+    assert 120 <= slept[0] <= 120.5
+
+
+def test_a_junk_retry_after_falls_back_to_backoff(client, monkeypatch):
+    # An HTTP-date (legal, and what some CDNs send) is not a number of seconds.
+    slept = _retry_after(monkeypatch, "Wed, 21 Oct 2026 07:28:00 GMT")
+    assert client.request_json("GET", "/x") == {"ok": True}
+    assert slept and slept[0] < 60
