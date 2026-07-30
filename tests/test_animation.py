@@ -325,6 +325,39 @@ def test_a_missing_input_is_named_before_ffmpeg_is_reached(tmp_path):
     assert "in.mp4" in str(ei.value)
 
 
+@pytest.mark.parametrize("raw", [
+    "http://127.0.0.1:9/x.mp4", "https://example.test/x.mp4", "data:video/mp4;base64,AAAA",
+    "rtmp://example.test/live", "tcp://127.0.0.1:9", "file:///etc/passwd",
+])
+def test_an_input_that_is_not_a_local_file_is_refused_before_ffmpeg_opens_it(tmp_path, raw, monkeypatch):
+    """`local/ffmpeg` is the offline binding, and ffmpeg does not share that assumption.
+
+    Handed `http://…` it *fetches* it: a request leaving the machine, at whatever host the
+    URL names, from a command whose whole pitch is "local, offline, free". The check used
+    to require `ref.is_local` to even look at a ref, so every URL skipped validation and
+    went to the command line verbatim.
+    """
+    monkeypatch.setattr(animation, "run_ffmpeg",
+                        lambda *a, **k: pytest.fail(f"ffmpeg was handed {raw}"))
+    for kw in ({"source": MediaRef(raw)}, {"source": None, "frames": [MediaRef(raw, "frame")]}):
+        with pytest.raises(MediaError) as ei:
+            animation.render(req(tmp_path, "a.webp", **kw), animation.CONTAINERS["webp"], transparent=False)
+        assert ei.value.code == "animation_input_not_local", raw
+        assert ei.value.exit_code == 3 and raw in str(ei.value)
+
+
+def test_every_input_ffmpeg_is_given_is_pinned_to_the_local_filesystem(tmp_path):
+    """Second line, in case a call site ever forgets the first: ffmpeg itself is told it
+    may open nothing but files, so a playlist naming a URL cannot reach out either."""
+    from media_ai.media.ffmpeg import LOCAL_ONLY_INPUT
+
+    for argv in (args_for(req(tmp_path, "a.webp")),
+                 args_for(req(tmp_path, "a.webp", source=None,
+                              frames=frames(tmp_path, "seq/a_001.png", "seq/a_002.png")))):
+        at = argv.index("-i")
+        assert argv[at - 2:at] == list(LOCAL_ONLY_INPUT), argv
+
+
 # ------------------------------------------------------------------ end to end
 
 pytestmark_media = pytest.mark.skipif(not have_media_stack(), reason="needs Pillow + ffmpeg")

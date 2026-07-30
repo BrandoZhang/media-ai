@@ -78,6 +78,27 @@ class GeminiAdapter(HttpAdapter):
         """
         return self.int_option("inline_max_bytes", 12 * 1024 * 1024)
 
+    def _require_direct_key(self, headers: dict, ref: MediaRef, size: int) -> None:
+        """Refuse a Files-API upload this binding's credential cannot authenticate.
+
+        The resumable upload goes to Google's own ``/upload/v1beta/files`` endpoint with
+        the API key in a header, and a broker forwards only ``generateContent`` — so a
+        brokered binding would send a keyless request and collect a 401 naming nothing the
+        caller can act on. It is a deterministic outcome of how the binding is configured,
+        so say that up front, with the two things that actually resolve it.
+        """
+        if not self.brokered(headers):
+            return
+        raise MediaError(
+            f"reference {ref.raw!r} is ~{size // (1024 * 1024)}MB, over this binding's "
+            f"{self.inline_max_bytes // (1024 * 1024)}MB inline ceiling, and the Gemini Files API "
+            "upload it would need cannot be routed through a credential broker",
+            category=ErrorCategory.UNSUPPORTED, code="broker_upload_unsupported", provider=self.name,
+            details={"bytes": size, "inline_max_bytes": self.inline_max_bytes},
+            hint="pass a smaller reference, or configure this binding with a direct key "
+                 "(media-ai bindings add gemini/<model> --credential env://GEMINI_API_KEY)",
+        )
+
     def generate_image(self, req: ImageRequest) -> GenerationResult:
         model = req.model or self.model_id
         return self._native(model, req)
@@ -93,6 +114,7 @@ class GeminiAdapter(HttpAdapter):
                 parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}})
                 inline_used += len(data)
             else:  # too large to inline safely — upload and reference by URI
+                self._require_direct_key(headers, r, len(data))
                 uri = _gemini_files.upload_bytes(self.base_url, headers, data, mime, display_name=_ref_name(r))
                 parts.append({"fileData": {"mimeType": mime, "fileUri": uri}})
                 uploaded += 1

@@ -68,8 +68,8 @@ are gated on that list.
 
 | flag | meaning |
 |---|---|
-| `--input PATH` | source video (`animation.from_video`) |
-| `--frames PATH...` | stills instead: a **directory**, a **glob**, or an ordered list (JSON array ok) |
+| `--input PATH` | source video (`animation.from_video`). A **local path** — this runs offline, so a URL is refused (exit 3, `animation_input_not_local`); download it first |
+| `--frames PATH...` | stills instead: a **directory**, a **glob**, or an ordered list (JSON array ok). Local paths, same as `--input` |
 | `--output PATH` (required) | the animated image |
 | `--format {gif,webp,apng}` | container; inferred from the extension when omitted |
 | `--start S` / `--end S` | take this span of the source, in seconds |

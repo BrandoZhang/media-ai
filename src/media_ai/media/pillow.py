@@ -21,20 +21,45 @@ _SUFFIX_FMT = {
     ".webp": ("WEBP", "image/webp"), ".gif": ("GIF", "image/gif"),
 }
 
+# Leading bytes -> mime, for reporting what was actually written when no transcode ran.
+_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+    (b"II*\x00", "image/tiff"),
+    (b"MM\x00*", "image/tiff"),
+)
+
+
+def sniff_image_mime(raw: bytes) -> str | None:
+    """The mime of ``raw`` read from its magic bytes, or ``None`` if unrecognized."""
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    for magic, mime in _MAGIC:
+        if raw.startswith(magic):
+            return mime
+    return None
+
 
 def save_image_bytes(raw: bytes, out: Path, *, source_mime: str | None = None) -> str:
     """Write ``raw`` image bytes to ``out``, converting to the format implied by
     ``out``'s extension when the source differs (e.g. a model that returns JPEG for
     an ``.png`` path). Returns the mime actually written.
 
-    Best-effort: if the extension is unknown, Pillow is missing, or decoding fails,
-    the bytes are written verbatim and the source mime (if any) is reported.
+    Best-effort: if the extension is unknown, Pillow is missing, or decoding fails, the
+    bytes are written verbatim. The reported mime then describes **the bytes on disk** —
+    sniffed from them, else the source mime — and never the target format, which no
+    longer applies once the transcode did not happen. Reporting the extension's mime
+    there was worse than saying nothing: a JPEG saved to an ``.png`` path came back as
+    ``image/png``, and that mime travels in ``artifacts[]`` for a consumer to trust.
     """
     ensure_parent(out)
     target = _SUFFIX_FMT.get(out.suffix.lower())
-    if target is None:  # unknown/absent extension — trust the source, write verbatim
+    if target is None:  # unknown/absent extension — write verbatim, report the bytes
         out.write_bytes(raw)
-        return (source_mime or "application/octet-stream").lower()
+        return (sniff_image_mime(raw) or source_mime or "application/octet-stream").lower()
     target_fmt, target_mime = target
     try:
         from PIL import Image
@@ -49,7 +74,7 @@ def save_image_bytes(raw: bytes, out: Path, *, source_mime: str | None = None) -
         return target_mime
     except Exception:  # noqa: BLE001 - never fail a generation over a transcode hiccup
         out.write_bytes(raw)
-        return (source_mime or target_mime).lower()
+        return (sniff_image_mime(raw) or source_mime or "application/octet-stream").lower()
 
 
 def seed_int(prompt: str, seed: int | None) -> int:

@@ -92,9 +92,10 @@ def _usage_error(message: str) -> int:
     """
     from .cli.common import _dump
     from .core.errors import ErrorCategory, MediaError
+    from .core.result import error_payload
 
     err = MediaError(message, category=ErrorCategory.CLI)
-    print(_dump({"ok": False, "error": err.to_dict()}, False))
+    print(_dump(error_payload(err), False))
     print(f"media-ai: {message}", file=sys.stderr)
     _usage(sys.stderr)
     return err.exit_code

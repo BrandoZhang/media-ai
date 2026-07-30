@@ -64,6 +64,37 @@ def test_resolve_image_pixels_modes():
     assert w > h and w % 2 == 0 and h % 2 == 0
 
 
+@pytest.mark.parametrize("ratio", ["0:0", "16:0", "0:9", "-16:9", "16:-9", "abc", "16", "16:9:1", ""])
+def test_ratio_to_wh_refuses_a_ratio_that_is_not_two_positive_sides(ratio):
+    # "0:0" reached the division and surfaced as an exit-1 `unknown` "division by zero";
+    # "16:0" and "abc" were silently substituted (a 2-pixel edge, a square). A bad ratio
+    # is a request problem, so it reads like one — same as a bad --size.
+    with pytest.raises(MediaError) as ei:
+        geometry.ratio_to_wh(ratio, 1024)
+    assert ei.value.category is ErrorCategory.VALIDATION and ei.value.exit_code == 3
+
+
+def test_ratio_to_wh_accepts_either_orientation():
+    assert geometry.ratio_to_wh("16:9", 1024) == (1024, 576)
+    assert geometry.ratio_to_wh("9:16", 1024) == (576, 1024)
+
+
+@pytest.mark.parametrize("bad", ["0:0", "16:0", "0:9", "-16:9", "abc", "16", "16:9:1", "1.85:1"])
+def test_parse_ratio_refuses_a_value_that_is_not_a_ratio(bad):
+    # The form of --aspect-ratio is the CLI's business (as --size's is); *which* ratios a
+    # model accepts stays the manifest's. Four shipped bindings declare no ratio list, so
+    # without this check "16:0" reached the wire — a billed request for a nonsense shape.
+    with pytest.raises(MediaError) as ei:
+        geometry.parse_ratio(bad)
+    assert ei.value.category is ErrorCategory.VALIDATION and "--aspect-ratio" in ei.value.message
+
+
+def test_parse_ratio_normalizes_and_passes_adaptive_through():
+    assert geometry.parse_ratio(" 16 : 9 ") == "16:9"
+    assert geometry.parse_ratio("Adaptive") == "adaptive"  # Ark asking the model to choose
+    assert geometry.parse_ratio(None) is None
+
+
 # --------------------------------------------------------------------------
 # error taxonomy
 # --------------------------------------------------------------------------

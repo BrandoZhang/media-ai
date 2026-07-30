@@ -24,6 +24,19 @@ from ._http import HttpClient
 class HttpAdapter(Adapter):
     http_timeout: float = 120.0
 
+    _BROKER_MARKER = "X-Media-Session"
+
+    def brokered(self, headers: dict) -> bool:
+        """Whether these auth headers route through a credential broker.
+
+        For the few wire paths a broker cannot carry — Gemini's resumable Files upload
+        talks to a Google endpoint of its own, which the broker does not forward — so the
+        adapter can refuse with something actionable instead of sending a request that
+        holds no key. Answered from what :meth:`_prepare` handed back, which keeps the
+        credential classes known to this module alone.
+        """
+        return self._BROKER_MARKER in headers
+
     def _auth(self, cred: Credential) -> tuple[str, dict]:
         if isinstance(cred, BrokeredHandle):
             # Route through the broker; it injects the real key. We send only the

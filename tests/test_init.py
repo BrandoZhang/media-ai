@@ -786,6 +786,55 @@ def test_a_local_scene_keeps_its_default_when_the_group_goes_to_a_model(home):
     assert defaults["video.concat"] == "local/ffmpeg", "the local scene lost its default"
 
 
+def test_a_scene_the_group_answer_cannot_serve_gets_its_own_question(home):
+    """Third shape of the same bug, and the one no single-candidate rule can catch.
+
+    ElevenLabs splits speech in two — ``eleven-multilingual-v2`` reads a single voice,
+    ``eleven-v3`` performs a dialogue — while ``gemini-tts`` does both. Configure all
+    three and answer the group question with either ElevenLabs model, and the *other*
+    scene has two candidates, neither of them the answer: it used to be written nowhere,
+    so ``media-ai speech dialogue`` refused on a freshly finished install. The leftover
+    scene is a second decision, so it is asked rather than inferred from the provider.
+    """
+    picked = ["elevenlabs/eleven-multilingual-v2", "elevenlabs/eleven-v3", "gemini/gemini-tts"]
+    offered = sorted(init_mod.bindings_for_skills(["media-ai-speech"]))
+    args = make_args(skills_dest=str(home / "sk"))
+    summary, prompter = run(args, [
+        pick("media-ai-speech"),
+        [offered.index(b) for b in picked],
+        0,                                                  # how keys are stored
+        None, SECRET, None, SECRET, None, SECRET,           # three bindings: base URL, key
+        0,                                                  # the group: eleven-multilingual-v2
+        0,                                                  # dialogue, which it cannot serve
+    ])
+
+    assert any("`speech.dialogue`" in q for q in prompter.asked), "the leftover scene was not asked about"
+    defaults = summary["defaults"]
+    assert defaults["speech.text_to_speech"] == "elevenlabs/eleven-multilingual-v2"
+    assert defaults["speech.dialogue"] == "elevenlabs/eleven-v3"
+    # Written, not just summarized: the default is what makes a call naming no binding work.
+    assert config(home)["defaults"]["speech.dialogue"] == "elevenlabs/eleven-v3"
+
+
+def test_every_scene_a_configured_binding_serves_ends_up_with_a_default(home):
+    """The invariant behind all three: finish the wizard and no scene you configured a
+    binding for is left answering ``no_default_binding``."""
+    from media_ai.core.scene import scenes_for_group
+
+    picked = ["elevenlabs/eleven-multilingual-v2", "elevenlabs/eleven-v3", "gemini/gemini-tts"]
+    offered = sorted(init_mod.bindings_for_skills(["media-ai-speech"]))
+    for group_answer in range(len(picked)):
+        summary, _ = run(make_args(skills_dest=str(home / "sk")), [
+            pick("media-ai-speech"),
+            [offered.index(b) for b in picked],
+            0, None, SECRET, None, SECRET, None, SECRET,
+            group_answer, 0,
+        ])
+        served = {s.value for s in scenes_for_group("speech")
+                  if any(s in CATALOG.get(b).scenes for b in picked)}
+        assert served <= set(summary["defaults"]), f"group answer {group_answer} left {served - set(summary['defaults'])}"
+
+
 def test_the_offline_placeholder_is_never_proposed_as_a_default(home):
     """`mock/mock` needs no credential either, and a default is the strongest possible
     recommendation — it is what a call with no `--binding` silently gets."""
