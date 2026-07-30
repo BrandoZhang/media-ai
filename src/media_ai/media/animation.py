@@ -23,12 +23,16 @@ last because they buffer whole frames.
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.errors import ErrorCategory, MediaError
-from .ffmpeg import ensure_parent, run_ffmpeg
+from .ffmpeg import LOCAL_ONLY_INPUT, ensure_parent, run_ffmpeg
+
+#: ``scheme://`` — the shape of a thing ffmpeg would open over a network.
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.\-]*://", re.I)
 
 
 @dataclass(frozen=True)
@@ -316,9 +320,9 @@ def build_args(req, container: Container, *, transparent: bool) -> list[str]:
         spec, is_glob = frames_input(req)
         if is_glob:
             args = ["-pattern_type", "glob", *args]
-        args += ["-framerate", str(req.fps or DEFAULT_FRAME_RATE), "-i", spec]
+        args += ["-framerate", str(req.fps or DEFAULT_FRAME_RATE), *LOCAL_ONLY_INPUT, "-i", spec]
     else:
-        args += ["-i", str(req.source.raw)]
+        args += [*LOCAL_ONLY_INPUT, "-i", str(req.source.raw)]
 
     filters = _filters(req, transparent=transparent)
     if container.needs_palette:
@@ -407,16 +411,45 @@ def _sole_suffix(paths: list[Path]) -> str:
     return suffixes.pop()
 
 
-def _check_inputs(req) -> None:
-    """Name a missing input before ffmpeg gets a chance to.
+def _names_no_local_file(ref) -> bool:
+    """Whether a ref names something other than a path on this filesystem.
 
-    ffmpeg's own answer is ``Error opening input: No such file or directory``, which does
-    not say *which* path — and a frame sequence hands it dozens.
+    ``MediaRef.is_remote`` knows the schemes *providers* accept; ffmpeg opens many more
+    (``rtmp://``, ``tcp://``, ``file://``), so this matches the shape rather than a list.
+    Anything it still misses is refused by the "must exist" check below, which no
+    protocol string passes — this only decides which refusal explains it.
     """
+    return ref.is_remote or bool(_URL_SCHEME.match(ref.raw))
+
+
+def _check_inputs(req) -> None:
+    """Name a bad input before ffmpeg gets a chance to.
+
+    Two refusals, and the first is a boundary rather than a courtesy:
+
+    * **Not a local file.** This is the offline binding — no credential, no cost, no
+      network — and ffmpeg does not share that assumption: handed ``http://…`` it
+      *fetches* it, so a command documented as local made a request to whatever host the
+      URL named. The check used to require ``ref.is_local`` to even consider a ref, which
+      meant a URL skipped validation entirely and reached the command line verbatim. It
+      is refused here rather than in ``core/validate.py`` because ``--on-unsupported
+      ignore`` must not be able to switch a boundary off.
+    * **A missing local file.** ffmpeg's own answer is ``Error opening input: No such
+      file or directory``, which does not say *which* path — and a frame sequence hands
+      it dozens.
+    """
+    refs = [ref for ref in [req.source, *req.frames] if ref is not None]
+    remote = [ref.raw for ref in refs if _names_no_local_file(ref)]
+    if remote:
+        raise MediaError(
+            f"input is not a local file: {', '.join(remote[:5])}{', …' if len(remote) > 5 else ''}",
+            category=ErrorCategory.UNSUPPORTED, code="animation_input_not_local", provider="local",
+            hint="download it first and pass the local path; this binding runs the bundled "
+                 "ffmpeg and reaches no network",
+        )
     missing = [
-        ref.raw for ref in [req.source, *req.frames]
-        if ref is not None and ref.is_local
-        and not any(ch in Path(ref.raw).name for ch in "*?[")  # a glob is resolved later
+        ref.raw for ref in refs
+        if not any(ch in Path(ref.raw).name for ch in "*?[")  # a glob is resolved later
         and not Path(ref.raw).exists()
     ]
     if missing:

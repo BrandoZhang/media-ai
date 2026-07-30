@@ -18,6 +18,17 @@ DEFAULT_W = 768
 DEFAULT_H = 432  # 16:9
 DEFAULT_FPS = 24
 
+#: Input options pinning ffmpeg to the local filesystem. Placed before an ``-i``, they
+#: apply to the input that follows.
+#:
+#: Every input this module opens is a local file by construction — a clip the caller
+#: named, a frame we wrote, a download that already finished — while ffmpeg's default is
+#: to open whatever protocol an input string asks for, and to follow a playlist that
+#: names one. ``local/ffmpeg`` is *the* binding that promises no network, so the promise
+#: is worth enforcing at the encoder as well as in the check in front of it: a second
+#: line means one forgetful call site is not a hole.
+LOCAL_ONLY_INPUT = ("-protocol_whitelist", "file")
+
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +61,7 @@ def image_to_clip(image: Path, out: Path, *, seconds: int, fps: int, w: int, h: 
     ensure_parent(out)
     total = max(1, seconds * fps)
     vf = f"scale={w * 2}:{h * 2},zoompan=z='min(zoom+0.0012,1.12)':d={total}:s={w}x{h}:fps={fps},format=yuv420p"
-    common = ["-loop", "1", "-i", str(image), "-t", str(seconds), "-r", str(fps)]
+    common = ["-loop", "1", *LOCAL_ONLY_INPUT, "-i", str(image), "-t", str(seconds), "-r", str(fps)]
     tail = ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(out)]
     try:
         run_ffmpeg([*common, "-vf", vf, *tail])
@@ -61,7 +72,8 @@ def image_to_clip(image: Path, out: Path, *, seconds: int, fps: int, w: int, h: 
 def has_audio(path: Path) -> bool:
     """True if the file carries an audio stream (uses the bundled ffmpeg, no ffprobe)."""
     try:
-        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True)
+        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *LOCAL_ONLY_INPUT, "-i", str(path)],
+                              capture_output=True, text=True)
     except Exception:  # noqa: BLE001 - treat probe failure as "no audio"
         return False
     return "Audio:" in (proc.stderr or "")
@@ -74,7 +86,8 @@ def probe_duration(path: Path) -> float:
     file, no ``Duration:`` line) — callers use it as a cost-accounting hint, never a
     hard dependency."""
     try:
-        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True)
+        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *LOCAL_ONLY_INPUT, "-i", str(path)],
+                              capture_output=True, text=True)
     except Exception:  # noqa: BLE001 - probe failure -> unknown duration
         return 0.0
     m = _DURATION_RE.search(proc.stderr or "")
@@ -97,7 +110,7 @@ def concat_clips(inputs: list[Path], out: Path, *, w: int = DEFAULT_W, h: int = 
     keep_audio = all(has_audio(p) for p in inputs)
     args: list[str] = []
     for p in inputs:
-        args += ["-i", str(p)]
+        args += [*LOCAL_ONLY_INPUT, "-i", str(p)]
     filters, labels = [], ""
     for i in range(len(inputs)):
         filters.append(f"[{i}:v]scale={w}:{h},fps={fps},format=yuv420p,setsar=1[v{i}]")

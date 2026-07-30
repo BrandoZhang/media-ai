@@ -464,6 +464,16 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
     alone, offered in the same list, and never the answer anyone gives to "which model
     generates my video" — was left with no default at all, so a fresh install refused
     ``video concat`` while naming the binding it should have used in the hint.
+
+    **A group answer that cannot cover every scene leaves a second decision, not a
+    guess.** One binding per group is the common case but not a guaranteed one: configure
+    ``eleven-multilingual-v2`` (speech only), ``eleven-v3`` (dialogue only) and
+    ``gemini-tts`` (both), answer the group question with either ElevenLabs model, and
+    the *other* scene had two candidates, neither of them the answer — so it was dropped
+    on the same floor ``video.concat`` used to land on, and ``media-ai speech dialogue``
+    refused on a fresh install. Those scenes get their own question rather than an
+    inferred sibling: a default is what every unflagged call silently gets, which is the
+    last place to substitute something nobody chose.
     """
     cat = catalog()
     out: dict[str, str] = {}
@@ -480,7 +490,13 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
             if chosen in candidates:
                 out[scene.value] = chosen
             elif len(candidates) == 1:
-                out[scene.value] = candidates[0]
+                out[scene.value] = candidates[0]  # not a decision; nothing else serves it
+            elif candidates:
+                idx = prompter.select(
+                    f"Default for `{scene.value}`, which {chosen} does not serve",
+                    [Option(b, hint=cat.get(b).title, value=b) for b in candidates],
+                )
+                out[scene.value] = candidates[idx]
     return out
 
 

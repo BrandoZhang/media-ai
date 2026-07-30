@@ -24,6 +24,7 @@ scenes = [
   "animation.from_frames",
 ]
 notes  = [
+  "inputs must be local files: this binding reaches no network, so a URL is refused rather than fetched",
   "clips are normalized to a common size before joining",
   "animated output is a still-image container: no audio track, and no interframe motion compensation, so keep it to a few seconds",
   "gif carries 1-bit alpha — a pixel is opaque or invisible — so a keyed subject with soft edges looks jagged; webp and apng carry a real alpha channel",
