@@ -10,6 +10,7 @@ import json
 from ..core.validate import UnsupportedPolicy
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
+from ..core.result import error_payload
 from ..core.types import GeometrySpec, MediaRef
 from ..credentials.redaction import redact_obj
 
@@ -114,13 +115,17 @@ def add_geometry_args(ap: argparse.ArgumentParser, *, resolution_help: str) -> N
 
 
 def parse_geometry(args) -> GeometrySpec | None:
-    from ..core.geometry import parse_size
+    from ..core.geometry import parse_ratio, parse_size
 
     if getattr(args, "size", None):
         w, h = parse_size(args.size)
         return GeometrySpec(width=w, height=h)
     if getattr(args, "aspect_ratio", None) or getattr(args, "resolution", None):
-        return GeometrySpec(aspect_ratio=getattr(args, "aspect_ratio", None), resolution=getattr(args, "resolution", None))
+        # Both values are form-checked here, the way `--size` is: a `--aspect-ratio` that
+        # is not a ratio at all is refused with the field named, rather than reaching a
+        # binding that declares no ratio list and going on the wire.
+        return GeometrySpec(aspect_ratio=parse_ratio(getattr(args, "aspect_ratio", None)),
+                            resolution=getattr(args, "resolution", None))
     return None
 
 
@@ -198,7 +203,7 @@ def emit_result(result, args) -> int:
 
 
 def emit_error(err: MediaError, args) -> int:
-    emit({"ok": False, "error": err.to_dict()}, args)
+    emit(error_payload(err), args)
     return err.exit_code
 
 
@@ -218,7 +223,7 @@ def parse_args(parser: argparse.ArgumentParser, argv=None):
         if e.code in (0, None):  # --help / --version: leave stdout behavior as-is
             raise
         err = MediaError("invalid command-line arguments (see stderr for details)", category=ErrorCategory.CLI)
-        print(_dump({"ok": False, "error": err.to_dict()}, False))
+        print(_dump(error_payload(err), False))
         raise SystemExit(err.exit_code) from None
 
 

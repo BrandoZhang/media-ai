@@ -199,10 +199,10 @@ environment. Two bindings on one provider can differ.
 ## Machine contract (for Agent Skills)
 
 - **stdout** is exactly one JSON object — success *or* failure — so a Skill parses
-  one line. Success carries `artifacts[]`, `usage`, and a `meta` recording **which
-  binding ran and what scene it was asked for**. Failure is `{"ok": false, "error":
-  {"category", "code", "hint", "details", …}}`, where `hint` is usually a command to
-  run verbatim.
+  one line. Both carry `schema_version`, so one schema validates either. Success adds
+  `artifacts[]`, `usage`, and a `meta` recording **which binding ran and what scene it
+  was asked for**. Failure is `{"ok": false, "schema_version", "error": {"category",
+  "code", "hint", "details", …}}`, where `hint` is usually a command to run verbatim.
 - **Every produced file is an entry in `artifacts[]`**, each with its `path`, `kind`,
   `mime`, `bytes` and `role`. There is no flatter alias beside it: one call can produce
   several files (`--count 3`, a timestamps sidecar, a returned last frame), and a short

@@ -108,6 +108,35 @@ def test_a_raw_key_is_refused_before_it_reaches_the_shareable_file(cfg, capsys):
     assert "sk-not-a-reference" not in json.dumps(res), "the rejected key must not be echoed back"
 
 
+def test_a_failure_carries_schema_version_like_every_other_stdout_object(cfg, capsys):
+    """One schema for stdout, success and failure alike.
+
+    A consumer validating the contract shouldn't need a second branch for the shape it
+    gets when something went wrong — which is exactly when it can least afford to guess
+    what it is holding.
+    """
+    from media_ai.core.result import SCHEMA_VERSION
+
+    ok = run(bindings_mod, "add", "mock/mock", capsys=capsys)
+    bad = run(bindings_mod, "add", "nope/nope", expect=9, capsys=capsys)
+    assert bad["schema_version"] == ok["schema_version"] == SCHEMA_VERSION
+
+
+def test_available_reports_the_env_candidates_a_manifest_declares(cfg, capsys):
+    """``env`` is the manifest's list of conventional variables, never a resolved value.
+
+    It is a declared ``tuple[str, ...]`` that defaults to empty, so a provider that
+    names none — or a binding configured through ``cred://``/``keychain://``, which this
+    field says nothing about — lists ``[]`` rather than breaking the listing.
+    """
+    from media_ai.core.registry import catalog
+
+    entries = {b["binding"]: b for b in run(bindings_mod, "available", capsys=capsys)["bindings"]}
+    declared = catalog().providers["openai"].auth.env
+    assert entries["openai/gpt-image-2"]["env"] == list(declared)
+    assert all(isinstance(b["env"], list) for b in entries.values())
+
+
 def test_a_binding_that_needs_a_key_is_not_written_without_one(cfg, capsys):
     res = run(bindings_mod, "add", "openai/gpt-image-2", expect=4, capsys=capsys)
     assert res["error"]["code"] == "credential_missing"

@@ -76,6 +76,7 @@ a scene belonged to the earlier process that submitted the job.
 ```json
 {
   "ok": false,
+  "schema_version": 2,
   "error": {
     "category": "unsupported",
     "code": "unsupported",

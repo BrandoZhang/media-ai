@@ -241,10 +241,14 @@ class HttpClient:
         time.sleep(delay + random.uniform(0, 0.5))
 
     def _default_error(self, status: int, body: str) -> MediaError:
+        # An unenumerated 4xx (409, 413, 422 …) is something about the *request*: not
+        # retryable, exit 3, and the caller has to change what they sent. Only 5xx is an
+        # upstream fault. Both arms of this default used to say PROVIDER, which told a
+        # caller to retry a request that could never succeed.
         cat = {
             400: ErrorCategory.VALIDATION, 401: ErrorCategory.AUTH, 403: ErrorCategory.AUTH,
             404: ErrorCategory.NOT_FOUND, 408: ErrorCategory.TIMEOUT, 429: ErrorCategory.RATE_LIMIT,
-        }.get(status, ErrorCategory.PROVIDER if status >= 500 else ErrorCategory.PROVIDER)
+        }.get(status, ErrorCategory.PROVIDER if status >= 500 else ErrorCategory.VALIDATION)
         return MediaError(f"{self.provider} HTTP {status}: {body}", category=cat, provider=self.provider,
                           details={"status": status})
 

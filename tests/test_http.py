@@ -183,3 +183,22 @@ def test_verbose_http_diagnostics_show_redacted_headers_and_json_body(client, mo
     assert "HTTP request:" in stderr and '"Authorization": "***"' in stderr and '"X-api-key": "***"' in stderr
     assert '"prompt": "visible"' in stderr and '"api_key": "***"' in stderr
     assert "ark-secret-123456" not in stderr and "header-secret" not in stderr and "also-secret" not in stderr
+
+
+# ---- default error mapping (providers that ship no `_error` of their own) --
+
+
+@pytest.mark.parametrize("status, category", [
+    (400, ErrorCategory.VALIDATION), (401, ErrorCategory.AUTH), (403, ErrorCategory.AUTH),
+    (404, ErrorCategory.NOT_FOUND), (408, ErrorCategory.TIMEOUT), (429, ErrorCategory.RATE_LIMIT),
+    # An unenumerated 4xx is a request problem: exit 3, not retryable. Both arms of the
+    # default said PROVIDER, so a 409/413/422 came back as an upstream fault and told the
+    # caller to retry something that could never succeed.
+    (409, ErrorCategory.VALIDATION), (413, ErrorCategory.VALIDATION), (422, ErrorCategory.VALIDATION),
+    (500, ErrorCategory.PROVIDER), (503, ErrorCategory.PROVIDER),
+])
+def test_default_error_categorizes_by_status(client, status, category):
+    err = client._default_error(status, "boom")
+    assert err.category is category
+    assert err.details["status"] == status
+    assert err.retryable is (category in {ErrorCategory.RATE_LIMIT, ErrorCategory.TIMEOUT, ErrorCategory.PROVIDER})

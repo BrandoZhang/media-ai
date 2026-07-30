@@ -70,9 +70,12 @@ def test_dispatcher_lists_groups():
 def test_bad_flag_emits_json_error_on_stdout(env):
     # An argparse parse error must still produce the one-JSON-object failure contract on
     # stdout (category cli, exit 2), with the human-readable specifics on stderr.
+    from media_ai.core.result import SCHEMA_VERSION
+
     proc = run(env, "usage", "--bogus", expect=2)
     err = json_out(proc)
     assert err["ok"] is False and err["error"]["category"] == "cli"
+    assert err["schema_version"] == SCHEMA_VERSION  # one schema for stdout, failures included
     assert "bogus" in proc.stderr  # argparse detail goes to stderr, not stdout
 
 
@@ -105,6 +108,16 @@ def test_edit_and_generate_with_a_reference_are_the_same_scene(env, tmp_path):
 
     proc = run(env, "image", "edit", "--prompt", "low angle", "--output", str(tmp_path / "x.png"), expect=2)
     assert json_out(proc)["error"]["code"] == "missing_reference"
+
+
+def test_a_malformed_aspect_ratio_is_a_validation_error(env, tmp_path):
+    """`0:0` divided by zero deep in the pixel resolver and came back as exit 1
+    `unknown` "division by zero" — a message a caller can do nothing with."""
+    proc = run(env, "image", "generate", "--prompt", "x", "--aspect-ratio", "0:0",
+               "--output", str(tmp_path / "x.png"), expect=3)
+    err = json_out(proc)["error"]
+    assert err["category"] == "validation" and "--aspect-ratio" in err["message"]
+    assert not (tmp_path / "x.png").exists()
 
 
 def test_full_storyboard_pipeline(env, tmp_path):
@@ -261,10 +274,13 @@ class TestDispatchHonoursTheContract:
             return res, None  # --help is deliberately human text
 
     def test_unknown_group_emits_the_error_contract(self):
+        from media_ai.core.result import SCHEMA_VERSION
+
         res, out = self.run("definitely-not-a-group")
         assert res.returncode == 2
         assert out is not None and out["ok"] is False
         assert out["error"]["category"] == "cli"
+        assert out["schema_version"] == SCHEMA_VERSION
 
     def test_unknown_group_stdout_is_exactly_one_line(self):
         res, _ = self.run("definitely-not-a-group")

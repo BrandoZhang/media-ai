@@ -174,6 +174,22 @@ def test_no_bound_is_encoded_as_a_sentinel(binding_id):
             assert pair[0] <= pair[1], f"{name} is inverted: {pair!r}"
 
 
+@pytest.mark.parametrize("binding_id", BINDING_IDS)
+def test_declared_aspect_ratios_are_ones_the_cli_accepts(binding_id):
+    """A declared ratio must survive ``--aspect-ratio``'s own form check.
+
+    ``parse_ratio`` refuses a value that is not ``W:H`` with both sides positive before
+    resolution picks a binding — it cannot consult the manifest that early. So a manifest
+    that declared something else (a decimal ``1.85:1``, say) would advertise a ratio the
+    CLI refuses to pass on, and the contradiction would only show up as a user's exit 3.
+    Caught here, where it is a one-line failure naming the value.
+    """
+    from media_ai.core.geometry import parse_ratio
+
+    for ratio in CATALOG.get(binding_id).constraints.geometry.aspect_ratios:
+        assert parse_ratio(ratio) == ratio, f"{ratio!r} is declared but not in --aspect-ratio's grammar"
+
+
 def test_local_bindings_need_no_credential():
     for b in BINDINGS:
         provider = CATALOG.providers[b.provider]

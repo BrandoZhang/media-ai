@@ -10,8 +10,13 @@ accounting, and a best-effort pixel resolver for the mock backend).
 
 from __future__ import annotations
 
+import re
+
 from .errors import ErrorCategory, MediaError
 from .types import GeometrySpec
+
+#: A well-formed aspect ratio: two positive integers, e.g. ``16:9``.
+_RATIO_RE = re.compile(r"[1-9][0-9]*:[1-9][0-9]*")
 
 # Video resolution/ratio -> (w, h). Used by the mock renderer and cost accounting
 # (tokens ~ pixels). Kept from the original Volc implementation.
@@ -57,6 +62,27 @@ def normalize_ratio(ratio: str | None) -> str | None:
     return ratio.replace(" ", "")
 
 
+def parse_ratio(text: str | None) -> str | None:
+    """Normalize ``--aspect-ratio`` and check its *form*: ``W:H`` with both sides
+    positive, or ``adaptive``.
+
+    The job :func:`parse_size` does for ``--size``, and for the same reason: the value's
+    grammar is the CLI's business, while *which* ratios a model accepts is the manifest's
+    (``constraints.geometry.aspect_ratios``, enforced in ``core/validate.py``). Doing it
+    here means nothing downstream has to cope with a non-ratio — ``"0:0"`` used to reach
+    the division in :func:`ratio_to_wh` and surface as an exit-1 ``unknown`` reading
+    "division by zero", and ``"16:0"`` was put on the wire by the four shipped bindings
+    that declare no ratio list.
+    """
+    ratio = normalize_ratio(text)
+    if ratio is None or ratio == "adaptive" or _RATIO_RE.fullmatch(ratio):
+        return ratio
+    raise MediaError(
+        f"invalid --aspect-ratio {text!r}; expected W:H with both sides positive, like 16:9",
+        category=ErrorCategory.VALIDATION,
+    )
+
+
 def video_dims(resolution: str, ratio: str) -> tuple[int, int]:
     """Best-effort ``(w, h)`` for a resolution+ratio (cost accounting / mock).
 
@@ -71,16 +97,31 @@ def video_dims(resolution: str, ratio: str) -> tuple[int, int]:
 
 
 def ratio_to_wh(ratio: str, long_side: int) -> tuple[int, int]:
-    """Turn ``"16:9"`` + a long side into even ``(w, h)``."""
-    try:
-        a, b = (int(x) for x in ratio.split(":", 1))
-    except (ValueError, AttributeError):
-        a, b = 1, 1
+    """Turn ``"16:9"`` + a long side into even ``(w, h)``.
+
+    Refuses anything that is not two positive integers, the same way
+    :func:`parse_size` refuses a malformed ``--size``. ``"0:0"`` used to reach the
+    division and come back as an exit-1 ``unknown`` error reading "division by zero",
+    and ``"16:0"`` or a garbled ``"abc"`` were quietly substituted (a 2-pixel edge, a
+    square) — a caller who asked for a ratio the binding never declared deserves to
+    hear which value was wrong, not a picture of some other shape.
+    """
+    a, b = _ratio_ints(ratio)
     if a >= b:
         w, h = long_side, round(long_side * b / a)
     else:
         w, h = round(long_side * a / b), long_side
     return max(2, (w // 2) * 2), max(2, (h // 2) * 2)
+
+
+def _ratio_ints(ratio: str) -> tuple[int, int]:
+    if not _RATIO_RE.fullmatch(str(ratio or "")):
+        raise MediaError(
+            f"invalid aspect ratio {ratio!r}; expected W:H with both sides positive, like 16:9",
+            category=ErrorCategory.VALIDATION,
+        )
+    a, b = (int(x) for x in str(ratio).split(":", 1))
+    return a, b
 
 
 def resolve_image_pixels(geo: GeometrySpec | None, default: tuple[int, int]) -> tuple[int, int]:

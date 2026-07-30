@@ -25,6 +25,18 @@ from pathlib import Path
 SCHEMA_VERSION = 2
 
 
+def error_payload(err) -> dict:
+    """The failure half of the machine contract: ``{"ok": false, "schema_version", "error"}``.
+
+    Every stdout object carries ``schema_version`` — a consumer that validates against
+    one schema should not need a second branch for the failure shape, and a failure is
+    exactly when a caller is least able to guess what it is looking at. Both writers of
+    a failure object (``cli.common`` and the group dispatcher in ``__main__``) build it
+    here so the two cannot drift apart.
+    """
+    return {"ok": False, "schema_version": SCHEMA_VERSION, "error": err.to_dict()}
+
+
 @dataclass
 class Artifact:
     path: str

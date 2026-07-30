@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import urllib.error
 import wave
 from pathlib import Path
 
@@ -221,6 +222,85 @@ def test_gemini_files_endpoint_derivation():
     from media_ai.providers._gemini_files import _files_endpoint
     assert _files_endpoint("https://generativelanguage.googleapis.com/v1beta") == \
         "https://generativelanguage.googleapis.com/upload/v1beta/files"
+
+
+def test_a_brokered_binding_refuses_the_upload_instead_of_sending_a_keyless_request(tmp_path, monkeypatch):
+    """The resumable upload cannot be brokered, so a brokered binding must say so.
+
+    ``_prepare`` hands a brokered call only a session token and the upstream to forward
+    to — no ``x-goog-api-key`` — while the Files API is a separate Google endpoint the
+    broker does not forward. Uploading anyway is a guaranteed 401 that blames the key.
+    """
+    import media_ai.providers.gemini as gem
+    from conftest import FakeClient, adapter_for
+
+    monkeypatch.setattr(gem._gemini_files, "upload_bytes",
+                        lambda *a, **k: pytest.fail("a brokered binding must not reach the Files API"))
+    prov = adapter_for("gemini/nano-banana-2", credential="broker://broker.test",
+                       options={"inline_max_bytes": 500})
+    _, headers = prov._auth(prov.credential())  # the real brokered headers, not a stand-in
+    assert prov.brokered(headers) and not any(h.lower() == "x-goog-api-key" for h in headers)
+    monkeypatch.setattr(prov, "_prepare", lambda **kw: (FakeClient([_one_image()]), headers))
+
+    big = tmp_path / "big.png"
+    big.write_bytes(PNG_1x1_BYTES * 4000)
+    with pytest.raises(MediaError) as ei:
+        prov.generate_image(ImageRequest(prompt="compose", output=tmp_path / "o.png",
+                                        model="gemini-3.1-flash-image",
+                                        references=[MediaRef(str(big), "reference_image")]))
+    assert ei.value.category is ErrorCategory.UNSUPPORTED and ei.value.code == "broker_upload_unsupported"
+    assert "GEMINI_API_KEY" in ei.value.hint  # the fix: a direct key, or a smaller reference
+
+
+def test_a_direct_key_still_uploads(tmp_path, monkeypatch):
+    """The gate is about the broker alone — an ordinary key path is untouched."""
+    import media_ai.providers.gemini as gem
+    from conftest import FakeClient, adapter_for
+
+    monkeypatch.setenv("MEDIA_TEST_KEY", "secret-key")
+    monkeypatch.setattr(gem._gemini_files, "upload_bytes", lambda *a, **k: "files/UP")
+    prov = adapter_for("gemini/nano-banana-2", options={"inline_max_bytes": 500})
+    _, headers = prov._auth(prov.credential())
+    assert not prov.brokered(headers)
+    monkeypatch.setattr(prov, "_prepare", lambda **kw: (FakeClient([_one_image()]), headers))
+
+    big = tmp_path / "big.png"
+    big.write_bytes(PNG_1x1_BYTES * 4000)
+    res = prov.generate_image(ImageRequest(prompt="compose", output=tmp_path / "o.png",
+                                           model="gemini-3.1-flash-image",
+                                           references=[MediaRef(str(big), "reference_image")]))
+    assert res.meta["uploaded_refs"] == 1
+
+
+@pytest.mark.parametrize("exc", [
+    TimeoutError("timed out"),                                 # urlopen raises the deadline directly…
+    urllib.error.URLError(TimeoutError("timed out")),           # …or wraps it in a URLError
+])
+def test_files_api_timeout_is_a_timeout_not_a_provider_fault(monkeypatch, exc):
+    """Exit 7 tells the caller to raise the deadline or shrink the input; exit 6 sends
+    them looking for an upstream outage that isn't there."""
+    import urllib.request
+
+    from media_ai.providers import _gemini_files
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(exc))
+    with pytest.raises(MediaError) as ei:
+        _gemini_files.upload_bytes("https://generativelanguage.googleapis.com/v1beta",
+                                   {"x-goog-api-key": "k"}, b"bytes", "image/png")
+    assert ei.value.category is ErrorCategory.TIMEOUT and ei.value.exit_code == 7
+
+
+def test_files_api_transport_failure_stays_a_provider_error(monkeypatch):
+    import urllib.request
+
+    from media_ai.providers import _gemini_files
+
+    err = urllib.error.URLError(OSError("connection reset"))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(err))
+    with pytest.raises(MediaError) as ei:
+        _gemini_files.upload_bytes("https://generativelanguage.googleapis.com/v1beta",
+                                   {"x-goog-api-key": "k"}, b"bytes", "image/png")
+    assert ei.value.category is ErrorCategory.PROVIDER
 
 
 # ---- new video features (reference images / seed / extension) ------------

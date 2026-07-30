@@ -11,9 +11,11 @@ usable. The upload is a two-step resumable exchange followed by a readiness poll
 3. **await ACTIVE** — images are ``ACTIVE`` immediately; video/large media may report
    ``PROCESSING`` and must be polled until usable.
 
-Only the direct API-key path is supported (the resumable protocol can't be brokered);
-callers gate on that. Uses stdlib urllib (proxy/TLS come from the environment, same as
-:mod:`media_ai.providers._http`).
+Only the direct API-key path is supported: this is a separate Google endpoint that a
+credential broker does not forward, so a brokered call would arrive with no key at all.
+The caller gates on that before the first byte — see
+:meth:`media_ai.providers.gemini.GeminiAdapter._require_direct_key`. Uses stdlib urllib
+(proxy/TLS come from the environment, same as :mod:`media_ai.providers._http`).
 """
 
 from __future__ import annotations
@@ -45,14 +47,31 @@ def _raise(exc: urllib.error.HTTPError) -> MediaError:
                       details={"status": exc.code})
 
 
+def _timed_out(exc: BaseException) -> bool:
+    """Whether a urlopen failure is a deadline, not a transport error.
+
+    ``urlopen`` reports a timeout two ways: it raises the deadline directly (on 3.10+
+    ``socket.timeout`` *is* ``TimeoutError``, so one except clause covers both spellings),
+    or it wraps it in a ``URLError`` whose ``reason`` is the ``TimeoutError``. Both have
+    to land on :class:`~media_ai.core.errors.ErrorCategory.TIMEOUT`: a deadline exit code
+    (7) tells a caller to raise the timeout or shrink the input, while ``provider`` (6)
+    sends them looking for an upstream outage that isn't there.
+    """
+    return isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+
+
 def _open(req: urllib.request.Request, timeout: float):
     try:
         return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
     except urllib.error.HTTPError as e:
         raise _raise(e) from None
     except (urllib.error.URLError, TimeoutError) as e:
-        raise MediaError(f"Gemini Files API request failed: {redact(str(e))}",
-                         category=ErrorCategory.PROVIDER, provider="gemini") from None
+        timed_out = _timed_out(e)
+        detail = f"timed out after {timeout:g}s" if timed_out else f"failed: {redact(str(e))}"
+        raise MediaError(
+            f"Gemini Files API request {detail}",
+            category=ErrorCategory.TIMEOUT if timed_out else ErrorCategory.PROVIDER, provider="gemini",
+        ) from None
 
 
 def upload_bytes(base_url: str, auth_headers: dict, data: bytes, mime: str, *,
