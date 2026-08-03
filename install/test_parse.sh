@@ -66,9 +66,34 @@ check "error object instead of a list" \
 check "empty response" "" ""
 
 echo
+
+# `--config-bundle` takes either a path or a URL, and the two go down different roads:
+# a path mistaken for a URL is handed to curl, and a URL mistaken for a path is
+# reported as a missing file for something that was never on disk.
+check_remote() {
+  local value="$1" want="$2" got="no"
+  if is_remote "$value"; then got="yes"; fi
+  if [ "$got" = "$want" ]; then
+    printf '  ok   %s -> %s\n' "$value" "$got"
+  else
+    printf '  FAIL %s: want %q, got %q\n' "$value" "$want" "$got"
+    fail=1
+  fi
+}
+
+echo "is_remote:"
+check_remote "https://internal.example/media-ai.toml" yes
+check_remote "http://internal.example/media-ai.toml" yes
+check_remote "/etc/media-ai/bundle.toml" no
+check_remote "bundle.toml" no
+check_remote "./https://not-a-url.toml" no
+check_remote "s3://bucket/bundle.toml" no
+check_remote "" no
+
+echo
 if [ "$fail" -eq 0 ]; then
-  echo "all parse_tag tests passed"
+  echo "all installer parser tests passed"
 else
-  echo "parse_tag tests FAILED"
+  echo "installer parser tests FAILED"
 fi
 exit "$fail"

@@ -29,7 +29,7 @@ from ..core.errors import ErrorCategory, MediaError
 from .secret import BrokeredHandle, Credential, Secret
 from .stores import named_account, register_secret_backend, secret_backend
 
-__all__ = ["is_reference", "resolve_reference", "BindingCredentials"]
+__all__ = ["is_reference", "resolve_reference", "split_reference", "BindingCredentials"]
 
 #: Schemes resolved in-process. Anything else needs a registered backend.
 _BUILTIN = ("env", "cred", "keychain", "broker")
@@ -45,7 +45,12 @@ def is_reference(value: str) -> bool:
     return "://" in value or (":" in value and value.split(":", 1)[0].isalnum())
 
 
-def _split(ref: str) -> tuple[str, str]:
+def split_reference(ref: str) -> tuple[str, str]:
+    """``"cred://volc"`` → ``("cred", "volc")``; also splits the bare ``scheme:rest``.
+
+    Public because a caller may need to know *which* source a binding names without
+    resolving it — deciding which accounts a bundle has to carry, for one.
+    """
     scheme, sep, rest = ref.partition("://")
     if sep:
         return scheme, rest
@@ -62,7 +67,7 @@ def resolve_reference(ref: str, *, provider: str = "") -> Credential:
     """
     if not ref:
         raise MediaError("no credential reference to resolve", category=ErrorCategory.AUTH, provider=provider)
-    scheme, rest = _split(ref)
+    scheme, rest = split_reference(ref)
 
     if scheme == "broker":
         endpoint = rest or os.getenv("MEDIA_CRED_BROKER", "")

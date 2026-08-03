@@ -38,6 +38,11 @@ its own options. Two bindings on one account repeat the reference. That is delib
 — the question this file must answer fastest is "what is *this* binding doing?", and
 an indirection saving a line of typing costs a hop every time something breaks.
 
+Or, on a machine with nobody to ask: `media-ai config export --output setup.toml` on
+one that is already configured, `media-ai config import --input setup.toml` here.
+`--binding <id>` exports a subset, and the accounts those bindings name travel with
+them under `--include-credentials`. See [CREDENTIALS.md](CREDENTIALS.md#moving-a-setup-to-another-machine).
+
 ## `extends` — the one indirection
 
 ```toml

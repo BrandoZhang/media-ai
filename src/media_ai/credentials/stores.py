@@ -28,7 +28,9 @@ from pathlib import Path
 from ..core.errors import ErrorCategory, MediaError
 
 __all__ = [
+    "account_key",
     "credentials_path",
+    "load_accounts",
     "named_account",
     "register_secret_backend",
     "registered_schemes",
@@ -63,6 +65,35 @@ def _read() -> dict:
         raise MediaError(f"could not parse {path}: {exc}", category=ErrorCategory.AUTH) from exc
 
 
+def account_key(section: dict) -> str | None:
+    """One account's ``api_key`` **as written** — a raw key or another reference.
+
+    The legacy spelling ``key`` is accepted alongside it. Public because reading an
+    account without resolving it is a real need: exporting a bundle copies what is at
+    rest rather than resolving anything, and following a ``cred://`` chain needs to see
+    the reference itself, not the value at the end of it.
+    """
+    raw = section.get("api_key") or section.get("key")
+    return raw if isinstance(raw, str) and raw else None
+
+
+def load_accounts() -> dict[str, dict]:
+    """Every account in ``credentials.toml``, as written, or ``{}`` when there is none.
+
+    Subject to the same permission check as resolution: a group- or world-readable file
+    is refused here too, so nothing copies keys out of a file the CLI would not read.
+    """
+    out: dict[str, dict] = {}
+    for name, section in _read().items():
+        if not isinstance(section, dict):
+            raise MediaError(
+                f"{credentials_path()}: [{name}] must be a table of account fields",
+                category=ErrorCategory.AUTH, code="credentials_invalid",
+            )
+        out[name] = dict(section)
+    return out
+
+
 def named_account(name: str, *, _seen: frozenset[str] = frozenset()) -> str | None:
     """The plaintext value of account ``[<name>]``, or ``None`` when there is no such block.
 
@@ -75,15 +106,16 @@ def named_account(name: str, *, _seen: frozenset[str] = frozenset()) -> str | No
     section = _read().get(name)
     if not isinstance(section, dict):
         return None
-    raw = section.get("api_key") or section.get("key")
-    if not isinstance(raw, str) or not raw:
+    raw = account_key(section)
+    if not raw:
         return None
 
-    from .reference import _split, is_reference, resolve_reference  # deferred: reference imports this module
+    # deferred: reference imports this module
+    from .reference import is_reference, resolve_reference, split_reference
 
     if not is_reference(raw):
         return raw
-    scheme, rest = _split(raw)
+    scheme, rest = split_reference(raw)
     if scheme == "cred":
         return named_account(rest, _seen=_seen | {name})
     return resolve_reference(raw).reveal()

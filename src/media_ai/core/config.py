@@ -48,7 +48,15 @@ from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 
-__all__ = ["Config", "UserBinding", "config_path", "load_config", "render_config"]
+__all__ = [
+    "Config",
+    "UserBinding",
+    "config_path",
+    "config_payload",
+    "load_config",
+    "parse_config",
+    "render_config",
+]
 
 SCHEMA = 2
 
@@ -104,9 +112,9 @@ def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
     return MediaError(msg, category=ErrorCategory.CLI, code=code)
 
 
-def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
+def _parse_binding(bid: str, raw: object, source: str) -> UserBinding:
     if not isinstance(raw, dict):
-        raise _fail(f"{path}: [bindings.\"{bid}\"] must be a table")
+        raise _fail(f"{source}: [bindings.\"{bid}\"] must be a table")
     # Every one of these reaches code that assumes a string — `base_url` is `.rstrip`-ed
     # into the HTTP client, `model_id` goes on the wire. A hand-edited `base_url = 8080`
     # used to surface, one command later, as exit 1 `unknown` reading "'int' object has
@@ -115,26 +123,26 @@ def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
     for field_name in ("extends", "model_id", "endpoint_id", "base_url"):
         value = raw.get(field_name)
         if value is not None and (not isinstance(value, str) or not value):
-            raise _fail(f'{path}: [bindings."{bid}"].{field_name} must be a non-empty string, got {value!r}')
+            raise _fail(f'{source}: [bindings."{bid}"].{field_name} must be a non-empty string, got {value!r}')
     credential = raw.get("credential")
     if credential is not None:
         if not isinstance(credential, str) or not credential:
-            raise _fail(f'{path}: [bindings."{bid}"].credential must be a string')
+            raise _fail(f'{source}: [bindings."{bid}"].credential must be a string')
         if not is_reference(credential):
             raise _fail(
-                f'{path}: [bindings."{bid}"].credential must be a reference such as '
+                f'{source}: [bindings."{bid}"].credential must be a reference such as '
                 'env://VAR, cred://<account> or keychain://<name> — never a raw key. '
                 "This file is the shareable one; raw keys belong in credentials.toml.",
                 code="credential_is_raw_key",
             )
     options = raw.get("options", {})
     if not isinstance(options, dict):
-        raise _fail(f'{path}: [bindings."{bid}"].options must be a table')
+        raise _fail(f'{source}: [bindings."{bid}"].options must be a table')
     model_id = raw.get("model_id")
     endpoint_id = raw.get("endpoint_id")
     if model_id is not None and endpoint_id is not None:
         raise _fail(
-            f'{path}: [bindings."{bid}"] must use either model_id or endpoint_id, not both',
+            f'{source}: [bindings."{bid}"] must use either model_id or endpoint_id, not both',
             code="wire_id_ambiguous",
         )
     return UserBinding(
@@ -148,7 +156,7 @@ def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
     )
 
 
-def _reject_v1(data: dict, path: Path) -> None:
+def _reject_v1(data: dict, source: str) -> None:
     """A config from before the binding refactor cannot be read, and says so.
 
     Silently ignoring ``[profiles]``/``[providers.x]`` would leave a user with a
@@ -159,10 +167,52 @@ def _reject_v1(data: dict, path: Path) -> None:
     stale = [name for name in ("profiles", "providers") if name in data]
     if stale:
         raise _fail(
-            f"{path} uses the pre-binding format ([{'], ['.join(stale)}]). Configuration is now "
+            f"{source} uses the pre-binding format ([{'], ['.join(stale)}]). Configuration is now "
             "per binding — run `media-ai init` to write it, or delete the file to start over.",
             code="config_schema_outdated",
         )
+
+
+def parse_config(data: dict, *, source: str, path: Path | None = None) -> Config:
+    """Validate one config *document* and turn it into a :class:`Config`.
+
+    Split out from :func:`load_config` because the config file is no longer the only
+    place this document appears: a portable bundle (``media-ai config export``) embeds
+    the same tables, and it has to be checked by exactly the same rules — a raw key
+    refused, a mistyped ``base_url`` named, an unknown scene rejected. A second parser
+    would be a second opinion on what a valid config is, and the one that matters is
+    whichever runs last.
+
+    ``source`` is what errors name (a path, or ``bundle.toml [config]``); ``path`` is
+    recorded on the result only when the document really came from a file.
+    """
+    _reject_v1(data, source)
+    schema = data.get("schema", SCHEMA)
+    if schema != SCHEMA:
+        raise _fail(
+            f"{source} declares schema = {schema!r}; this build reads schema = {SCHEMA}",
+            code="config_schema_outdated",
+        )
+
+    raw_bindings = data.get("bindings", {})
+    if not isinstance(raw_bindings, dict):
+        raise _fail(f"{source}: [bindings] must be a table")
+    bindings = {bid: _parse_binding(bid, raw, source) for bid, raw in raw_bindings.items()}
+
+    raw_defaults = data.get("defaults", {})
+    if not isinstance(raw_defaults, dict):
+        raise _fail(f"{source}: [defaults] must be a table")
+    defaults: dict[str, str] = {}
+    for key, value in raw_defaults.items():
+        try:
+            Scene(key)
+        except ValueError:
+            raise _fail(f"{source}: [defaults] has no scene named {key!r}") from None
+        if not isinstance(value, str):
+            raise _fail(f'{source}: [defaults]."{key}" must be a binding id')
+        defaults[key] = value
+
+    return Config(bindings=bindings, defaults=defaults, path=path, exists=True)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -178,34 +228,7 @@ def load_config(path: Path | None = None) -> Config:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise _fail(f"could not read {path}: {exc}") from exc
-
-    _reject_v1(data, path)
-    schema = data.get("schema", SCHEMA)
-    if schema != SCHEMA:
-        raise _fail(
-            f"{path} declares schema = {schema!r}; this build reads schema = {SCHEMA}",
-            code="config_schema_outdated",
-        )
-
-    raw_bindings = data.get("bindings", {})
-    if not isinstance(raw_bindings, dict):
-        raise _fail(f"{path}: [bindings] must be a table")
-    bindings = {bid: _parse_binding(bid, raw, path) for bid, raw in raw_bindings.items()}
-
-    raw_defaults = data.get("defaults", {})
-    if not isinstance(raw_defaults, dict):
-        raise _fail(f"{path}: [defaults] must be a table")
-    defaults: dict[str, str] = {}
-    for key, value in raw_defaults.items():
-        try:
-            Scene(key)
-        except ValueError:
-            raise _fail(f"{path}: [defaults] has no scene named {key!r}") from None
-        if not isinstance(value, str):
-            raise _fail(f'{path}: [defaults]."{key}" must be a binding id')
-        defaults[key] = value
-
-    return Config(bindings=bindings, defaults=defaults, path=path, exists=True)
+    return parse_config(data, source=str(path), path=path)
 
 
 def save_config(config: "Config", *, header: str | None = None) -> Path | None:
@@ -216,23 +239,21 @@ def save_config(config: "Config", *, header: str | None = None) -> Path | None:
     because :func:`render_config` cannot round-trip comments: an edit to one field
     rewrites the whole file, and a hand-written note explaining why a binding points at
     a particular endpoint is otherwise gone with no way back.
+
+    A write that changes nothing leaves no backup — see
+    :func:`~media_ai.credentials.tomlwrite.write_if_changed`.
     """
-    from ..credentials.tomlwrite import backup, write_public
+    from ..credentials.tomlwrite import write_if_changed, write_public
 
-    path = config_path()
-    saved = backup(path)
-    write_public(path, render_config(config, header=header))
-    return saved
+    return write_if_changed(config_path(), render_config(config, header=header), write_public)
 
 
-def render_config(config: Config, *, header: str | None = None) -> str:
-    """Serialize a :class:`Config` back to TOML.
+def config_payload(config: Config) -> dict:
+    """The config as plain TOML tables — the document, before it is text.
 
-    Written by ``media-ai init`` and ``media-ai config set-default``. Comments are not
-    preserved — callers back the previous file up before replacing it.
+    :func:`render_config` writes this to disk and a bundle embeds it verbatim, so the
+    file and the bundle cannot end up describing the same configuration differently.
     """
-    from ..credentials.tomlwrite import dumps
-
     data: dict = {"schema": SCHEMA}
     if config.bindings:
         data["bindings"] = {
@@ -252,4 +273,15 @@ def render_config(config: Config, *, header: str | None = None) -> str:
         }
     if config.defaults:
         data["defaults"] = dict(sorted(config.defaults.items()))
-    return dumps(data, header=header)
+    return data
+
+
+def render_config(config: Config, *, header: str | None = None) -> str:
+    """Serialize a :class:`Config` back to TOML.
+
+    Written by ``media-ai init`` and ``media-ai config set-default``. Comments are not
+    preserved — callers back the previous file up before replacing it.
+    """
+    from ..credentials.tomlwrite import dumps
+
+    return dumps(config_payload(config), header=header)

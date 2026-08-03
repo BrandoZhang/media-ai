@@ -51,7 +51,7 @@ _GROUP_HELP = {
     "job": "query, download, or cancel an asynchronous job",
     "capabilities": "list binding capabilities",
     "bindings": "list or configure callable bindings",
-    "config": "show or set scene defaults",
+    "config": "show or set scene defaults; export or import the whole configuration",
     "usage": "summarize the local usage ledger",
 }
 
@@ -79,6 +79,8 @@ def _usage(stream) -> None:
     print("  media-ai bindings list              # what this machine can call, and what is default", file=stream)
     print("  media-ai bindings available         # declared but not configured yet", file=stream)
     print("  media-ai config set-default video.text_to_video volc-ark/seedance-2.0", file=stream)
+    print("  media-ai config export --output setup.toml --include-credentials  # provision another machine", file=stream)
+    print("  media-ai config import --input setup.toml   # …and apply it there, no wizard", file=stream)
     print("  media-ai capabilities --scene video.image_to_video", file=stream)
 
 

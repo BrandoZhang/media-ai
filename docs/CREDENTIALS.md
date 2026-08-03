@@ -62,6 +62,50 @@ api_key = "op://vault/volc/key"     # bindings at the same account
 A group- or world-readable `credentials.toml` is **refused**, not silently trusted.
 Choosing `env://` at setup means **no secret file is written at all**.
 
+## Moving a setup to another machine
+
+`media-ai init` is a conversation, and a production instance cannot have one. A
+**bundle** is that conversation's outcome as a file:
+
+```bash
+# on a machine that is already configured
+media-ai config export --output setup.toml                          # references only, 0644
+media-ai config export --output setup.toml --include-credentials    # + the accounts, 0600
+
+# on the target — no wizard, no terminal needed
+media-ai config import --input setup.toml
+curl -fsSL https://internal/setup.toml | media-ai config import --input -
+```
+
+The rules are the same trust boundary, written down for a file that travels:
+
+| Rule | Why |
+|---|---|
+| **Export never resolves a credential** | A reference stays a reference; `env://ARK_API_KEY` is not materialised into a literal. Otherwise the target's answer to "where does this key come from?" would differ from the source's, silently. A bundle is a *move*, not a transformation. |
+| **It carries the accounts its bindings name, and no others** — `cred://` chains followed | A key that travels for no reason is a key in one more place. Accounts left behind are reported as `omitted_credentials`, so nothing is dropped silently. |
+| **`--include-credentials` is the only way a key leaves** | Without it the accounts file is not even read, and the bundle is as shareable as `config.toml`. Accounts an exported binding names but the bundle does not carry are reported as `missing_credentials` — the target must supply those itself. |
+| **A secret-bearing bundle is written 0600** | Same standard as `credentials.toml`. Move it over a private channel and delete it once imported. |
+| **The result JSON carries account *names*, never values** | stdout is read by an agent, printed in CI logs, and pasted into issues. |
+
+An import is refused — before anything is written — if the bundle names a binding this
+build does not declare, or defaults to one this machine cannot reach; both would leave
+a config in which *every* later command fails, including the one an operator would run
+to find out why. `--skip-unknown` drops those entries instead, and says which went.
+`--dry-run` reports the whole plan and writes nothing.
+
+A bundle is also the one document in the project that **migrates instead of refusing**.
+It exists to be read on another machine, which in a fleet means an older or newer
+release; `core/migrate.py` upgrades an older envelope or config payload step by step,
+and refuses a newer one with "upgrade media-ai" rather than guessing. Files on disk
+still do not migrate — an install is a fresh start.
+
+Provisioning in one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh \
+  | bash -s -- --config-bundle https://internal/setup.toml --skills-dest ~/.claude/skills
+```
+
 ## When resolution fails
 
 Exit 4, with a code that distinguishes the causes:

@@ -34,7 +34,9 @@ curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/i
 
 Installs [uv](https://docs.astral.sh/uv/) if it is missing, installs the CLI, runs an
 offline self-test, then hands over to the setup wizard. Options: `--version REF`,
-`--skills-dest PATH`, `--no-init`, `--dry-run`.
+`--skills-dest PATH`, `--config-bundle PATH|URL` (provision from an exported
+configuration instead of the wizard — see [below](#provisioning-without-the-wizard)),
+`--no-init`, `--dry-run`.
 
 Already installed, or configuring a second machine:
 
@@ -97,6 +99,41 @@ packaged version is neither rewritten nor asked about, and identical answers do 
 leave a second `credentials.toml.bak`. A second `install.sh` with nothing to change
 leaves the filesystem byte-identical.
 
+### Provisioning without the wizard
+
+The wizard is a conversation, and a production instance cannot have one. Export the
+answers once, from a machine that is already right, and import them everywhere:
+
+```bash
+# where it already works
+media-ai config export --output setup.toml --include-credentials   # written chmod 600
+
+# on the target: no terminal, no questions
+media-ai config import --input setup.toml
+curl -fsSL https://internal/setup.toml | media-ai config import --input -   # or straight from a pipe
+```
+
+Or in one command, install included:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh \
+  | bash -s -- --config-bundle https://internal/setup.toml --skills-dest ~/.claude/skills
+```
+
+**Without `--include-credentials` no key leaves** — the bundle carries the bindings,
+the scene defaults and the credential *references*, so a target with its own
+environment or vault needs nothing else. With it, the bundle carries exactly the
+accounts its bindings name (`cred://` chains followed), reports the ones it left
+behind, and names the ones the target will have to supply itself.
+
+Import **merges** by default (`--replace` to replace; `--dry-run` to see the plan), is
+byte-identical on a re-run, and refuses before writing anything if the bundle names a
+binding this build does not declare — that config would break every later command, so
+`--skip-unknown` drops those entries and reports them instead. A bundle is the one
+thing here that **migrates** across versions rather than refusing: it exists to be read
+on a machine running a different release. See
+[docs/CREDENTIALS.md](docs/CREDENTIALS.md).
+
 ### Checking and removing
 
 ```bash
@@ -156,6 +193,8 @@ media-ai animation export --frames matted/ --output sticker.gif --transparent
 media-ai job    query   --binding <id> --id <op> --output clip.mp4
 media-ai bindings       list | available | add <id> --credential env://VAR
 media-ai config         show | set-default <scene|group> <binding>
+media-ai config export  --output setup.toml [--include-credentials] [--binding ID] [--force]
+media-ai config import  --input setup.toml|- [--replace] [--skip-credentials] [--skip-unknown] [--dry-run]
 media-ai capabilities   [--binding ID] [--scene S] [--configured]
 media-ai usage
 media-ai init           [--skills-only] [--advanced] [--verify]

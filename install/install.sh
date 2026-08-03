@@ -18,7 +18,7 @@ DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.5.2}"
 
 main() {
   local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
-  local keep_flags=()
+  local config_bundle="" keep_flags=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -29,6 +29,8 @@ main() {
       --version=*)    version="${1#*=}"; shift ;;
       --skills-dest)  need_value "$@"; skills_dest="$2"; shift 2 ;;
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
+      --config-bundle) need_value "$@"; config_bundle="$2"; shift 2 ;;
+      --config-bundle=*) config_bundle="${1#*=}"; shift ;;
       --no-init)      do_init=0; shift ;;
       --uninstall)    do_uninstall=1; shift ;;
       --keep-config)  keep_flags+=(--keep-config); shift ;;
@@ -55,6 +57,9 @@ main() {
   local spec="git+https://github.com/${REPO}@${version}"
   if [ "$dry_run" -eq 1 ]; then
     say "would install: uv tool install --force $spec"
+    # A bare `[ … ] && say …` here would be the last thing `set -e` sees when there is
+    # no bundle: the test returns 1 and the installer dies reporting nothing.
+    if [ -n "$config_bundle" ]; then say "would import configuration from: $config_bundle"; fi
     return 0
   fi
 
@@ -63,7 +68,15 @@ main() {
 
   check_path
   self_test
-  if [ "$do_init" -eq 1 ]; then run_init "$skills_dest"; fi
+  # A bundle is the wizard's answers as a file, so it replaces the wizard rather than
+  # running before it: on a production instance there is nobody to interview, and the
+  # answers are the same on every box in the fleet anyway.
+  if [ -n "$config_bundle" ]; then
+    import_bundle "$config_bundle"
+    if [ "$do_init" -eq 1 ]; then install_skills "$skills_dest"; fi
+  elif [ "$do_init" -eq 1 ]; then
+    run_init "$skills_dest"
+  fi
   return 0
 }
 
@@ -73,6 +86,8 @@ usage: install.sh [options]
 
   --version REF      install this git ref (tag, branch, or sha; default: latest tag)
   --skills-dest PATH install Agent Skills here without asking
+  --config-bundle S  provision from a bundle (path or https:// URL) instead of the
+                     wizard — see `media-ai config export`. Nothing is asked.
   --no-init          skip the configuration wizard
   --dry-run          print what would be done and exit
 
@@ -185,6 +200,72 @@ self_test() {
     rm -rf "$tmp"
     exit 1
   fi
+}
+
+# Whether a bundle has to be fetched rather than read off this filesystem.
+# Split out so install/test_parse.sh can exercise it: a path mistaken for a URL would
+# hand curl something it cannot fetch, and a URL mistaken for a path would report a
+# missing file for something that was never on disk.
+is_remote() {
+  case "$1" in
+    http://*|https://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+import_bundle() {
+  # A bundle may hold API keys, so a fetched copy lives in a 0600 file inside a 0700
+  # directory and is deleted whatever happens next — including on a failed import,
+  # which is exactly when a forgotten copy would sit around unnoticed.
+  # Two `local`s: within one, `file="$src"` would read the *enclosing* scope's src.
+  local src="$1" status=0 tmp
+  local file="$src"
+  tmp="$(umask 077; mktemp -d)"
+  if is_remote "$src"; then
+    if ! command -v curl >/dev/null 2>&1; then
+      rm -rf "$tmp"
+      err "curl is required to fetch $src"
+      exit 1
+    fi
+    file="$tmp/bundle.toml"
+    say "fetching configuration bundle…"
+    if ! curl -fsSL --max-time 60 "$src" -o "$file"; then
+      rm -rf "$tmp"
+      err "could not fetch $src"
+      exit 1
+    fi
+  elif [ ! -f "$file" ]; then
+    rm -rf "$tmp"
+    err "no configuration bundle at $file"
+    exit 1
+  fi
+
+  say "importing configuration…"
+  # stdout is the machine-contract JSON object, and on failure it carries the reason —
+  # so it is shown rather than discarded. A provisioning step that failed must not
+  # look like one that worked.
+  media-ai config import --input "$file" --pretty >"$tmp/import.json" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    err "the configuration bundle was not applied:"
+    sed 's/^/    /' "$tmp/import.json" >&2 || true
+  fi
+  rm -rf "$tmp"
+  if [ "$status" -ne 0 ]; then exit "$status"; fi
+  say "configuration imported; check it with: media-ai doctor"
+}
+
+install_skills() {
+  # The skills half of `init`, with every question answered: --skills-only leaves the
+  # configuration the bundle just wrote alone, and --non-interactive is what keeps it
+  # from stopping on a prompt no production instance can answer.
+  local skills_dest="${1:-}"
+  if [ -z "$skills_dest" ]; then
+    say "no --skills-dest given; install the Agent Skills with:"
+    printf '      media-ai init --skills-only --non-interactive --skills-dest ~/.claude/skills\n' >&2
+    return 0
+  fi
+  say "installing Agent Skills into ${skills_dest}…"
+  media-ai init --skills-only --non-interactive --skills-dest "$skills_dest" >/dev/null || true
 }
 
 run_init() {

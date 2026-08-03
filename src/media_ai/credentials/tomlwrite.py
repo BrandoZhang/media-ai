@@ -17,7 +17,15 @@ import stat
 import tempfile
 from pathlib import Path
 
-__all__ = ["atomic_write", "dumps", "write_private", "write_public", "TomlWriteError"]
+__all__ = [
+    "atomic_write",
+    "backup",
+    "dumps",
+    "write_if_changed",
+    "write_private",
+    "write_public",
+    "TomlWriteError",
+]
 
 
 class TomlWriteError(ValueError):
@@ -180,6 +188,34 @@ def backup(path: Path) -> Path | None:
             atomic_write(candidate, path.read_text(encoding="utf-8"), mode=mode)
             return candidate
     raise OSError(f"too many backups beside {path}")
+
+
+def write_if_changed(path: Path, text: str, writer) -> Path | None:
+    """Write ``text`` through ``writer``, backing the old file up **only if it differs**.
+
+    Returns the backup path, or ``None`` when there was nothing to keep. Every command
+    that rewrites a user-owned TOML file is also an upgrade path — ``init`` is re-run,
+    a bundle is re-imported by whatever provisions the box — so a backup per run would
+    accumulate identical copies of ``credentials.toml`` under names nobody remembers to
+    delete.
+
+    The *write* still happens either way, because it is what sets the mode: the
+    resolver refuses a group- or world-readable ``credentials.toml``, and re-running is
+    the obvious way to fix one. Skipping an identical write would leave that broken with
+    no way back short of a manual ``chmod``. The content is unchanged, so the only thing
+    that can change is the permissions.
+    """
+    path = Path(path)
+    saved = backup(path) if not _unchanged(path, text) else None
+    writer(path, text)
+    return saved
+
+
+def _unchanged(path: Path, text: str) -> bool:
+    try:
+        return path.is_file() and path.read_text(encoding="utf-8") == text
+    except OSError:
+        return False
 
 
 def write_private(path: Path, text: str) -> None:

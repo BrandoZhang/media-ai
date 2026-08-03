@@ -51,6 +51,8 @@ flowchart TB
         B["binding.py — manifest schema + BindingCatalog"]
         R["resolve.py — --binding / --provider+--model / scene default"]
         CF["config.py — bindings + defaults (schema 2)"]
+        BU["bundle.py — the portable bundle (export/import)"]
+        MG["migrate.py — schema chains for documents that cross machines"]
         S["scene.py — Scene + derive_scene()"]
         V["validate.py — request vs declared constraints, pre-flight"]
         A["adapter.py — the Adapter interface (transport-agnostic)"]
@@ -75,6 +77,9 @@ flowchart TB
     end
 
     CLI --> R
+    CLI --> BU
+    BU --> CF
+    BU --> MG
     R --> CF
     R --> B
     B --> MAN
@@ -161,6 +166,8 @@ model may not have learned, so a bare invocation has to work.
 |---|---|
 | `core/binding.py` | Manifest schema (`ProviderSpec`/`BindingSpec`/`Constraints`), parser, `BindingCatalog` |
 | `core/config.py` | `config.toml` schema 2 — bindings + scene defaults, `extends` |
+| `core/bundle.py` | The portable bundle: one file that provisions a machine (`config export`/`import`) |
+| `core/migrate.py` | Schema chains — the one seam where a document from another version upgrades instead of being refused |
 | `core/resolve.py` | Addressing, `ResolvedBinding`, the refusal taxonomy |
 | `core/scene.py` | `Scene` + derivation from a request |
 | `core/validate.py` | Request vs declared constraints, before any call |
