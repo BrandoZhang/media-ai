@@ -1,15 +1,23 @@
-"""``media/ffmpeg.py`` — the invariant every call site here shares.
+"""``media/ffmpeg.py`` — the two invariants every call site here shares.
 
 **Every input this module opens is a local file**: a clip the caller named and we checked,
 a frame we wrote, a download that already finished. ffmpeg's default is the opposite — it
 opens whatever protocol an input string asks for, and follows a playlist that names one —
 and ``local/ffmpeg`` is the binding whose whole pitch is "no key, no cost, no network". So
 the input is pinned at the encoder too, not only by the check in front of it.
+
+**And none of them holds the caller's stdin.** ``capture_output=True`` redirects only
+stdout and stderr, so a child inherits stdin — the rest of ``while read f; … done <
+list.txt``, or keystrokes typed ahead at a terminal — and ffmpeg enables interactive
+keyboard control on it by default. The CLI reads no stdin of its own; nothing it spawns
+may either. These assert the invariant, not a reproduction: see ``ffmpeg._run``.
 """
 
 from __future__ import annotations
 
+import ast
 import subprocess
+from pathlib import Path
 
 import pytest
 from media_ai.core.errors import MediaError
@@ -26,17 +34,43 @@ class _Done:
 
 
 @pytest.fixture
-def commands(monkeypatch):
-    """Capture every ffmpeg command line this module builds, running none of them."""
-    seen: list[list[str]] = []
+def calls(monkeypatch):
+    """Capture every ffmpeg invocation — command line *and* kwargs — running none of them."""
+    seen: list[tuple[list[str], dict]] = []
 
     def fake_run(cmd, **kw):
-        seen.append(list(cmd))
+        seen.append((list(cmd), kw))
         return _Done()
 
     monkeypatch.setattr(ffmpeg.subprocess, "run", fake_run)
     monkeypatch.setattr(ffmpeg, "ffmpeg_exe", lambda: "/fake/ffmpeg")
     return seen
+
+
+@pytest.fixture
+def commands(calls):
+    """Just the command lines. A list-like view, filled as :func:`calls` is."""
+    return _Commands(calls)
+
+
+class _Commands:
+    """The command lines out of ``calls``, read at access time (nothing has run yet
+    when the fixture is handed over)."""
+
+    def __init__(self, calls):
+        self._calls = calls
+
+    def _cmds(self) -> list[list[str]]:
+        return [cmd for cmd, _ in self._calls]
+
+    def __iter__(self):
+        return iter(self._cmds())
+
+    def __len__(self) -> int:
+        return len(self._calls)
+
+    def __getitem__(self, i):
+        return self._cmds()[i]
 
 
 def _inputs_are_pinned(cmd: list[str]) -> bool:
@@ -78,6 +112,33 @@ def test_concat_still_refuses_an_input_that_is_not_a_file(tmp_path, commands):
     assert "not found" in str(ei.value) and not commands
 
 
+def test_every_invocation_closes_stdin(tmp_path, calls):
+    """The encode and both probes, since one leak is enough to reach the caller's stdin."""
+    p = tmp_path / "a.mp4"
+    p.write_bytes(b"clip")
+    ffmpeg.run_ffmpeg(["-i", str(p), str(tmp_path / "out.mp4")])
+    ffmpeg.probe_duration(p)
+    ffmpeg.has_audio(p)
+    assert len(calls) == 3
+    for cmd, kw in calls:
+        assert kw.get("stdin") is subprocess.DEVNULL, cmd
+        assert "-nostdin" in cmd, cmd
+
+
+def test_stdin_is_closed_by_one_choke_point_not_per_call_site():
+    """``-nostdin`` on a command line is a thing a new call site forgets; the DEVNULL is
+    what actually enforces it, so it has to stay in a single place. Read off the syntax
+    tree rather than the text, which also mentions the call in prose."""
+    tree = ast.parse(Path(ffmpeg.__file__).read_text())
+    spawns = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in ("subprocess.run", "subprocess.Popen")
+    ]
+    assert len(spawns) == 1, f"{len(spawns)} spawn sites in media/ffmpeg.py; all of them must go through _run()"
+    enclosing = next(f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and spawns[0] in ast.walk(f))
+    assert enclosing.name == "_run"
+
+
 def test_a_failed_run_reports_the_tail_of_stderr(monkeypatch):
     class Failed:
         returncode = 1
@@ -93,7 +154,10 @@ def test_a_failed_run_reports_the_tail_of_stderr(monkeypatch):
 
 def test_the_real_binary_accepts_the_pin(tmp_path):
     """The pin is only worth having if it does not break the ordinary local case — and
-    an unknown option would make ffmpeg refuse *every* call, so this runs the real one."""
+    an unknown option would make ffmpeg refuse *every* call, so this runs the real one.
+
+    Covers ``-nostdin`` by the same argument: it rides on every command line this module
+    builds, so a build of ffmpeg that rejected it would fail here first."""
     from conftest import have_media_stack
 
     if not have_media_stack():
