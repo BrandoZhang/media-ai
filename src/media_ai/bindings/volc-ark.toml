@@ -198,7 +198,12 @@ options = ["camera_fixed", "watermark"]
 [binding.constraints.supports]
 seed              = true
 audio             = true
-negative_prompt   = true
+# Declared true until it was probed: `_create_task` never read `req.negative_prompt`,
+# so the flag passed validation and was dropped before the wire — a billed clip
+# returned ok:true having ignored the request. Ark documents no negative-prompt field
+# for Seedance; its own guide makes constraint clauses inside the prompt the mechanism
+# ("保持无字幕", "不要生成水印"). False so the CLI refuses and says so.
+negative_prompt   = false
 first_frame       = true
 last_frame        = true
 reference_images  = true
@@ -245,7 +250,9 @@ options = ["camera_fixed", "watermark"]
 [binding.constraints.supports]
 seed              = true
 audio             = true
-negative_prompt   = true
+# Same as Seedance 2.0 above: never sent by the adapter, and Ark documents constraint
+# clauses in the prompt rather than a negative-prompt field.
+negative_prompt   = false
 first_frame       = true
 last_frame        = true
 reference_images  = true

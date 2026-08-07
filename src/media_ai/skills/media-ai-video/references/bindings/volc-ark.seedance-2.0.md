@@ -78,10 +78,11 @@ only one move per shot**; stacking pan + dolly + zoom destabilises the frame. A
 
 ### Constraints are prose here
 
-`--negative-prompt` is supported on this binding, but the vendor's own remedy for the
-common artefacts is a constraint clause inside the prompt: *"保持无字幕"*,
-*"避免生成任何文字或字幕"*, *"不要生成Logo"*, *"不要生成水印"*. Use both if a run keeps
-producing them.
+**`--negative-prompt` is refused here** (exit 3) — Ark documents no such field for
+Seedance. The mechanism is a constraint clause written into the prompt itself:
+*"保持无字幕"*, *"避免生成任何文字或字幕"*, *"不要生成Logo"*, *"不要生成水印"*. Add one
+whenever a run keeps producing stray captions, logos or watermarks; the vendor treats
+these as the standard remedy rather than an escape hatch.
 
 ### Budget your references
 

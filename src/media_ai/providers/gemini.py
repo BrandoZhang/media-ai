@@ -227,6 +227,13 @@ class GeminiAdapter(HttpAdapter):
         # `--continue-from` call passed validation as video.extend and then submitted a
         # plain text-to-video request — a fresh, unrelated clip billed and returned as
         # ok:true under meta.scene "video.extend".
+        if req.continue_from is not None and req.reference_videos:
+            raise MediaError(
+                "Veo takes one clip to carry on from, and --continue-from and --reference-video both "
+                "name it — pass only one. (They are different scenes here but the same wire field, so "
+                "honouring one would mean silently discarding the other.)",
+                category=ErrorCategory.VALIDATION, provider=self.name,
+            )
         clip = req.continue_from or (req.reference_videos[0] if req.reference_videos else None)
         if clip is not None:
             if clip.is_local:

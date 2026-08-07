@@ -356,6 +356,21 @@ def test_veo_continue_from_reaches_the_wire(fake_provider, tmp_path):
     assert fake.calls[0]["body"]["instances"][0]["video"] == {"uri": uri, "mimeType": "video/mp4"}
 
 
+def test_veo_refuses_both_clip_inputs(fake_provider, tmp_path):
+    # One wire field, two flags that name it. Preferring either would discard the other
+    # without a word, so the pair is refused instead.
+    uri_a = "https://generativelanguage.googleapis.com/v1beta/files/a:download?alt=media"
+    uri_b = "https://generativelanguage.googleapis.com/v1beta/files/b:download?alt=media"
+    prov, _ = fake_provider("gemini/veo-3.1", [{"name": "op"}])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_video(VideoRequest(prompt="carry on", output=tmp_path / "v.mp4",
+                                         model="veo-3.1-generate-preview",
+                                         continue_from=MediaRef(uri_a, "continue_from"),
+                                         reference_videos=[MediaRef(uri_b, "reference_video")], duration=8))
+    assert ei.value.category == ErrorCategory.VALIDATION
+    assert "only one" in ei.value.message
+
+
 def test_veo_continue_from_local_file_is_rejected(fake_provider, tmp_path):
     clip = tmp_path / "src.mp4"
     clip.write_bytes(b"FAKE-MP4")
