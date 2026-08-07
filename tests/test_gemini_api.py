@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import PNG_1x1, PNG_1x1_BYTES
 from media_ai.core.errors import ErrorCategory, MediaError
+from media_ai.core.scene import Scene, derive_scene
 from media_ai.core.types import (
     DialogueRequest,
     DialogueTurn,
@@ -335,6 +336,35 @@ def test_veo_extension_uses_video_uri(fake_provider, tmp_path):
     prov.generate_video(VideoRequest(prompt="continue", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
                                      reference_videos=[MediaRef(uri, "reference_video")], duration=8))
     assert fake.calls[0]["body"]["instances"][0]["video"] == {"uri": uri, "mimeType": "video/mp4"}
+
+
+def test_veo_continue_from_reaches_the_wire(fake_provider, tmp_path):
+    # `--continue-from` derives video.extend and must carry the clip URI. It was read by
+    # no adapter at all, so the request passed validation as an extension and submitted a
+    # plain text-to-video job: a fresh unrelated clip, billed, reported ok with
+    # meta.scene "video.extend".
+    uri = "https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media"
+    prov, fake = fake_provider("gemini/veo-3.1", [
+        {"name": "op"},
+        {"name": "op", "done": True,
+         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/E:download"}}]}}}],
+        options={"poll_interval": 0})
+    req = VideoRequest(prompt="carry on", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
+                       continue_from=MediaRef(uri, "continue_from"), duration=8)
+    assert derive_scene(req) is Scene.VIDEO_EXTEND
+    prov.generate_video(req)
+    assert fake.calls[0]["body"]["instances"][0]["video"] == {"uri": uri, "mimeType": "video/mp4"}
+
+
+def test_veo_continue_from_local_file_is_rejected(fake_provider, tmp_path):
+    clip = tmp_path / "src.mp4"
+    clip.write_bytes(b"FAKE-MP4")
+    prov, _ = fake_provider("gemini/veo-3.1", [{"name": "op"}])
+    with pytest.raises(MediaError) as ei:
+        prov.generate_video(VideoRequest(prompt="continue", output=tmp_path / "v.mp4",
+                                         model="veo-3.1-generate-preview",
+                                         continue_from=MediaRef(str(clip), "continue_from"), duration=8))
+    assert ei.value.category == ErrorCategory.VALIDATION and "uri" in ei.value.message.lower()
 
 
 def test_veo_extension_local_file_is_rejected(fake_provider, tmp_path):

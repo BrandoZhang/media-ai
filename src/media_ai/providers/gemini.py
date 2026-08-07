@@ -216,19 +216,27 @@ class GeminiAdapter(HttpAdapter):
             # Up to 3 asset references (person/character/product) preserved in the clip.
             instance["referenceImages"] = [{"image": _veo_media(r), "referenceType": "asset"}
                                            for r in req.reference_images]
-        if req.reference_videos:
-            # Veo extension continues a previously generated Veo clip, referenced by
-            # its URI (valid ~2 days). The API rejects inline video bytes for
-            # extension ("Video URI not found"), so a local file cannot be used here.
-            ref = req.reference_videos[0]
-            if ref.is_local:
+        # Veo extension continues a previously generated Veo clip, referenced by its URI
+        # (valid ~2 days). The API rejects inline video bytes for extension ("Video URI
+        # not found"), so a local file cannot be used here.
+        #
+        # `--continue-from` and `--reference-video` are two scenes (`video.extend` vs
+        # `video.reference_to_video`) but one wire field: Veo has a single input for "the
+        # clip to carry on from". continue_from is read first, matching derive_scene,
+        # which ranks it above references. It used to be read by nothing at all, so a
+        # `--continue-from` call passed validation as video.extend and then submitted a
+        # plain text-to-video request — a fresh, unrelated clip billed and returned as
+        # ok:true under meta.scene "video.extend".
+        clip = req.continue_from or (req.reference_videos[0] if req.reference_videos else None)
+        if clip is not None:
+            if clip.is_local:
                 raise MediaError(
                     "Veo video extension needs the URI of a previously generated Veo clip — pass the "
-                    "operation's video URI as --reference-video; the API does not accept an inline/local "
-                    "video for extension",
+                    "operation's video URI to --continue-from (or --reference-video); the API does not "
+                    "accept an inline/local video for extension",
                     category=ErrorCategory.VALIDATION, provider=self.name,
                 )
-            instance["video"] = {"uri": ref.raw, "mimeType": "video/mp4"}
+            instance["video"] = {"uri": clip.raw, "mimeType": "video/mp4"}
         params: dict = {}
         if req.geometry and req.geometry.aspect_ratio and req.geometry.aspect_ratio != "adaptive":
             params["aspectRatio"] = req.geometry.aspect_ratio
