@@ -99,6 +99,11 @@ allow a handful of speakers, others two. Check before writing a long script.
   `--instruction` and few option knobs, accent, pace, emotion and effects like
   `[laughs]` are written **into the text itself**. That is a per-binding technique —
   see its fragment under `references/bindings/`.
+- **In-text direction is not portable, and failing to port it is silent.** Which markup
+  a model understands — bracketed tags, break tags, a plain-language stage note — varies
+  per binding, and one that does not know a marker **speaks it** rather than refusing
+  it. Nothing errors and you are charged in full. Read the target binding's fragment
+  before moving a script between bindings.
 - **Keep total text within `constraints.audio.max_characters`.** Exceeding it is exit 3
   before the call, but only where the binding declares the cap.
 - **A silent safety drop is an error, not an empty file.** A 200-OK carrying no audio

@@ -40,11 +40,12 @@ media-ai speech generate --binding elevenlabs/eleven-multilingual-v2 \
 
 ## Traps
 
-- **Eleven v3 audio tags do not work here.** `[whispers]`, `[laughs]`, `[sighs]` are a v3
-  feature; this model speaks them or mangles them, and there is no error — you get a
-  charged, quietly wrong take. Emotional direction on this binding means choosing a
-  different voice, not annotating the text. For tagged performance use
-  `elevenlabs/eleven-v3`.
+- **Audio tags do not work here.** `[whispers]`, `[laughs]`, `[sighs]` are read as text
+  by this model — spoken or mangled, never refused, so you get a charged and quietly
+  wrong take. This is the one speech binding of the three that does *not* take them:
+  both `elevenlabs/eleven-v3` and `gemini/gemini-tts` do, which is exactly why a script
+  moved onto this one fails silently. Emotional direction here means casting a
+  different voice, not annotating the text.
 - **One voice, no dialogue.** It declares `dialogue = false`; a cast script is refused
   (exit 3) rather than flattened into a single narrator.
 - **Some formats are plan-gated.** `mp3_44100_192` needs Creator tier or above, and
