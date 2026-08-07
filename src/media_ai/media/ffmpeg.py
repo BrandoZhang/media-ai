@@ -34,6 +34,34 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    """Run ffmpeg with its stdin closed. **Every call site in this module goes through here.**
+
+    ``subprocess.run(capture_output=True)`` redirects only stdout and stderr, so a child
+    otherwise *inherits* — and may consume — whatever stdin the caller had: the rest of
+    the list in ``while read f; do media-ai … "$f"; done < list.txt``, or keystrokes typed
+    ahead at a terminal. ffmpeg enables interactive keyboard control on stdin by default,
+    which is why it ships ``-nostdin`` to turn it off.
+
+    This closes that hole rather than fixing a reproduction: the bundled ffmpeg 7.0.2 left
+    both a piped stdin and a type-ahead tty alone when measured. Whether an encoder reads
+    stdin is a question about its build and the conditions, and the answer is only
+    interesting if it is *no every time* — while the invariant here is flat. The CLI reads
+    no stdin of its own (inputs are named on argv, ``--output`` is required), so nothing it
+    spawns holds the caller's.
+
+    Both halves are deliberate: ``stdin=DEVNULL`` is what enforces it, in one place a new
+    call site cannot forget, and ``-nostdin`` says so on the command line that a failure
+    message prints.
+    """
+    return subprocess.run(
+        [ffmpeg_exe(), "-hide_banner", "-nostdin", *args],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
+
+
 def ffmpeg_exe() -> str:
     exe = shutil.which("ffmpeg")
     if exe:
@@ -50,8 +78,7 @@ def ffmpeg_exe() -> str:
 
 
 def run_ffmpeg(args: list[str]) -> None:
-    cmd = [ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", *args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = _run(["-y", "-loglevel", "error", *args])
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-8:]
         raise MediaError("ffmpeg failed:\n" + "\n".join(tail), category=ErrorCategory.IO)
@@ -72,8 +99,7 @@ def image_to_clip(image: Path, out: Path, *, seconds: int, fps: int, w: int, h: 
 def has_audio(path: Path) -> bool:
     """True if the file carries an audio stream (uses the bundled ffmpeg, no ffprobe)."""
     try:
-        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *LOCAL_ONLY_INPUT, "-i", str(path)],
-                              capture_output=True, text=True)
+        proc = _run([*LOCAL_ONLY_INPUT, "-i", str(path)])
     except Exception:  # noqa: BLE001 - treat probe failure as "no audio"
         return False
     return "Audio:" in (proc.stderr or "")
@@ -86,8 +112,7 @@ def probe_duration(path: Path) -> float:
     file, no ``Duration:`` line) — callers use it as a cost-accounting hint, never a
     hard dependency."""
     try:
-        proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *LOCAL_ONLY_INPUT, "-i", str(path)],
-                              capture_output=True, text=True)
+        proc = _run([*LOCAL_ONLY_INPUT, "-i", str(path)])
     except Exception:  # noqa: BLE001 - probe failure -> unknown duration
         return 0.0
     m = _DURATION_RE.search(proc.stderr or "")

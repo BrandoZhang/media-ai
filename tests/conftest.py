@@ -121,6 +121,19 @@ def _ledger(tmp_path, monkeypatch, request):
     return tmp_path / "usage.jsonl"
 
 
+@pytest.fixture(autouse=True)
+def _terminal_env(monkeypatch):
+    """Give every test one terminal environment, whatever the runner's own is.
+
+    ``CI`` and ``TERM=dumb`` now steer :func:`media_ai.cli._prompt.get_prompter` to the
+    non-interactive fallback — which is the point of them, and which would otherwise
+    make every pty test here fail on CI and pass on a laptop. The tests that exercise
+    that behaviour set the variables back explicitly.
+    """
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+
+
 @pytest.fixture
 def clean_registry():
     """Snapshot and restore the module-global binding catalog around a test."""

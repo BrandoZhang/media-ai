@@ -99,13 +99,22 @@ class TestDetailLines:
 # ------------------------------------------------------------- the clack rail
 
 
-def drawing():
+class TtyBuffer(io.StringIO):
+    """A capture buffer that answers ``isatty()`` the way the terminal it stands in for
+    would. Colour is gated on that, so a plain ``StringIO`` here would silently test the
+    piped branch while claiming to test the drawing."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def drawing(out=None):
     """A TerminalPrompter wired to a dead input and a capture buffer.
 
     Enough to assert on what it *draws* without a pty; the input half is covered by
-    the pty tests below.
+    the pty tests below. Pass a plain ``io.StringIO`` for the not-a-terminal case.
     """
-    out = io.StringIO()
+    out = TtyBuffer() if out is None else out
     return TerminalPrompter(open(os.devnull, "rb", buffering=0), out), out
 
 
@@ -513,6 +522,38 @@ def test_get_prompter_falls_back_without_tty(monkeypatch):
 
 def test_get_prompter_force_fallback():
     assert isinstance(get_prompter(force_fallback=True), FallbackPrompter)
+
+
+@pytest.mark.parametrize("var,value", [("CI", "true"), ("CI", "1"), ("TERM", "dumb")])
+def test_get_prompter_takes_the_fallback_when_nobody_is_watching(monkeypatch, var, value):
+    """A tty can exist with no one in front of it (``docker run -t``, a runner shell),
+    and ``TERM=dumb`` has no cursor addressing to draw the rail with. Neither is
+    detectable by asking whether stdin is a terminal, so both are read off the
+    environment — and the fallback fails deterministically instead of waiting."""
+    monkeypatch.setenv(var, value)
+    assert isinstance(get_prompter(), FallbackPrompter)
+
+
+def test_dumb_terminals_get_no_colour(monkeypatch):
+    """Not muted — *literal*: a terminal with no escape handling prints `ESC[36m`."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "dumb")
+    p, out = drawing()
+    p.intro("setup")
+    assert "\x1b" not in out.getvalue()
+
+
+def test_a_captured_stream_gets_no_colour_however_capable_the_env_claims_to_be(monkeypatch):
+    """The half that covers agents. A harness captures stderr through a pipe and passes
+    ``TERM`` through from the developer's shell, so the environment describes a terminal
+    that is not there — and escapes would land in the transcript as literal bytes. Only
+    the stream knows, which is why the decision is made from it."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    p, out = drawing(io.StringIO())  # a pipe, not a terminal
+    p.intro("setup")
+    p._write(p._option_row(Option("thing"), active=True, selected=False, multi=True) + "\n")
+    assert "\x1b" not in out.getvalue()
 
 
 def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):

@@ -39,6 +39,18 @@ Windows, which this project does not target (CI is ubuntu-only and nothing under
 ``src/`` branches on platform). :func:`get_prompter` degrades to a plain numbered-menu
 implementation whenever a real terminal is unavailable, so piped and CI invocations get
 deterministic behaviour instead of hanging.
+
+The environment gets a say, through the variables everything else already honours:
+``CI`` and ``TERM=dumb`` take the fallback however capable the terminal looks
+(:func:`_nobody_is_watching`), ``NO_COLOR`` and ``TERM=dumb`` drop the colour
+(:func:`_color_enabled`), and ``MEDIA_NO_TTY`` / ``MEDIA_ASCII`` are the local
+overrides for forcing each by hand.
+
+Colour is also gated on the stream itself being a terminal, which is the half that
+covers the agents: a harness captures stderr through a pipe while passing ``TERM``
+through unchanged, so the environment describes a terminal that is not there. What may
+never vary with the terminal is the *payload* — stdout is one JSON object either way.
+Presentation may (colour, the rail); anything a consumer would notice missing may not.
 """
 
 from __future__ import annotations
@@ -189,13 +201,31 @@ def glyphs_for(stream) -> Glyphs:
     return UNICODE
 
 
-def _color_enabled() -> bool:
-    # https://no-color.org — respected by enough tooling to be the expected knob.
-    return not os.getenv("NO_COLOR")
+def _color_enabled(stream=None) -> bool:
+    """Whether ANSI colour may be written to ``stream``.
+
+    Three answers, weakest last. ``NO_COLOR`` (https://no-color.org) is the cross-tool
+    knob, honoured for any non-empty value as that spec asks. ``TERM=dumb`` declares a
+    terminal with no escape handling, where colour is not muted but *literal* —
+    ``ESC[36m`` in the transcript.
+
+    And the one that actually covers the agents: **is this stream a terminal at all**
+    (the ``--color=auto`` rule). An agent harness hands its child a pipe while passing
+    ``TERM`` straight through from the developer's shell, so the environment says
+    ``xterm-256color`` about a stream nothing will ever render. Only the stream knows.
+
+    Read per call rather than cached: cheap, and a long-lived process (or a test) can
+    change its environment between renders.
+    """
+    if os.getenv("NO_COLOR"):
+        return False
+    if os.getenv("TERM", "") == "dumb":
+        return False
+    return stream is None or bool(getattr(stream, "isatty", lambda: False)())
 
 
-def _paint(text: str, code: str) -> str:
-    return text if not text or not _color_enabled() else f"{ESC}[{code}m{text}{ESC}[0m"
+def _sgr(text: str, code: str) -> str:
+    return text if not text else f"{ESC}[{code}m{text}{ESC}[0m"
 
 
 def _coerce(options: Sequence[Option | str]) -> list[Option]:
@@ -285,10 +315,17 @@ class TerminalPrompter:
         self._out = tty_out
         self._fd = tty_in.fileno()
         self._g = glyphs_for(tty_out)
+        #: Decided once, from the stream being drawn to — painting is a method rather
+        #: than a free function so that a colour decision cannot be made without one.
+        self._colour = _color_enabled(tty_out)
         self.questions = 0
         # How many rows below the start of the run the cursor sits. Kept exact so
         # `rewind` can un-draw whole steps when the user goes back; see `mark`.
         self._rows = 0
+
+    def _paint(self, text: str, code: str) -> str:
+        """Colour ``text``, if this prompter's stream takes colour at all."""
+        return _sgr(text, code) if self._colour else text
 
     # -- terminal plumbing ---------------------------------------------------
 
@@ -415,8 +452,8 @@ class TerminalPrompter:
         calculation, so the next redraw walks the cursor up by the wrong count.
         """
         body = self._fit(text, max(1, self._width() - _display_width(symbol) - 2))
-        painted = _paint(body, body_color) if body_color else body
-        return f"{_paint(symbol, color)}  {painted}" if body else _paint(symbol, color)
+        painted = self._paint(body, body_color) if body_color else body
+        return f"{self._paint(symbol, color)}  {painted}" if body else self._paint(symbol, color)
 
     def _step(self, symbol: str, title: str, color: str) -> list[str]:
         """A step's heading. Extra lines of a multi-line title hang under the rail."""
@@ -504,17 +541,17 @@ class TerminalPrompter:
             truncating a string with escapes in it both corrupts the sequence and
             miscounts the width."""
             fitted = self._fit(content, inner - 1)
-            return f"{_paint(g.bar, _DIM)}  {fitted}{' ' * (inner - _display_width(fitted) - 1)}{_paint(g.bar, _DIM)}"
+            return f"{self._paint(g.bar, _DIM)}  {fitted}{' ' * (inner - _display_width(fitted) - 1)}{self._paint(g.bar, _DIM)}"
 
         dashes = g.bar_h * max(1, inner - _display_width(title) - 2)
         lines = [
-            f"{_paint(g.step_submit, _CYAN)}  {title} {_paint(dashes + g.corner_tr, _DIM)}",
+            f"{self._paint(g.step_submit, _CYAN)}  {title} {self._paint(dashes + g.corner_tr, _DIM)}",
             row(),
             *(row(line) for line in body),
             row(),
             # inner + 1: the body rows carry two leading spaces and one leading rail,
             # so the closing edge sits one column further right than `inner` alone.
-            _paint(g.connect_left + g.bar_h * (inner + 1) + g.corner_br, _DIM),
+            self._paint(g.connect_left + g.bar_h * (inner + 1) + g.corner_br, _DIM),
         ]
         self._emit(lines)
 
@@ -540,22 +577,22 @@ class TerminalPrompter:
         space will do before it is pressed.
         """
         if not multi:
-            return (_paint(self._g.radio_on, _GREEN), "") if active else (_paint(self._g.radio_off, _DIM), _DIM)
+            return (self._paint(self._g.radio_on, _GREEN), "") if active else (self._paint(self._g.radio_off, _DIM), _DIM)
         if active and selected:
-            return _paint(self._g.check_on, _GREEN), ""
+            return self._paint(self._g.check_on, _GREEN), ""
         if active:
-            return _paint(self._g.check_off, _CYAN), ""
+            return self._paint(self._g.check_off, _CYAN), ""
         if selected:
-            return _paint(self._g.check_on, _GREEN), _DIM
-        return _paint(self._g.check_off, _DIM), _DIM
+            return self._paint(self._g.check_on, _GREEN), _DIM
+        return self._paint(self._g.check_off, _DIM), _DIM
 
     def _option_row(self, opt: Option, *, active: bool, selected: bool, multi: bool) -> str:
         glyph, label_color = self._mark(active=active, selected=selected, multi=multi)
         raw = self._g.check_off if multi else self._g.radio_off
         body = opt.label + (f"  ({opt.hint})" if opt.hint else "")
         room = max(1, self._width() - 3 - _display_width(raw) - 1)
-        painted = _paint(self._fit(body, room), label_color) if label_color else self._fit(body, room)
-        return f"{_paint(self._g.bar, _DIM)}  {glyph} {painted}"
+        painted = self._paint(self._fit(body, room), label_color) if label_color else self._fit(body, room)
+        return f"{self._paint(self._g.bar, _DIM)}  {glyph} {painted}"
 
     def _viewport(self, count: int, cursor: int, *, chrome: int = _CHROME_ROWS) -> tuple[int, int]:
         """Which slice of a long option list to show, keeping the cursor visible."""
@@ -656,9 +693,9 @@ class TerminalPrompter:
         self.questions += 1
         lines = self._step(self._g.step_active, title, _CYAN)
         if hint:
-            lines[0] += _paint(f"  {hint}", _DIM)
+            lines[0] += self._paint(f"  {hint}", _DIM)
         self._emit(lines)
-        self._write(f"{_paint(self._g.bar, _DIM)}  ")
+        self._write(f"{self._paint(self._g.bar, _DIM)}  ")
         self._rows += 1  # the input row the terminal is about to echo onto
         return read(), len(lines) + 1
 
@@ -712,7 +749,7 @@ class TerminalPrompter:
 
         def redraw() -> None:
             shown = self._g.mask * len(data.decode("utf-8", "ignore"))
-            self._write(f"\r{ESC}[2K{_paint(self._g.bar, _DIM)}  {shown}")
+            self._write(f"\r{ESC}[2K{self._paint(self._g.bar, _DIM)}  {shown}")
 
         try:
             with self._raw():
@@ -749,10 +786,10 @@ class TerminalPrompter:
         def draw() -> None:
             nonlocal drawn
             on, off = self._g.radio_on, self._g.radio_off
-            yes = f"{_paint(on, _GREEN)} Yes" if answer else f"{_paint(off, _DIM)} {_paint('Yes', _DIM)}"
-            no = f"{_paint(off, _DIM)} {_paint('No', _DIM)}" if answer else f"{_paint(on, _GREEN)} No"
+            yes = f"{self._paint(on, _GREEN)} Yes" if answer else f"{self._paint(off, _DIM)} {self._paint('Yes', _DIM)}"
+            no = f"{self._paint(off, _DIM)} {self._paint('No', _DIM)}" if answer else f"{self._paint(on, _GREEN)} No"
             lines = self._step(self._g.step_active, title, _CYAN)
-            lines.append(f"{_paint(self._g.bar, _DIM)}  {yes} / {no}")
+            lines.append(f"{self._paint(self._g.bar, _DIM)}  {yes} / {no}")
             lines.append(self._rail(self._g.bar, self._keys("y/n switch", arrows="left/right"), body_color=_DIM))
             lines.append(self._rail(self._g.bar_end))
             drawn = self._flush_frame(lines, drawn)
@@ -1020,13 +1057,27 @@ def run_steps(steps: Sequence, prompter) -> None:
 # ------------------------------------------------------------------------ factory
 
 
+def _nobody_is_watching() -> bool:
+    """True when nothing should try to be interactive, however capable the terminal is.
+
+    ``CI`` is set by every mainstream runner and answers a question a tty check cannot:
+    a terminal may well exist (``docker run -t``, an interactive runner shell) while
+    there is nobody in front of it to press a key. ``TERM=dumb`` answers the other one:
+    the rail is drawn with cursor addressing, which such a terminal does not have.
+
+    Both take the numbered-menu fallback, which fails deterministically on EOF instead
+    of waiting on an answer no one is going to give.
+    """
+    return bool(os.getenv("MEDIA_NO_TTY") or os.getenv("CI") or os.getenv("TERM", "") == "dumb")
+
+
 def get_prompter(*, force_fallback: bool = False) -> Prompter:
     """Pick the best prompter the environment can support.
 
     ``/dev/tty`` rather than stdin, so the wizard still works when invoked from
     ``curl … | bash`` — where the pipe owns stdin — and when stdout is redirected.
     """
-    if force_fallback or os.getenv("MEDIA_NO_TTY"):
+    if force_fallback or _nobody_is_watching():
         return FallbackPrompter()
     try:
         import termios  # noqa: F401 - POSIX check; absent on Windows
