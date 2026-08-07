@@ -12,20 +12,37 @@ pick it: you can argue about structure before paying for audio.
 
 ## Prompting
 
-**Short beats long.** A focused phrase — *"rainy day jazz café"* — reliably outperforms a
-paragraph, because a paragraph almost always contains two instructions that fight. Say
-the genre and mood first, then add at most a few layers.
+**Prompt length is a dial between creativity and control, not a quality setting.** The
+vendor is explicit that longer does not mean better — but also that *"more detailed
+prompts lead to greater control and expressiveness"*. Pick the end you want:
 
-> `[genre + mood] → [instrumentation] → [key / tempo] → [use or setting]`
+- **Short and evocative** — *"rainy day jazz café"*, *"eerie, foreboding"* — hands the
+  composition to the model. Use it when you want to be surprised.
+- **Detailed and musical** — *"dissonant violin screeches over a pulsing sub-bass, 140
+  BPM, in D minor"* — buys control. Use it when the track has to fit something.
 
-Three pieces of literal syntax the model acts on:
+Both registers work: abstract mood words and precise musical language are equally
+understood. What does not work is mixing two intents that contradict each other.
 
-- **`solo` before an instrument** isolates it — `solo piano in C minor`, `solo electric
-  guitar`. Without it you tend to get a full arrangement around the named instrument.
-- **`a cappella` before a vocal description** isolates voices — `a cappella female
-  vocals`.
+**Say the intent, not just the genre.** *"Track for a high-end mascara commercial,
+upbeat and polished"* gives the model structure and pacing that *"upbeat pop"* does not.
+
+Literal syntax the model acts on:
+
+- **`solo` before an instrument** — `solo piano in C minor`, `solo electric guitar`.
+- **`a cappella` before a vocal description** — `a cappella female vocals`.
+  Both of these are the vendor's stem-isolation levers; they buy you a cleaner
+  single-element track, which matters here because per-track stem separation is a
+  web-app feature and is not reachable through this CLI.
 - **Key, BPM and tone are read as written** — `a cappella vocals in A major, 90 BPM,
   soulful and raw`.
+- **Vocal delivery takes descriptors** — `raw`, `live`, `breathy`, `glitching`,
+  `aggressive` — and arrangements can be directed: `two singers harmonizing in C`.
+- **Timing cues place the vocal** — `lyrics begin at 15 seconds`,
+  `instrumental only after 1:45`.
+
+**You can supply the lyrics.** Paste the verse into the prompt and the model sets it
+against the requested length rather than writing its own.
 
 **For anything with sections, plan first.** `music plan` spends no credits and returns
 editable JSON; fix the section list, lengths and per-section styles there rather than
@@ -38,13 +55,15 @@ media-ai music plan --prompt "upbeat indie-pop, verse/chorus/bridge, ~2 min" \
 media-ai music generate --plan plan.json --seed 42 --output song.mp3
 ```
 
-- Want no vocals? `--option force_instrumental=true` is more reliable than writing
-  "instrumental" in the prompt.
 - Want the plan's section lengths honoured literally?
   `--option respect_sections_durations=true`.
 
 ## Traps
 
+- **It sings by default.** Most prompts produce vocals unless told otherwise, so
+  "background music for a product video" comes back with someone singing over it. Say
+  **`instrumental only`** in the prompt — the vendor's documented phrase — and/or set
+  `--option force_instrumental=true`. This is the single most common surprise here.
 - **`--seed` is plan mode only.** In prompt mode there is nothing to pin, so a prompt you
   liked is not re-renderable. If a take matters, keep the audio — or move to a plan.
 - **`--duration-ms` is prompt mode only.** In plan mode the length comes from the plan's
@@ -53,8 +72,12 @@ media-ai music generate --plan plan.json --seed 42 --output song.mp3
   multipart endpoint and writes a `<output>.metadata.json` sidecar carrying the
   composition plan actually used. That sidecar is the fastest way to find out why a
   track came out the way it did, and it is a second entry in `artifacts[]`.
-- Lyrics are not a separate field. Vocal content is described in the prompt or placed
-  in the plan; there is no flag that guarantees a given line is sung.
+- Lyrics are not a separate field — they go in the prompt text or the plan. Supplying
+  them is well supported (and multilingual), but nothing *guarantees* a given line is
+  sung as written; check the take, or use a plan when the words matter.
+- **Omitting `--duration-ms` is a real mode**, not a missing argument: the model picks a
+  length and writes lyrics to fit it. State the length only when something downstream
+  needs it.
 - Cost is metered in the `speech_characters` ledger field like other audio ops, so a
   batch of long tracks shows up where you might not look for it — check `media-ai usage`.
 
@@ -63,6 +86,7 @@ media-ai music generate --plan plan.json --seed 42 --output song.mp3
 Vendor guides. They describe the model, not this CLI — flag names, limits and the
 machine contract above are what `capabilities` says, whatever these pages show.
 
-- Music best practices (prompt structure, isolation syntax) —
+- Music best practices (prompt structure, isolation syntax, timing cues) —
   <https://elevenlabs.io/docs/overview/capabilities/music/best-practices>
-- Music overview — <https://elevenlabs.io/docs/eleven-creative/products/music>
+- Composition plans — section structure, global vs local styles, lyric formatting —
+  <https://elevenlabs.io/docs/eleven-api/guides/how-to/music/composition-plans>
