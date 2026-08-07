@@ -28,6 +28,11 @@ does *not* mean: enumerating many concrete objects works fine — the vendor's o
 examples describe a dozen items on a desk, each with its own detail. Be brief with
 *style words*, not with *content*.
 
+There is still a ceiling: the vendor's working limit is about **300 Chinese characters
+or 600 English words**. Past that, attention spreads and the model quietly drops
+elements rather than refusing the request — a long prompt fails by omission, which is
+hard to spot when the picture still looks good.
+
 **Say what the picture is for.** *"设计一个游戏公司的 logo，主体是…"* outperforms
 *"一张抽象图片，狗拿着游戏手柄"*. Naming the artefact type sets layout and polish in one
 phrase.
@@ -61,6 +66,13 @@ media-ai image edit --binding volc-ark/seedream-4.5 --reference marked.png \
 
 This is the positional control available here, and it is *not* the same mechanism as
 5.0 Pro's coordinates — see Traps.
+
+> Two vendor documents disagree in a way worth knowing about. The prompt guide teaches
+> mark-based editing for this model with worked examples; the capability matrix lists
+> 交互编辑 — the *named feature*, coordinates and picker tooling included — as 5.0 Pro
+> only. The reading that fits both: an annotated image plus prose needs no API feature
+> and is taught here, while the coordinate protocol is Pro's. Treat marks as a
+> documented technique rather than a guaranteed capability, and check the output.
 
 ### References: say what to keep, then say what to make
 

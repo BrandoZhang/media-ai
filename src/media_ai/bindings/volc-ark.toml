@@ -62,7 +62,10 @@ grounding        = false
 
 [binding.constraints.geometry]
 mode            = "both"
-named_sizes     = ["1K", "2K"]
+# 1.5K is documented alongside 1K and 2K and was missing here, so `--resolution 1.5K`
+# was refused locally for a tier the API accepts. The vendor prices it the same as 1K
+# and calls its output better, which makes the omission the expensive kind.
+named_sizes     = ["1K", "1.5K", "2K"]
 pixel_total_min = 921600
 pixel_total_max = 4624220
 ratio_range     = [0.0625, 16.0]

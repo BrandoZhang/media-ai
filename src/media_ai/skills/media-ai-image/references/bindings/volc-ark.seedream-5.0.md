@@ -11,7 +11,9 @@ short form:
 - **A coherent sentence, not a tag list** — *subject + action + setting*, with style,
   colour, light and composition as an optional layer on top.
 - **Concise beats ornate.** Adjective-stacking makes results worse. Enumerating many
-  concrete objects does not — be brief with style words, not with content.
+  concrete objects does not — be brief with style words, not with content. The vendor's
+  working ceiling is about **300 Chinese characters or 600 English words**; past that
+  the model starts dropping elements rather than failing.
 - **Name what the picture is for** (a logo, a poster, an infographic); it sets layout
   and polish in one phrase.
 - **Quote text that must appear in the image**; unquoted, it comes back paraphrased.
@@ -66,5 +68,6 @@ Vendor prompt guide. It describes the model, not this CLI — flag names, limits
 machine contract above are what `capabilities` says, whatever that page shows.
 
 - 火山方舟《Seedream 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
-  (its body is written against 5.0 lite, 4.5 and 4.0 — **not** this model. The family
-  conventions above carry, but treat anything version-specific there with care.)
+  (written against "5.0 lite", 4.5 and 4.0 — **this binding is the lite model**: the
+  vendor lists `doubao-seedream-5-0-260128` under that name, so the guide covers it
+  directly.)
