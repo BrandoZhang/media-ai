@@ -5,28 +5,29 @@
 
 ## Prompting
 
-The Seedream family reads a **layered description**, not a keyword list. Stack the
-layers in this order and stop wherever you have said enough:
+The family conventions are written out in full in `volc-ark.seedream-4.5.md`. The
+short form:
 
-> `[subject] + [what it is doing] + [environment] + [composition & camera] + [light] + [style]`
-
-Chinese and English prompts both work, and the vendor's own guide and examples are
-written in Chinese — worth matching when a prompt is not behaving. For text *in* the
-picture, quote the literal string; unquoted text is treated as a description and comes
-back paraphrased.
-
-- **For a group, describe the axis of variation** — *"same character, four seasons"*,
-  *"same bottle, four angles"* — rather than repeating the subject. See below: `--count`
-  generates the set *as a set*, which is why it stays coherent where four separate calls
-  would not.
-- **With several references, number them.** They keep their input order on the wire, so
-  "image 1"/"image 2" in the prompt resolves as written.
+- **A coherent sentence, not a tag list** — *subject + action + setting*, with style,
+  colour, light and composition as an optional layer on top.
+- **Concise beats ornate.** Adjective-stacking makes results worse. Enumerating many
+  concrete objects does not — be brief with style words, not with content.
+- **Name what the picture is for** (a logo, a poster, an infographic); it sets layout
+  and polish in one phrase.
+- **Quote text that must appear in the image**; unquoted, it comes back paraphrased.
+- **When editing, name what must stay** ("保持动作不变") and never refer to the target
+  with a bare pronoun.
+- **With several references, address them by position** — `图一`/`图二`, "image 1"/"image
+  2". They keep their input order on the wire, so this resolves as written.
+- **Mark up the reference** — arrow, box, scribble — and refer to the mark by colour or
+  shape when a region is easier to point at than to describe.
 - **Describe presence, not absence.** No Seedream binding declares `negative_prompt`,
   so `--negative-prompt` is refused (exit 3). Say what should be in the frame — *"a bare
   concrete wall"* — rather than what should not.
 - **Coordinate direction is not available here.** `<bbox>`/`<point>` tags belong to
   5.0 Pro; this binding declares `interactive_edit = false` and the CLI refuses the
-  combination rather than letting them be read as literal text.
+  combination rather than letting them be read as literal text. Marking up the image,
+  above, is the substitute.
 
 ## Grouped image generation
 
@@ -35,6 +36,10 @@ Use `--count` to ask for a coherent set. It maps to Ark's
 `artifacts[]`, with later images marked `role: "group"`. References and generated
 images share the binding's total-image budget, so query capabilities before choosing a
 large set.
+
+In the prompt, name the **axis of variation** rather than repeating the subject — the
+vendor's own triggers are words like *"一系列"*, *"一套"*, *"组图"* or an explicit count,
+followed by what differs across the set.
 
 ```bash
 media-ai image edit --binding volc-ark/seedream-5.0 \
@@ -60,4 +65,6 @@ available when a signed URL cannot be fetched from the calling network.
 Vendor prompt guide. It describes the model, not this CLI — flag names, limits and the
 machine contract above are what `capabilities` says, whatever that page shows.
 
-- 火山方舟《Seedream 4.0-5.0 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
+- 火山方舟《Seedream 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
+  (its body is written against 5.0 lite, 4.5 and 4.0 — **not** this model. The family
+  conventions above carry, but treat anything version-specific there with care.)

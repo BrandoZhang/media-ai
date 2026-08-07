@@ -9,12 +9,24 @@ Precise placement and element control, and native text rendering in 14 languages
 beyond English and Chinese. The one binding in the set that can be *directed by
 coordinates*.
 
+## Prompting
+
+The family conventions are written out in full in `volc-ark.seedream-4.5.md` and all
+apply here. The short form: a coherent sentence (*subject + action + setting*) rather
+than a tag list; concise style words but as much concrete content as you need; name what
+the picture is for; quote any text that must render; when editing, name what must stay
+and never point with a bare pronoun; address multiple references by position
+(`图一`/`图二`). `--negative-prompt` is refused on every Seedream binding, so describe
+presence rather than absence.
+
 ## Interactive editing — the reason to pick this one
 
-Two ways to say **where**, both inside `--prompt`:
+Two ways to say **where**, both inside `--prompt`. Only the second is exclusive to this
+binding:
 
 **Marks on the image.** Draw on the reference — circle, arrow, scribble — then describe
-the mark in words:
+the mark in words. This works across the Seedream family, not just here; it needs no
+declared support because it is only an annotated image plus prose.
 
 ```bash
 media-ai image generate --binding volc-ark/seedream-5.0-pro \
@@ -49,4 +61,7 @@ reference across multiple inputs:
 Vendor prompt guide. It describes the model, not this CLI — flag names, limits and the
 machine contract above are what `capabilities` says, whatever that page shows.
 
-- 火山方舟《Seedream 4.0-5.0 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
+- 火山方舟《Seedream 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
+  (its body is written against 5.0 lite, 4.5 and 4.0 — **not** this model. The family
+  conventions above carry, but treat anything version-specific there with care, and note
+  it documents no coordinate syntax: that is this binding's own.)
