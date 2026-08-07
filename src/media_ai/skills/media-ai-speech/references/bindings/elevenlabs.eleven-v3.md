@@ -22,6 +22,32 @@ media-ai speech dialogue --binding elevenlabs/eleven-v3 \
 which is what makes subtitle timing and per-speaker cutting possible without a
 second pass.
 
+## Prompting — the direction is inside the line
+
+**Audio tags in lowercase square brackets** are this model's whole performance
+language, written inline in the turn text: emotions (`[curious]`, `[crying]`), delivery
+(`[whispers]`, `[shouts]`), reactions (`[laughs]`, `[sighs]`).
+
+```bash
+--turn Ana "[whispers] Did you see the numbers?" \
+--turn Ben "[laughs] I did — [excited] they're up thirty percent!"
+```
+
+Four rules that decide whether they land:
+
+- **The voice has to be able to do it.** A tag fights the voice's own character rather
+  than overriding it — `[whispers]` on a voice sampled shouting mostly fails. Casting is
+  the first parameter, not the last.
+- **Give it room.** Very short text produces inconsistent delivery; it is worth pushing
+  past roughly 250 characters before judging a take. A one-line test is not a test.
+- **Punctuation still does the pacing.** Ellipses trail off, commas and full stops
+  create natural breaths, an exclamation mark lifts to excitement.
+- **Capitalisation is emphasis.** Upper case reads as raised volume or stress — useful
+  in small doses, shouty in large ones.
+
+Tags are not a closed vocabulary; unusual ones sometimes work and sometimes come out
+spoken. Listen to the take before shipping a script full of them.
+
 ## Traps
 
 - **No `--instruction`.** There is no dialogue-wide director note here; it is refused
@@ -34,4 +60,14 @@ second pass.
   assuming the set matches another ElevenLabs binding.
 - Cost is per character across the whole script, cast list included where it is
   spoken. Long dialogues are the expensive case here — check `media-ai usage` after a
-  batch.
+  batch. **Audio tags are characters too**, so a heavily annotated script costs more
+  than it reads.
+
+## Further reading
+
+Vendor guides. They describe the model, not this CLI — flag names, limits and the
+machine contract above are what `capabilities` says, whatever these pages show.
+
+- Prompting Eleven v3 (audio tags, pacing, multi-speaker) —
+  <https://elevenlabs.io/docs/best-practices/prompting/eleven-v3>
+- Text to dialogue — <https://elevenlabs.io/docs/overview/capabilities/text-to-dialogue>

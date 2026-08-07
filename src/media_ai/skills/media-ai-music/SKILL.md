@@ -85,3 +85,10 @@ media-ai music plan \
 - `music plan` spends **no credits** — use it to iterate before generating audio.
 - Cost is metered like other audio ops (`speech_characters` ledger field) — see
   `media-ai-usage`.
+
+## References
+
+- `references/bindings/<provider>.<model>.md` — what one binding is good at, how to
+  prompt it, and its traps. Only bindings with something non-obvious to say have one.
+- `../media-ai-shared/references/bindings.md` — how to read `bindings list` /
+  `capabilities` output and pick between candidates.

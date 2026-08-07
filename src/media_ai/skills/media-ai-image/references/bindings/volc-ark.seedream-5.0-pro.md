@@ -43,3 +43,10 @@ reference across multiple inputs:
   default and is worth keeping unless latency is the complaint.
 - Its pixel floor is lower than 4.5's — a size 4.5 would coarsen to a preset is
   accepted here as-is.
+
+## Further reading
+
+Vendor prompt guide. It describes the model, not this CLI — flag names, limits and the
+machine contract above are what `capabilities` says, whatever that page shows.
+
+- 火山方舟《Seedream 4.0-5.0 提示词指南》 — <https://www.volcengine.com/docs/82379/1829186>
