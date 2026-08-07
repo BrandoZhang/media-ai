@@ -48,6 +48,10 @@ inside a single prompt rather than generating and concatenating:
 Keep the segments inside the clip's actual duration — segments past the end are simply
 not rendered, and nothing warns you.
 
+**This is a Veo feature, not a video-prompting convention.** Seedance's vendor guide
+states the opposite for its own models — explicit timings destabilise the generation
+there, and a shot list is the supported form. A prompt does not port between the two.
+
 **Camera vocabulary is literal**: dolly in, tracking shot, crane shot, whip pan, POV,
 low angle, two-shot, shallow depth of field, macro. These land; "cinematic" does not.
 

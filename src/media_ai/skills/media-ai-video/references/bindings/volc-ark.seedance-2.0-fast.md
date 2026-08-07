@@ -12,10 +12,14 @@ argued into shape before the final render. Prompts written here carry over to
 
 ## Prompting
 
-Same structure as Seedance 2.0 — see `volc-ark.seedance-2.0.md` for the full form:
+**Identical to Seedance 2.0 — read `volc-ark.seedance-2.0.md` for the whole thing**, and
+in particular for the parts that are literal syntax rather than style: subject labels
+and the `@图片N` binding form, the `镜头1/2/3` shot list (**with no explicit
+timecodes**), and the four punctuation marks that mark music, sound effects, spoken
+lines and subtitles.
 
-> `[subject] + [environment] + [action] + [camera move] + [beat-by-beat timing] +
-> [transitions] + [sound] + [style]`
+> `[subject] + [action detail] + [setting] + [light & colour] + [camera] + [visual
+> style] + [image quality] + [constraints]`
 
 Two habits specific to using this as the draft pass:
 
@@ -45,9 +49,9 @@ Two habits specific to using this as the draft pass:
 
 ## Further reading
 
-Vendor prompt guides. They describe the model, not this CLI — flag names, limits and
-the machine contract above are what `capabilities` says, whatever these pages show.
+Vendor prompt guide — it covers the whole 2.0 series, this binding included. It
+describes the model, not this CLI: flag names, limits and the machine contract above
+are what `capabilities` says, whatever that page shows.
 
-- 火山方舟 视频生成文档（含《Doubao Seedance 2.0 系列提示词指南》） —
-  <https://www.volcengine.com/docs/82379/1366799>
-- 《Seedance 2.0 文生视频提示词编写指南》 — <https://www.volcengine.com/article/40840>
+- 火山方舟《Doubao Seedance 2.0 系列提示词指南》 —
+  <https://www.volcengine.com/docs/82379/2222480>
