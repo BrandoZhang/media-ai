@@ -135,6 +135,24 @@ def test_video_content_roles_and_optional_fields(fake_provider, tmp_path):
     assert handle.to_dict()["status"] == "queued" and handle.id == "task-1"
 
 
+@pytest.mark.parametrize("binding", ["volc-ark/seedance-2.0", "volc-ark/seedance-2.0-fast"])
+def test_seedance_refuses_negative_prompt_instead_of_dropping_it(binding, tmp_path):
+    """Both Seedance bindings declared `negative_prompt` while `_create_task` never read it.
+
+    A `--negative-prompt` call therefore passed validation, reached the API without it,
+    and billed a clip reported ok:true that had ignored the request. Ark documents no
+    negative-prompt field for Seedance — constraint clauses go in the prompt — so the
+    flag is refused rather than silently honoured-in-name.
+    """
+    prov = adapter_for(binding)
+    req = VideoRequest(prompt="a cat", output=tmp_path / "v.mp4",
+                       negative_prompt="no text, no watermark", wait=False)
+    with pytest.raises(MediaError) as ei:
+        validate_request(req, prov.constraints, binding=binding)
+    assert ei.value.category is ErrorCategory.UNSUPPORTED
+    assert "negative-prompt" in ei.value.message
+
+
 def test_create_task_omits_seed_and_audio_when_unset(fake_provider, tmp_path):
     ff = tmp_path / "ff.png"
     ff.write_bytes(PNG_1x1_BYTES)

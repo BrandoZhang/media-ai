@@ -147,7 +147,9 @@ options = ["loop", "prompt_influence"]
 seed = false
 
 [binding.constraints.audio]
-duration_s = [0.5, 30.0]
+# The vendor documents 0.1–30s. The floor was 0.5 here, which refused sub-half-second
+# one-shots — UI ticks, a single footstep — that the API accepts.
+duration_s = [0.1, 30.0]
 formats = [
   "mp3_22050_32", "mp3_24000_48", "mp3_44100_32", "mp3_44100_64", "mp3_44100_96",
   "mp3_44100_128", "mp3_44100_192", "pcm_8000", "pcm_16000", "pcm_22050", "pcm_24000",

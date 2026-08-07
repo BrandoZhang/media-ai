@@ -57,6 +57,14 @@ media-ai capabilities --scene video.image_to_video   # who can do this at all?
 media-ai capabilities --binding <id> --pretty        # what does that one accept?
 ```
 
+**Prompt syntax differs too, and `capabilities` cannot express it.** How a model wants
+a shot described — whether timing is stated or implied, how a spoken line is marked,
+how a reference is addressed — is per binding, and the conventions genuinely conflict:
+a construct one model documents is one another documents against. Nothing validates
+prose, so a prompt written for the wrong binding is accepted, billed, and comes back
+subtly wrong. Read `references/bindings/<provider>.<model>.md` before writing the
+prompt, and re-read it before moving a prompt to a different binding.
+
 ## Async: `--wait`
 
 - `--wait true` (**default**) — the CLI blocks, polls the task to completion, and
