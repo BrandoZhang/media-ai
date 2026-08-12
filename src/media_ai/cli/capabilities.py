@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..brand import cli_name
 from ..core.config import load_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
@@ -23,7 +24,7 @@ from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai capabilities", description="Describe the available bindings.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} capabilities", description="Describe the available bindings.")
     ap.add_argument("--scene", default=None, help="only bindings serving this scene, e.g. video.image_to_video")
     ap.add_argument("--configured", action="store_true", help="only bindings usable right now")
     common.add_global_args(ap)

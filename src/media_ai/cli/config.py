@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..brand import cli_name, cmd
 from ..core.config import config_path, load_config, save_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
@@ -16,11 +17,11 @@ from ..core.resolve import available_bindings
 from ..core.result import SCHEMA_VERSION
 from ..core.scene import Scene
 from . import common
-from .bindings import CONFIG_HEADER
+from .bindings import config_header
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai config", description="Show or change configuration.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} config", description="Show or change configuration.")
     sub = ap.add_subparsers(dest="op", required=True)
     common.add_global_args(sub.add_parser("show", help="show configured bindings and scene defaults"))
     sd = sub.add_parser("set-default", help="which binding a scene uses when none is named")
@@ -77,7 +78,7 @@ def _set_default(args) -> dict:
             f"binding {args.binding!r} is not configured, so it cannot be a default",
             category=ErrorCategory.CLI, code="binding_not_configured",
             details={"configured": sorted(available)},
-            hint=f"media-ai bindings add {args.binding} --credential env://…",
+            hint=f"{cmd('bindings', 'add', args.binding)} --credential env://…",
         )
 
     unsupported = [s.value for s in scenes if s not in rb.spec.scenes]
@@ -93,7 +94,7 @@ def _set_default(args) -> dict:
     for scene in scenes:
         defaults[scene.value] = args.binding
     updated = type(config)(bindings=dict(config.bindings), defaults=defaults, path=config.path, exists=True)
-    saved = save_config(updated, header=CONFIG_HEADER)
+    saved = save_config(updated, header=config_header())
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "binding": args.binding,

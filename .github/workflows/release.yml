@@ -160,8 +160,14 @@ jobs:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
-          got="$(uv run media-ai --version)"
-          [ "$got" = "media-ai $VERSION" ] || { echo "::error::CLI reports '$got'"; exit 1; }
+          # The command's name is a build-time constant (src/media_ai/brand.py), pinned
+          # to this key by tests/test_brand.py. Read it rather than spelling it out, so
+          # a rebranded fork's first release does not fail on an assertion about a name
+          # it deliberately changed.
+          cli="$(uv run python -c 'import tomllib,pathlib;
+          print(next(iter(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["scripts"])))')"
+          got="$(uv run "$cli" --version)"
+          [ "$got" = "$cli $VERSION" ] || { echo "::error::CLI reports '$got', expected '$cli $VERSION'"; exit 1; }
 
       - name: Build the distributions
         if: steps.plan.outputs.release == 'true'

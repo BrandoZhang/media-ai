@@ -2,8 +2,8 @@
 how they come back out.
 
 :mod:`media_ai.cli._discovery` covers what ships *inside* the package. This is the
-other half — the copies ``media-ai init`` writes into an agent's skills directory and
-``media-ai uninstall`` removes.
+other half — the copies ``init`` writes into an agent's skills directory and
+``uninstall`` removes.
 
 Uninstall needs to find those copies, and the destinations are open-ended (several
 agent conventions × user or project level, plus any custom path the wizard was
@@ -13,10 +13,11 @@ a small non-secret receipt beside ``config.toml`` naming every directory written
 The conventional locations are still scanned as well, so a hand-copied skill — or one
 installed before the receipt existed — is still found.
 
-Removal is deliberately narrow. It touches only ``media-ai-*`` directories that hold
+Removal is deliberately narrow. It touches only ``<brand>-*`` directories that hold
 a ``SKILL.md``, refuses anything else, and unlinks rather than deletes through a
-symlink (the manual install documented in ``skills/README.md`` symlinks the packaged
-directories, and following one would delete the user's checkout).
+symlink — installing by symlink is no longer supported (the packaged tree is a
+template), but links left over from when it was must still come out, and following one
+would delete the user's checkout.
 """
 
 from __future__ import annotations
@@ -28,14 +29,17 @@ from functools import cache
 from pathlib import Path
 
 from .. import __version__
+from ..brand import cli_name, skill_prefix
 from ..core.config import config_path
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..credentials.tomlwrite import dumps, write_public
-from ._discovery import SKILL_PREFIX, skill_root
+from ._discovery import skill_root
+from ._render import render
 
 __all__ = [
     "SKILL_DESTS",
+    "receipt_header",
     "copy_skill",
     "installed_skills",
     "known_dests",
@@ -73,12 +77,21 @@ SKILL_DESTS = (
     AgentDir("openclaw", ".openclaw/skills", "OpenClaw", "OpenClaw"),
 )
 
-RECEIPT_HEADER = (
-    "media-ai skill install receipt — written by `media-ai init`.\n"
-    "NON-SECRET. Records where Agent Skills were copied so `media-ai uninstall`\n"
-    "can find them again, including custom paths. Safe to delete; uninstall then\n"
-    "falls back to scanning the conventional locations."
-)
+
+def receipt_header() -> str:
+    """The comment block at the top of the install receipt.
+
+    A function rather than a constant because it names the CLI, and a module-level
+    constant would freeze the brand at import time — invisible in the default build and
+    wrong in exactly the case this indirection exists for.
+    """
+    cli = cli_name()
+    return (
+        f"{cli} skill install receipt — written by `{cli} init`.\n"
+        f"NON-SECRET. Records where Agent Skills were copied so `{cli} uninstall`\n"
+        "can find them again, including custom paths. Safe to delete; uninstall then\n"
+        "falls back to scanning the conventional locations."
+    )
 
 
 def known_dests() -> list[Path]:
@@ -148,7 +161,7 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
                     shutil.rmtree(target)
                 elif target.is_symlink():
                     target.unlink()
-                target.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
+                target.write_text(render(entry.read_text(encoding="utf-8")), encoding="utf-8")
                 written.append(target)
         for stale in out.iterdir():
             if stale.name not in packaged:
@@ -159,14 +172,27 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
 
 
 @cache
-def _packaged_tree(name: str) -> dict[str, str]:
-    """The packaged skill's files, read once per process.
+def _packaged_source(name: str) -> dict[str, str]:
+    """The packaged skill's files **as templates**, read once per process.
 
     Every (destination, skill) pair compares against the same packaged tree, and it
     may live inside a zip — re-reading it per pair turns a ten-skill install into
-    twenty reads of the same files.
+    twenty reads of the same files. Cached unrendered so the cache cannot outlive a
+    change of brand; rendering it again is a string substitution over a handful of
+    small files, which is not what this cache was protecting.
     """
     return _tree(skill_root(name))
+
+
+def _packaged_tree(name: str) -> dict[str, str]:
+    """What an up-to-date install of ``name`` looks like on disk.
+
+    Rendered, because that is what :func:`copy_skill` writes. Comparing the raw
+    templates instead would report every installed skill as modified forever, and
+    ``copy_skill`` is a sync — so the installer would re-ask, on every run, about a
+    collision that updating cannot resolve.
+    """
+    return {path: render(text) for path, text in _packaged_source(name).items()}
 
 
 def _tree(root) -> dict[str, str]:
@@ -195,13 +221,16 @@ def skill_is_current(dest: Path, name: str) -> bool:
 
     This is what makes re-running the installer quiet: a skill that already matches
     is neither written nor asked about, so a second run with nothing to change asks
-    nothing and touches nothing. A symlink that resolves is current by construction —
-    it *is* the packaged directory; a dangling one is not current, it is broken, and
-    reporting it as fine would leave `doctor` blessing a skill the agent cannot read.
+    nothing and touches nothing.
+
+    A symlink used to be current by construction — it *was* the packaged directory.
+    That stopped being true when the packaged tree became a template: a link to it puts
+    a literal ``{{cli}}`` in front of the agent, so it is compared like anything else
+    and comes back not-current, which is the honest answer. A dangling link fails the
+    read below and lands in the same place, rather than `doctor` blessing a skill the
+    agent cannot read.
     """
     target = dest / name
-    if target.is_symlink():
-        return target.exists()
     if not target.is_dir():
         return False
     try:
@@ -212,7 +241,7 @@ def skill_is_current(dest: Path, name: str) -> bool:
 
 
 def installed_skills(dest: Path) -> list[str]:
-    """The ``media-ai-*`` skills present in ``dest``, sorted.
+    """The ``<brand>-*`` skills present in ``dest``, sorted.
 
     A dangling symlink counts: it was installed by hand and should still be
     removable. Anything else must carry a ``SKILL.md`` to be recognised, so an
@@ -225,7 +254,7 @@ def installed_skills(dest: Path) -> list[str]:
     return [
         p.name
         for p in entries
-        if p.name.startswith(SKILL_PREFIX) and (p.is_symlink() or (p.is_dir() and (p / "SKILL.md").is_file()))
+        if p.name.startswith(skill_prefix()) and (p.is_symlink() or (p.is_dir() and (p / "SKILL.md").is_file()))
     ]
 
 
@@ -235,12 +264,21 @@ def installed_skills(dest: Path) -> list[str]:
 def remove_skill(dest: Path, name: str) -> bool:
     """Delete one installed skill; returns whether anything was there to delete.
 
-    Refuses a name that is not a ``media-ai-*`` leaf, and refuses a directory with no
+    Refuses a name that is not a ``<brand>-*`` leaf, and refuses a directory with no
     ``SKILL.md`` in it — a wrong ``--skills-dest`` should fail loudly, not recursively
     delete whatever it was pointed at.
+
+    Because the prefix is branded, this is also what scopes an uninstall to **its own**
+    build: a ``foo`` install will not remove the ``media-ai-*`` skills sitting beside it,
+    which is what lets two brands share an agent's skills directory. The other build's
+    copies are removed by running *its* ``uninstall`` — nothing here can safely delete a
+    directory it has no evidence it wrote.
     """
-    if not name.startswith(SKILL_PREFIX) or "/" in name or name in ("", ".", ".."):
-        raise MediaError(f"refusing to remove {name!r}: not a media-ai skill directory", category=ErrorCategory.CLI)
+    prefix = skill_prefix()
+    if not name.startswith(prefix) or "/" in name or name in ("", ".", ".."):
+        raise MediaError(
+            f"refusing to remove {name!r}: not a {prefix}* skill directory", category=ErrorCategory.CLI
+        )
     target = dest / name
     if target.is_symlink():
         target.unlink()  # never rmtree through a link: the target may be a git checkout
@@ -319,7 +357,7 @@ def _write_receipt(entries: dict[str, dict]) -> Path | None:
         path.unlink(missing_ok=True)
         return None
     try:
-        write_public(path, dumps({"dests": entries}, header=RECEIPT_HEADER))
+        write_public(path, dumps({"dests": entries}, header=receipt_header()))
     except OSError as exc:  # an unwritable receipt must not fail the install
         get_logger().warning("could not write install receipt %s: %s", path, exc)
         return None

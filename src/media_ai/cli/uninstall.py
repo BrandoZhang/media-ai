@@ -1,7 +1,7 @@
-"""``media-ai uninstall`` — undo what ``media-ai init`` wrote.
+"""``<cli> uninstall`` — undo what ``<cli> init`` wrote.
 
 Installing is only half a lifecycle. ``init`` copies skill directories into several
-agent conventions at once and writes two files under ``~/.config/media-ai``; without
+agent conventions at once and writes two files under ``~/.config/<brand>``; without
 this command the only way back is to remember all of that and delete it by hand.
 
 Two rules shape it:
@@ -15,7 +15,7 @@ Two rules shape it:
   worth having, and is tracked separately; ``--keep-config`` is the escape hatch until
   then, and the confirmation is asked with the paths spelled out.)
 - **Nothing is removed that was not recognisably installed.** Every deletion goes
-  through :mod:`media_ai.cli._skillstore`, which touches only ``media-ai-*``
+  through :mod:`media_ai.cli._skillstore`, which touches only ``<brand>-*``
   directories carrying a ``SKILL.md``, and unlinks symlinks rather than following
   them. A wrong ``--skills-dest`` fails loudly instead of recursing.
 
@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
+from ..brand import cli_name, dist_name
 from ..core.config import config_path
 from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
@@ -158,7 +159,7 @@ def _ask_skills(args, prompter, choices: _Choices) -> None:
         return
     options = _dest_choices(found)
     picked = set(prompter.multiselect(
-        "Remove the media-ai skills installed here?", options, preselected=list(range(len(options))),
+        f"Remove the {cli_name()} skills installed here?", options, preselected=list(range(len(options))),
     ))
     choices.kept = [str(dest) for i, (dest, _) in enumerate(found) if i not in picked]
     choices.skills = [entry for i, entry in enumerate(found) if i in picked]
@@ -184,7 +185,7 @@ def _uninstall(args, prompter) -> dict:
     the previous question — both because the question half touches nothing. A
     half-answered uninstall would be the worst of the available states.
     """
-    prompter.intro("media-ai uninstall")
+    prompter.intro(f"{cli_name()} uninstall")
     summary: dict = {
         "ok": True, "schema_version": SCHEMA_VERSION, "command": "uninstall",
         "skills": [], "removed": [], "kept": [], "dry_run": bool(args.dry_run),
@@ -232,8 +233,8 @@ def _remove_cli_hint() -> str:
     """
     parts = Path(sys.prefix).resolve().parts
     if "uv" in parts and "tools" in parts:
-        return "uv tool uninstall media-ai"
-    return "pip uninstall media-ai"
+        return f"uv tool uninstall {dist_name()}"
+    return f"pip uninstall {dist_name()}"
 
 
 def _report(summary: dict, prompter) -> None:
@@ -245,7 +246,7 @@ def _report(summary: dict, prompter) -> None:
         prompter.note(f"{verb} {path}")
     for path in summary["kept"]:
         prompter.note(f"kept    {path}")
-    prompter.note(f"\nThe media-ai CLI itself is still installed. To remove it:\n  {summary['remove_cli']}")
+    prompter.note(f"\nThe {cli_name()} CLI itself is still installed. To remove it:\n  {summary['remove_cli']}")
     prompter.outro("Dry run — nothing was changed." if summary["dry_run"] else "Done.")
 
 
@@ -254,7 +255,7 @@ def _report(summary: dict, prompter) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        prog="media-ai uninstall",
+        prog=f"{cli_name()} uninstall",
         description="Remove installed Agent Skills and the configuration files, so a later install starts fresh.",
     )
     ap.add_argument("--skills-dest", action="append", default=None,

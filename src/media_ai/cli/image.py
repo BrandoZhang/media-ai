@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import ImageRequest
@@ -31,7 +32,7 @@ def _add_common(ap: argparse.ArgumentParser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai image", description="Generate or edit an image.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} image", description="Generate or edit an image.")
     sub = ap.add_subparsers(dest="op", required=True)
     _add_common(sub.add_parser("generate", help="text (+optional references) -> image"))
     edit = sub.add_parser("edit", help="reference image(s) -> image; --reference is required")

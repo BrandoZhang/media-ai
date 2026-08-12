@@ -27,6 +27,7 @@ import tomllib
 from pathlib import Path
 
 from .. import __version__
+from ..brand import cli_name, cmd
 from ..core.config import config_path
 from ..core.errors import MediaError
 from ..core.result import SCHEMA_VERSION
@@ -49,12 +50,13 @@ def _check(name: str, status: str, detail: str) -> dict:
 
 
 def _check_cli() -> list[dict]:
-    out = [_check("version", "ok", f"media-ai {__version__} (python {sys.version.split()[0]})")]
-    on_path = shutil.which("media-ai")
+    cli = cli_name()
+    out = [_check("version", "ok", f"{cli} {__version__} (python {sys.version.split()[0]})")]
+    on_path = shutil.which(cli)
     out.append(
         _check("path", "ok", on_path)
         if on_path
-        else _check("path", "warn", "media-ai is not on PATH; add ~/.local/bin to it, or call it via `uv run`")
+        else _check("path", "warn", f"{cli} is not on PATH; add ~/.local/bin to it, or call it via `uv run`")
     )
     return out
 
@@ -169,7 +171,7 @@ def _check_bindings() -> list[dict]:
         out.append(_check(name, "ok", f"credential resolved from {cred.source}"))
 
     if not out:
-        out.append(_check("bindings", "warn", "nothing configured; run `media-ai init`"))
+        out.append(_check("bindings", "warn", f"nothing configured; run `{cmd('init')}`"))
     return out
 
 
@@ -211,13 +213,13 @@ def _check_skills() -> list[dict]:
         if unknown:
             detail += f"; not shipped by this version: {', '.join(unknown)}"
         if stale:
-            detail += f"; differs from media-ai {__version__}: {', '.join(stale)} — re-run `media-ai init`"
+            detail += f"; differs from {cli_name()} {__version__}: {', '.join(stale)} — re-run `{cmd('init')}`"
         # A skill this version does not ship is as much a problem as a stale one: the
         # agent is reading instructions for a CLI that is no longer installed. Both
         # have to reach the verdict, or `doctor` says "everything checks out" over it.
         out.append(_check("skills", "warn" if stale or unknown else "ok", detail))
     if not out:
-        out.append(_check("skills", "warn", "no Agent Skills installed; run `media-ai init --skills-only`"))
+        out.append(_check("skills", "warn", f"no Agent Skills installed; run `{cmd('init')} --skills-only`"))
     return out
 
 
@@ -258,7 +260,7 @@ def _print(checks: list[dict], status: str) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        prog="media-ai doctor",
+        prog=f"{cli_name()} doctor",
         description="Check the installation offline: PATH, ffmpeg, file modes, credential sources, installed skills.",
     )
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")

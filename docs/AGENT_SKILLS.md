@@ -4,7 +4,7 @@
 contract below is deterministic so a Skill can act on results without heuristics.
 
 > **Packaged skills:** ready-made Agent Skills that implement this contract — one per
-> capability area — live in [`../src/media_ai/skills/`](../src/media_ai/skills/) (start with `media-ai-shared`).
+> capability area — live in [`../src/media_ai/skills/`](../src/media_ai/skills/) (start with `shared/`, installed as `media-ai-shared`).
 > This document is the underlying contract they build on.
 
 ## The output contract

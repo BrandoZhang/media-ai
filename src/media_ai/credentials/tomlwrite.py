@@ -1,7 +1,7 @@
 """Minimal TOML *writer* plus the private-file write used for ``credentials.toml``.
 
 ``tomllib`` (stdlib, py311+) only reads. Rather than take a dependency to write the
-two small files ``media-ai init`` generates, this emits the narrow subset they need:
+two small files ``init`` generates, this emits the narrow subset they need:
 a flat namespace of tables whose values are strings or lists of strings.
 
 The subset is deliberately narrow — anything outside it raises instead of guessing,
@@ -16,6 +16,8 @@ import re
 import stat
 import tempfile
 from pathlib import Path
+
+from ..brand import cli_name
 
 __all__ = ["atomic_write", "dumps", "write_private", "write_public", "TomlWriteError"]
 
@@ -141,7 +143,7 @@ def atomic_write(path: Path, text: str, *, mode: int) -> None:
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".media-ai-", suffix=".toml")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{cli_name()}-", suffix=".toml")
     try:
         os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

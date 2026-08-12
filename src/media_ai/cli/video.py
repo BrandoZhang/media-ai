@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..brand import cli_name, cmd
 from ..core.logging import get_logger
 from ..core.scene import Scene
 from ..core.types import MediaRef, VideoRequest
@@ -27,7 +28,7 @@ from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai video", description="Generate a video.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} video", description="Generate a video.")
     sub = ap.add_subparsers(dest="op", required=True)
     gen = sub.add_parser("generate", help="text / frames / references -> video")
     gen.add_argument("--prompt", default="", help="text instruction for the video; optional with visual references")
@@ -56,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--return-last-frame", dest="return_last_frame", type=common.bool_arg, default=False,
                      help="also return the video's final frame when supported")
     gen.add_argument("--wait", type=common.bool_arg, default=True,
-                     help="wait for completion; false returns a job for `media-ai job query`")
+                     help=f"wait for completion; false returns a job for `{cmd('job', 'query')}`")
     gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_geometry_args(gen, resolution_help="480p|720p|1080p (provider-dependent)")
     common.add_global_args(gen)

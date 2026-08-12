@@ -4,7 +4,7 @@ A binding says where its key comes from and there is no fallback::
 
     credential = "env://ARK_API_KEY"
     credential = "cred://volc-ark/seedance-2.0"     # an account in credentials.toml
-    credential = "keychain://media-ai/openai"
+    credential = "keychain://<brand>/openai"
     credential = "op://vault/item/field"            # pluggable backends
     credential = "broker://"                        # the process holds no key at all
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 
+from ..brand import cli_name, dist_name
 from ..core.errors import ErrorCategory, MediaError
 from .secret import BrokeredHandle, Credential, Secret
 from .stores import named_account, register_secret_backend, secret_backend
@@ -112,11 +113,12 @@ def _from_keychain(rest: str, ref: str, provider: str) -> str:
         import keyring  # type: ignore
     except ModuleNotFoundError:
         raise MediaError(
-            f"credential {ref!r} needs the OS keychain; install the extra: pip install 'media-ai[keychain]'",
+            f"credential {ref!r} needs the OS keychain; install the extra: "
+            f"pip install '{dist_name()}[keychain]'",
             category=ErrorCategory.AUTH, code="credential_backend_missing", provider=provider,
         ) from None
     service, _, account = rest.rpartition("/")
-    service = service or "media-ai"
+    service = service or cli_name()
     try:
         value = keyring.get_password(service, account)
     except Exception as exc:  # noqa: BLE001 - a locked keychain is a resolution failure, not a crash

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..brand import cli_name, cmd
 from ..core.config import UserBinding, config_path, load_config, save_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
@@ -18,14 +19,21 @@ from ..core.result import SCHEMA_VERSION
 from ..credentials.reference import is_reference
 from . import common
 
-CONFIG_HEADER = (
-    "media-ai config — bindings and scene defaults.\n"
-    "NON-SECRET: safe to share. `credential` is a reference, never a key."
-)
+
+def config_header() -> str:
+    """The comment block written at the top of ``config.toml``.
+
+    A function, like every other branded string: a module constant would bake the name
+    in at import time, which is invisible until someone renames the build.
+    """
+    return (
+        f"{cli_name()} config — bindings and scene defaults.\n"
+        "NON-SECRET: safe to share. `credential` is a reference, never a key."
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai bindings", description="List or configure bindings.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} bindings", description="List or configure bindings.")
     sub = ap.add_subparsers(dest="op", required=True)
     for op, help_text in (("list", "list configured and built-in bindings"),
                           ("available", "list declared bindings not configured yet")):
@@ -83,7 +91,7 @@ def _available(args) -> dict:
             "scenes": sorted(s.value for s in spec.scenes),
             "env": list(provider.auth.env),
             "setup_hint": provider.setup_hint,
-            "add": f"media-ai bindings add {spec.id} --credential env://"
+            "add": f"{cmd('bindings', 'add', spec.id)} --credential env://"
                    f"{provider.auth.env[0] if provider.auth.env else 'API_KEY'}",
         })
     return {"ok": True, "schema_version": SCHEMA_VERSION, "bindings": out}
@@ -97,7 +105,7 @@ def _add(args) -> dict:
             f"nothing declares {args.extends or args.id!r}",
             category=ErrorCategory.NOT_FOUND, code="unknown_binding",
             details={"declared": cat.ids()},
-            hint="media-ai bindings available",
+            hint=cmd("bindings", "available"),
         )
     provider = cat.providers[spec.provider]
     if provider.auth.needs_credential and not args.credential:
@@ -106,7 +114,7 @@ def _add(args) -> dict:
             f"binding {args.id!r} needs a credential",
             category=ErrorCategory.AUTH, code="credential_missing",
             details={"setup_hint": provider.setup_hint},
-            hint=f"media-ai bindings add {args.id} --credential env://{env}",
+            hint=f"{cmd('bindings', 'add', args.id)} --credential env://{env}",
         )
     if args.credential and not is_reference(args.credential):
         raise MediaError(
@@ -146,7 +154,7 @@ def _add(args) -> dict:
         base_url=args.base_url, credential=args.credential,
     )
     updated = type(config)(bindings=bindings, defaults=dict(config.defaults), path=config.path, exists=True)
-    saved = save_config(updated, header=CONFIG_HEADER)
+    saved = save_config(updated, header=config_header())
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "binding": args.id, "config": str(config_path()),

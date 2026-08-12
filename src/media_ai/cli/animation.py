@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import AnimationRequest, MediaRef
@@ -31,7 +32,7 @@ from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai animation",
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} animation",
                                  description="Export an animated image (GIF, animated WebP, APNG).")
     sub = ap.add_subparsers(dest="op", required=True)
     ex = sub.add_parser("export", help="video or frame sequence -> animated image")

@@ -254,6 +254,75 @@ network made them fall back to it.
 If you ever need to release by hand, bump those two, commit, tag, and push — but
 prefer the workflow, which cannot tag a tree whose tests it did not run.
 
+## Renaming the CLI (white-label / side-by-side installs)
+
+The command name is a **build-time** constant, declared once in
+[`src/media_ai/brand.py`](../src/media_ai/brand.py):
+
+```python
+CLI_NAME = "media-ai"
+```
+
+Change it, change the two lines that repeat it because they are static files, rebuild,
+and the whole visible surface follows — the executable, every `prog=` in `--help`,
+every `error.hint`, the `poll` command on an async job, the config directory, the
+Agent Skill directory names, and the text inside the skills themselves:
+
+```bash
+# 1. src/media_ai/brand.py       CLI_NAME = "studio-media"
+# 2. pyproject.toml              name = "studio-media"  and  [project.scripts] key
+# 3. install/install.sh          CLI_NAME="studio-media"
+uv run pytest -q tests/test_brand.py     # fails until all three agree
+uv tool install --force .
+studio-media doctor
+```
+
+`tests/test_brand.py` is what makes that list exhaustive **for anything a user or an
+agent can see**: it pins the static files to the constant, forbids the literal name in
+any non-docstring string in `src/`, forbids it entirely in the packaged skills, and
+then renames the build and asserts the visible surface moved with it. Adding a fourth
+place for the name to hide in the shipped product fails CI.
+
+Repo infrastructure is deliberately outside that guarantee and stays as-is until you
+choose otherwise: the prose in `README.md` / `docs/` / `*.toml.example`, the
+`media-ai-*` patterns in `.gitignore` (they keep locally-installed skills out of this
+checkout's diffs), `REPO` in the installer, and the docstrings in `src/` — all of which
+describe *this* reference build rather than instructing a machine.
+
+**Why not a setting in `config.toml` or an environment variable.** The executable's
+name is fixed when the wheel is built, so a runtime knob could only ever disagree with
+it: the binary would be `studio-media` while `error.hint` — documented as *usually
+runnable* — still said `media-ai`, and the packaged skills, whose commands an agent
+executes verbatim, would tell it to run a command that does not exist. One source of
+truth, resolved before anything ships, is the only version of this that cannot lie.
+Deriving it from `sys.argv[0]` has the same flaw in slower motion: skill text is
+rendered to disk once at `init`, while hints are rendered per call, so an alias or a
+wrapper script makes the two disagree.
+
+### What a rename does and does not cover
+
+| Follows the brand | Stays fixed |
+|---|---|
+| the executable, and the distribution `uv tool` keys by | `media_ai`, the **import package** — the resource root for `skills/`+`bindings/` and the `media_ai.bindings` entry-point group third-party manifests register under |
+| `error.hint`, `--help`, `meta.poll`, wizard and `doctor` output | `MEDIA_CONFIG_FILE`, `MEDIA_CREDENTIALS_FILE`, `MEDIA_USAGE_LOG` … — these name a *modality*, not a brand, and each is a per-invocation override rather than a namespace, so renaming them would break callers' CI for no isolation gained |
+| `~/.config/<brand>/` — config, credentials, install receipt | `REPO` in `install/install.sh`: where the code comes from is not what the tool is called |
+| installed skill directories (`<brand>-image`), their cross-references, and their `needs:` edges | the packaged directories, which are named for the command group (`skills/image/`) |
+| the default keychain service name | the scene ids, binding ids, and the result schema |
+
+Two consequences worth knowing before you rely on them:
+
+- **Two brands can share an agent's skills directory**, and each `uninstall` removes
+  only its own prefix. That is the point — but it also means a `studio-media uninstall`
+  leaves any `media-ai-*` skills sitting beside it, and neither build reports the
+  other's: each one scans for its own prefix and can see nothing else. Remove them by
+  running that build's own `uninstall`. (Within one brand, `doctor` still names
+  installed skills the running version does not ship.)
+- **The packaged skills are templates.** They say `{{cli}}` and `{{skill}}`, rendered
+  by `copy_skill` on the way to disk. Symlinking a packaged directory into an agent's
+  skills folder — which older versions of `skills/README.md` suggested — now puts a
+  literal `{{cli}}` in front of the agent, so `skill_is_current` reports such a link as
+  drifted and `init` replaces it with a rendered copy.
+
 ## The lockfile
 
 `uv.lock` is committed so every developer and CI get identical installs. Regenerate

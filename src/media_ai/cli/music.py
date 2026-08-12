@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import MusicPlanRequest, MusicRequest
@@ -20,7 +21,7 @@ from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai music", description="Compose music.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} music", description="Compose music.")
     sub = ap.add_subparsers(dest="op", required=True)
 
     gen = sub.add_parser("generate", help="prompt or composition plan -> song")

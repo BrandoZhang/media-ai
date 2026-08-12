@@ -25,6 +25,7 @@ import re
 import time
 from pathlib import Path
 
+from ..brand import cmd
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import read_bytes
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
@@ -96,7 +97,7 @@ class GeminiAdapter(HttpAdapter):
             category=ErrorCategory.UNSUPPORTED, code="broker_upload_unsupported", provider=self.name,
             details={"bytes": size, "inline_max_bytes": self.inline_max_bytes},
             hint="pass a smaller reference, or configure this binding with a direct key "
-                 "(media-ai bindings add gemini/<model> --credential env://GEMINI_API_KEY)",
+                 f"({cmd('bindings', 'add', 'gemini/<model>')} --credential env://GEMINI_API_KEY)",
         )
 
     def generate_image(self, req: ImageRequest) -> GenerationResult:

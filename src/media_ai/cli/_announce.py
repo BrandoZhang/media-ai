@@ -1,4 +1,4 @@
-"""Announcements shown at the top of ``media-ai init``.
+"""Announcements shown at the top of ``<cli> init``.
 
 Setup is the one moment a user is definitely reading the terminal, so it is where a
 "before you build on this" warning has to go — a line in the README is read by the
@@ -20,17 +20,20 @@ to keep, and that shape this interface now:
 
 from __future__ import annotations
 
+from ..brand import cli_name
+
 __all__ = ["announcements"]
 
-_PRE_RELEASE = (
-    "Heads up",
-    "media-ai is under rapid development. Interfaces, flags, and the result "
-    "schema can change between releases, and breaking changes are expected "
-    "before 1.0 — pin a version and read the release notes before upgrading. "
-    "Not recommended for production use yet.",
-)
+def _pre_release() -> tuple[str, str]:
+    return (
+        "Heads up",
+        f"{cli_name()} is under rapid development. Interfaces, flags, and the result "
+        "schema can change between releases, and breaking changes are expected "
+        "before 1.0 — pin a version and read the release notes before upgrading. "
+        "Not recommended for production use yet.",
+    )
 
 
 def announcements() -> list[tuple[str, str]]:
     """``[(title, body), …]`` to show under the intro, most important first."""
-    return [_PRE_RELEASE]
+    return [_pre_release()]

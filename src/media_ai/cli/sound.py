@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..brand import cli_name
 from ..core.logging import get_logger
 from ..core.types import SoundEffectRequest
 from ..core.validate import validate_request
@@ -17,7 +18,7 @@ from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai sound", description="Generate sound effects.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} sound", description="Generate sound effects.")
     sub = ap.add_subparsers(dest="op", required=True)
 
     gen = sub.add_parser("generate", help="text -> sound effect")

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..brand import cmd
 from ..credentials.reference import BindingCredentials
 from .binding import AuthKind, BindingCatalog, BindingSpec, ProviderSpec
 from .config import Config, UserBinding, load_config
@@ -105,7 +106,7 @@ def _hint_for_scene(scene: Scene, alternatives: list[ResolvedBinding]) -> str:
     real = _recommendable(alternatives)
     if real:
         return f"re-run with --binding {real[0]}"
-    return f"no configured binding serves {scene.value}; run `media-ai bindings available` to see what could"
+    return f"no configured binding serves {scene.value}; run `{cmd('bindings', 'available')}` to see what could"
 
 
 # --------------------------------------------------------------------------
@@ -253,7 +254,7 @@ def _by_id(bid: str, available: list[ResolvedBinding], catalog: BindingCatalog) 
                 "binding": bid,
                 "setup_hint": provider.setup_hint,
                 "configured": [b.id for b in available],
-                "hint": f"media-ai bindings add {bid} (or set credential = \"env://{env}\" in the config)",
+                "hint": f"{cmd('bindings', 'add', bid)} (or set credential = \"env://{env}\" in the config)",
             },
         )
     raise MediaError(
@@ -262,7 +263,7 @@ def _by_id(bid: str, available: list[ResolvedBinding], catalog: BindingCatalog) 
         details={
             "binding": bid,
             "declared": catalog.ids(),
-            "hint": "media-ai bindings available",
+            "hint": cmd("bindings", "available"),
         },
     )
 
@@ -279,7 +280,7 @@ def _unique(
             category=ErrorCategory.NOT_FOUND, code="no_matching_binding",
             details={
                 "configured": [b.id for b in available],
-                "hint": "media-ai bindings available",
+                "hint": cmd("bindings", "available"),
             },
         )
     ids = [b.id for b in candidates]
@@ -306,7 +307,7 @@ def _default_for(scene: Scene, available: list[ResolvedBinding], config: Config)
             details={
                 "scene": scene.value, "binding": wanted,
                 "configured": [b.id for b in available],
-                "hint": f"media-ai config set-default {scene.value} <binding>",
+                "hint": f"{cmd('config', 'set-default', scene.value)} <binding>",
             },
         )
 
@@ -321,9 +322,9 @@ def _default_for(scene: Scene, available: list[ResolvedBinding], config: Config)
             # Only a binding that really generates gets recommended. With none, the next
             # step is finding one to add — never making the placeholder the default.
             "hint": (
-                f"media-ai config set-default {scene.value} {real[0]}"
+                cmd("config", "set-default", scene.value, real[0])
                 if real
-                else "media-ai bindings available"
+                else cmd("bindings", "available")
             ),
         },
     )

@@ -229,13 +229,17 @@ def test_a_dangling_symlink_is_not_reported_as_up_to_date(home, tmp_path):
     assert checks(diagnose())["skills"]["status"] == "warn"
 
 
-def test_a_symlinked_skill_can_never_be_stale(home):
+def test_a_symlink_to_the_packaged_tree_is_reported_stale(home):
+    """The inverse of what this used to assert, and deliberately so: the packaged tree
+    is a template now, so a link to it hands the agent an unrendered `{{cli}}`. `doctor`
+    has to say that out loud — blessing it would be blessing a skill whose every command
+    is wrong."""
     from media_ai.cli._discovery import skill_root
 
     dest = home / "fakehome" / ".claude" / "skills"
     dest.mkdir(parents=True)
     (dest / "media-ai-shared").symlink_to(str(skill_root("media-ai-shared")))
-    assert checks(diagnose())["skills"]["status"] == "ok"
+    assert checks(diagnose())["skills"]["status"] == "warn"
 
 
 def test_doctor_is_a_registered_group():

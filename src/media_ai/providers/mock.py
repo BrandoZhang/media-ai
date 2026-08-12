@@ -18,6 +18,7 @@ import json
 import tempfile
 from pathlib import Path
 
+from ..brand import cmd
 from ..core.adapter import Adapter
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import resolve_image_pixels, resolve_video_pixels
@@ -99,7 +100,7 @@ class MockAdapter(Adapter):
     def generate_video(self, req: VideoRequest):
         if not req.wait:
             return JobHandle(provider=self.name, model="mock", id=_encode_job(req), output=str(req.output),
-                             meta={"note": "mock async; poll with `media-ai job query`"})
+                             meta={"note": f"mock async; poll with `{cmd('job', 'query')}`"})
         return self._render_video(req, str(req.output))
 
     def _render_video(self, req: VideoRequest, output: str) -> GenerationResult:

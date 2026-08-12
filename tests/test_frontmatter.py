@@ -152,10 +152,13 @@ def test_deeply_nested_mappings_round_trip():
 
 
 def test_every_packaged_skill_parses():
+    """Rendered first, as `init` writes it — the packaged file is a template, and its
+    `name:` is `{{skill}}image` until the brand is substituted in."""
     from media_ai.cli._discovery import available_skills, skill_root
+    from media_ai.cli._render import render
 
     for skill in available_skills():
-        front = parse((skill_root(skill) / "SKILL.md").read_text(encoding="utf-8"))
+        front = parse(render((skill_root(skill) / "SKILL.md").read_text(encoding="utf-8")))
         assert front.get("name") == skill, f"{skill}: frontmatter name does not match its directory"
         assert isinstance(front.get("description"), str) and front["description"]
         assert isinstance(front.get("metadata"), dict)
