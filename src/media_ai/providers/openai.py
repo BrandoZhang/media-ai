@@ -22,8 +22,8 @@ from pathlib import Path
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.mediaref import guess_mime, read_bytes
-from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult
+from ..core.scene import Scene, derive_scene
 from ..core.types import ImageRequest
 from ._base import HttpAdapter
 
@@ -135,7 +135,9 @@ class OpenAIAdapter(HttpAdapter):
             data = self._generate(client, headers, model, req)
         items = [d for d in (data.get("data") or []) if d.get("b64_json")]
         if not items:
-            raise MediaError("OpenAI image response had no images", category=ErrorCategory.PROVIDER, provider=self.name, model=model)
+            raise MediaError(
+                "OpenAI image response had no images", category=ErrorCategory.PROVIDER, provider=self.name, model=model
+            )
         # The response echoes the format/size the model *actually* used; trust it over
         # the request (e.g. size:"auto" resolves to a concrete size, and the bytes are
         # whatever output_format the API returned regardless of the output filename).
@@ -179,7 +181,9 @@ class OpenAIAdapter(HttpAdapter):
 
     def _edit(self, client, headers, model: str, req: ImageRequest) -> dict:
         if not req.references:
-            raise MediaError("image edit requires at least one reference image", category=ErrorCategory.VALIDATION, provider=self.name)
+            raise MediaError(
+                "image edit requires at least one reference image", category=ErrorCategory.VALIDATION, provider=self.name
+            )
         fields = self._common_fields(model, req)
         files = []
         for r in req.references:

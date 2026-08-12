@@ -22,10 +22,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import AnimationRequest, MediaRef
+from ..core.validate import validate_request
 from ..media.animation import CONTAINER_NAMES, KEY_MODES, SCALE_FILTERS
 from . import common
 

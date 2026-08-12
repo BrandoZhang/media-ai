@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+
 from media_ai.cli import bindings as bindings_mod
 from media_ai.cli import config as config_mod
 

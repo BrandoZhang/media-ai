@@ -69,7 +69,7 @@ class UserBinding:
     credential: str | None = None
     options: dict = field(default_factory=dict)
 
-    def merged_with(self, **changes) -> "UserBinding":
+    def merged_with(self, **changes) -> UserBinding:
         """This entry with only the named fields replaced; ``None`` means "leave alone".
 
         Every writer that edits one field of an existing binding goes through here.
@@ -208,7 +208,7 @@ def load_config(path: Path | None = None) -> Config:
     return Config(bindings=bindings, defaults=defaults, path=path, exists=True)
 
 
-def save_config(config: "Config", *, header: str | None = None) -> Path | None:
+def save_config(config: Config, *, header: str | None = None) -> Path | None:
     """Write the config file, backing up whatever was there. Returns the backup path.
 
     Every command that edits the config goes through here, so "the previous file is

@@ -27,8 +27,8 @@ from urllib.parse import urlencode
 
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import guess_mime
-from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult
+from ..core.scene import Scene, derive_scene
 from ..core.types import DialogueRequest, MusicPlanRequest, MusicRequest, SoundEffectRequest, SpeechRequest
 from ._base import HttpAdapter
 

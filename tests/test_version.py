@@ -135,7 +135,7 @@ def test_the_bump_leaves_the_rest_of_the_file_alone(sandbox):
     bump_version.bump("9.8.7")
     after = init.read_text().splitlines()
     assert len(before) == len(after)
-    assert sum(a != b for a, b in zip(before, after)) == 1
+    assert sum(a != b for a, b in zip(before, after, strict=True)) == 1
 
 
 def test_the_bump_is_idempotent(sandbox):

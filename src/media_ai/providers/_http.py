@@ -16,16 +16,16 @@ Response/error bodies are redacted before they enter any exception message.
 
 from __future__ import annotations
 
-import json
 import http.client
+import json
 import random
 import socket
 import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
@@ -242,8 +242,8 @@ class HttpClient:
                 get_logger().debug(
                     "HTTP response: method=%s url=%s status=%d retrying=false", method, url, status,
                 )
-                raise self.error_mapper(status, redact(raw[:800]))
-            except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, http.client.HTTPException) as exc:
+                raise self.error_mapper(status, redact(raw[:800])) from e
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
                 is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
                     getattr(exc, "reason", None), (socket.timeout, TimeoutError)
                 )

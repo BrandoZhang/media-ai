@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import PNG_1x1, PNG_1x1_BYTES
+from conftest import PNG_1x1, PNG_1x1_BYTES, adapter_for
+
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef
-from conftest import adapter_for
 
 
 def test_gpt_image_generations_body(fake_provider, tmp_path):

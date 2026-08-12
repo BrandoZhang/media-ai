@@ -8,7 +8,6 @@ import pytest
 
 from media_ai.cli import bindings, capabilities, config, doctor, image, init, job, music, sound, speech, uninstall, usage, video
 
-
 _PARSERS = (
     bindings._build_parser,
     capabilities._build_parser,

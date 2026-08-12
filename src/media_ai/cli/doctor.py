@@ -27,9 +27,9 @@ import tomllib
 from pathlib import Path
 
 from .. import __version__
+from ..core.config import config_path
 from ..core.errors import MediaError
 from ..core.result import SCHEMA_VERSION
-from ..core.config import config_path
 from ..credentials.stores import credentials_path
 from . import common
 from ._discovery import available_skills

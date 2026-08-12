@@ -8,7 +8,8 @@ import wave
 from pathlib import Path
 
 import pytest
-from conftest import PNG_1x1, PNG_1x1_BYTES
+from conftest import PNG_1x1, PNG_1x1_BYTES, adapter_for
+
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.scene import Scene, derive_scene
 from media_ai.core.types import (
@@ -21,7 +22,6 @@ from media_ai.core.types import (
     SpeechRequest,
     VideoRequest,
 )
-from conftest import adapter_for
 
 _PCM_B64 = base64.b64encode(b"\x00\x01" * 240).decode()  # 240 headerless PCM frames
 _AUDIO_MIME = "audio/L16;codec=pcm;rate=24000"
@@ -102,7 +102,8 @@ def test_veo_image_to_video_inlines_first_frame(fake_provider, tmp_path):
     prov, fake = fake_provider("gemini/veo-3.1", [
         {"name": "op"},  # create
         {"name": "op", "done": True,  # poll -> done
-         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/Y:download"}}]}}}], options={"poll_interval": 0})
+         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/Y:download"}}]}}}],
+        options={"poll_interval": 0})
     prov.generate_video(VideoRequest(prompt="move", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
                                      first_frame=MediaRef(str(ff), "first_frame"), duration=8, wait=True))
     instance = fake.calls[0]["body"]["instances"][0]
@@ -232,8 +233,9 @@ def test_a_brokered_binding_refuses_the_upload_instead_of_sending_a_keyless_requ
     to — no ``x-goog-api-key`` — while the Files API is a separate Google endpoint the
     broker does not forward. Uploading anyway is a guaranteed 401 that blames the key.
     """
-    import media_ai.providers.gemini as gem
     from conftest import FakeClient, adapter_for
+
+    import media_ai.providers.gemini as gem
 
     monkeypatch.setattr(gem._gemini_files, "upload_bytes",
                         lambda *a, **k: pytest.fail("a brokered binding must not reach the Files API"))
@@ -255,8 +257,9 @@ def test_a_brokered_binding_refuses_the_upload_instead_of_sending_a_keyless_requ
 
 def test_a_direct_key_still_uploads(tmp_path, monkeypatch):
     """The gate is about the broker alone — an ordinary key path is untouched."""
-    import media_ai.providers.gemini as gem
     from conftest import FakeClient, adapter_for
+
+    import media_ai.providers.gemini as gem
 
     monkeypatch.setenv("MEDIA_TEST_KEY", "secret-key")
     monkeypatch.setattr(gem._gemini_files, "upload_bytes", lambda *a, **k: "files/UP")
@@ -314,7 +317,8 @@ def test_veo_reference_images_and_seed(fake_provider, tmp_path):
     prov, fake = fake_provider("gemini/veo-3.1", [
         {"name": "op"},
         {"name": "op", "done": True,
-         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/Z:download"}}]}}}], options={"poll_interval": 0})
+         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/Z:download"}}]}}}],
+        options={"poll_interval": 0})
     prov.generate_video(VideoRequest(prompt="walk", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
                                      reference_images=[MediaRef(str(a), "reference_image"),
                                                        MediaRef(str(b), "reference_image")],
@@ -332,7 +336,8 @@ def test_veo_extension_uses_video_uri(fake_provider, tmp_path):
     prov, fake = fake_provider("gemini/veo-3.1", [
         {"name": "op"},
         {"name": "op", "done": True,
-         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/E:download"}}]}}}], options={"poll_interval": 0})
+         "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": "https://x/files/E:download"}}]}}}],
+        options={"poll_interval": 0})
     prov.generate_video(VideoRequest(prompt="continue", output=tmp_path / "v.mp4", model="veo-3.1-generate-preview",
                                      reference_videos=[MediaRef(uri, "reference_video")], duration=8))
     assert fake.calls[0]["body"]["instances"][0]["video"] == {"uri": uri, "mimeType": "video/mp4"}
@@ -400,8 +405,8 @@ def _done_video(uri="https://x/files/S:download"):
 def test_veo_seconds_uses_true_probed_output_length(fake_provider, tmp_path, monkeypatch):
     # The ledger bills the TRUE output length, not the request: an extension whose
     # combined clip is 11s must record 11 even though only 8s was requested.
-    from media_ai.core.usage import usage_log_path
     import media_ai.providers.gemini as gem
+    from media_ai.core.usage import usage_log_path
     monkeypatch.setattr(gem.ffmpeg, "probe_duration", lambda p: 11.0)
     prov, _ = fake_provider("gemini/veo-3.1", [
         {"name": "op"}, {"name": "op", "done": True, "response": _done_video()}], options={"poll_interval": 0})

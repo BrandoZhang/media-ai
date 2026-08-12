@@ -18,10 +18,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.validate import validate_request
 from ..core.logging import get_logger
 from ..core.scene import Scene
 from ..core.types import MediaRef, VideoRequest
+from ..core.validate import validate_request
 from ..media import ffmpeg
 from . import common
 

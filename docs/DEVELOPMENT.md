@@ -66,7 +66,10 @@ media-ai/
 Because it's a src layout, the package must be **installed** to import it (there is
 no `media_ai/` at the repo root to pick up implicitly). `uv sync` / `uv run` handle
 that editable install automatically, so nothing changes in day-to-day use. Point
-lint and other path-taking tools at `src` (e.g. `ruff check src tests`).
+path-taking tools at `src` rather than at the package name. Lint is the one
+exception: it runs as `ruff check .` over the whole repo, so a Python file added
+outside `src/` (a `scripts/` helper, a `.github/scripts/` CI shim) is covered the day
+it lands instead of the day someone remembers to extend a path list.
 
 ## Everyday commands
 
@@ -76,8 +79,8 @@ lint and other path-taking tools at `src` (e.g. `ruff check src tests`).
 | Run the full test suite (offline) | `uv run pytest -q` |
 | Run a single test | `uv run pytest -q tests/test_gemini_api.py::test_veo_lro_poll_and_download` |
 | Run one file | `uv run pytest -q tests/test_volc_errors.py` |
-| Lint | `uv run ruff check src tests` |
-| Autofix lint | `uv run ruff check src tests --fix` |
+| Lint | `uv run ruff check .` |
+| Autofix lint | `uv run ruff check . --fix` |
 | Run the CLI offline | `uv run media-ai image generate --binding mock/mock --prompt "a red bike" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
 
@@ -169,7 +172,7 @@ so forks never fail. (To run it on merge to `main` later, uncomment the `push:` 
 ## Before you push
 
 ```bash
-uv run ruff check src tests scripts
+uv run ruff check .
 uv run pytest -q
 uv run actionlint          # only if you touched .github/workflows/
 ```
@@ -264,7 +267,7 @@ The project is a standard PEP 621 package, so plain pip still works:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]" ruff
-pytest -q && ruff check src tests
+pytest -q && ruff check .
 ```
 
 ## Adding a provider or debugging

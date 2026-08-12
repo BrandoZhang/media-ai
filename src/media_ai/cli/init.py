@@ -28,11 +28,11 @@ from ..core.binding import AuthKind
 from ..core.config import Config, config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
-from ..core.scene import scenes_for_group
 from ..core.result import SCHEMA_VERSION
+from ..core.scene import scenes_for_group
 from ..credentials import stores
-from ..credentials.tomlwrite import dumps, write_private, write_public
 from ..credentials.tomlwrite import backup as tomlwrite_backup
+from ..credentials.tomlwrite import dumps, write_private, write_public
 from . import common
 from ._announce import announcements
 from ._discovery import (

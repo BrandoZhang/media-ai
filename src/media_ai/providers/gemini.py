@@ -27,8 +27,8 @@ from pathlib import Path
 
 from ..core.errors import ErrorCategory, MediaError
 from ..core.mediaref import read_bytes
-from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
+from ..core.scene import Scene, derive_scene
 from ..core.types import DialogueRequest, ImageRequest, JobRef, MediaRef, SpeechRequest, VideoRequest
 from ..media import ffmpeg, pillow
 from ..media.audio import write_pcm_wav
@@ -287,7 +287,9 @@ class GeminiAdapter(HttpAdapter):
             raise _operation_error(res["error"], op_name, self.name)
         uri = _veo_video_uri(res)
         if not uri:
-            raise MediaError(f"Veo operation {op_name} done but no video uri", category=ErrorCategory.PROVIDER, provider=self.name)
+            raise MediaError(
+                f"Veo operation {op_name} done but no video uri", category=ErrorCategory.PROVIDER, provider=self.name
+            )
         client.download(uri, out, headers=headers)  # the file URI needs the API key
         # Veo operations return no usage/duration, so bill by the TRUE output length:
         # probe the downloaded clip (this also captures an extension's combined length,

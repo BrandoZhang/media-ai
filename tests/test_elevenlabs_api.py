@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import adapter_for
+
 from media_ai.cli import speech as speech_cli
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.types import (
@@ -18,7 +20,6 @@ from media_ai.core.types import (
     SpeechRequest,
 )
 from media_ai.credentials.secret import Secret
-from conftest import adapter_for
 from media_ai.providers.elevenlabs import _parse_multipart
 
 

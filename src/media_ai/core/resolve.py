@@ -60,7 +60,7 @@ class ResolvedBinding:
     def credentials(self) -> BindingCredentials:
         return BindingCredentials(self.credential, provider=self.provider.name)
 
-    def check_scene(self, scene: Scene, available: list["ResolvedBinding"]) -> None:
+    def check_scene(self, scene: Scene, available: list[ResolvedBinding]) -> None:
         """Refuse a scene this binding does not serve, naming ones that do.
 
         ``alternatives`` lists only bindings the caller can actually reach right now,
@@ -85,7 +85,7 @@ class ResolvedBinding:
         )
 
 
-def _recommendable(bindings: list["ResolvedBinding"]) -> list[str]:
+def _recommendable(bindings: list[ResolvedBinding]) -> list[str]:
     """Ids worth *suggesting*, placeholders removed.
 
     A hint is read as an instruction — the skills tell agents it is usually a command
@@ -101,7 +101,7 @@ def _recommendable(bindings: list["ResolvedBinding"]) -> list[str]:
     return [b.id for b in bindings if not b.spec.placeholder]
 
 
-def _hint_for_scene(scene: Scene, alternatives: list["ResolvedBinding"]) -> str:
+def _hint_for_scene(scene: Scene, alternatives: list[ResolvedBinding]) -> str:
     real = _recommendable(alternatives)
     if real:
         return f"re-run with --binding {real[0]}"

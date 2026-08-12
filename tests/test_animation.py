@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from conftest import have_media_stack
+
 from media_ai.core.errors import MediaError
 from media_ai.core.types import AnimationRequest, GeometrySpec, MediaRef
 from media_ai.media import animation
