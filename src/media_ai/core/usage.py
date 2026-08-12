@@ -28,9 +28,25 @@ _LEDGER_LOCK = threading.Lock()
 
 
 def record_usage(entry: dict) -> None:
-    """Append one usage record (JSONL). Best-effort: never raises."""
+    """Append one usage record (JSONL). Best-effort: never raises.
+
+    Stamped with the version that wrote it, here rather than at any caller. A ledger
+    is append-only, so one file routinely holds lines written by several versions and
+    can never be migrated into agreement — per-record is the only place the answer to
+    "which build produced this line" can live. It is also the field that makes a
+    changed accounting rule (a token count that starts including something it did not)
+    readable afterwards instead of a step in the graph nobody can explain.
+
+    ``__version__`` is imported here rather than at module scope because
+    ``media_ai/__init__.py`` assigns it *after* its own imports, so a module reachable
+    from that chain cannot read it at import time.
+    """
+    from .. import __version__
+
     try:
-        entry = {"ts": round(time.time(), 3), **entry}
+        # After the spread, not before it: the running version is the one field a
+        # caller cannot be right about, so it is not theirs to pass.
+        entry = {"ts": round(time.time(), 3), **entry, "tool_version": __version__}
         path = usage_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(entry, ensure_ascii=False) + "\n"
