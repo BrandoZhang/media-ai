@@ -7,13 +7,13 @@ import json
 from pathlib import Path
 
 import pytest
+
 from media_ai.core import geometry, usage
 from media_ai.core.binding import Audio, Constraints, Geometry, Output, References, Video
-from media_ai.core.validate import UnsupportedPolicy, validate_request
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.result import Artifact, GenerationResult, JobHandle
 from media_ai.core.types import GeometrySpec, ImageRequest, MediaRef, VideoRequest
-
+from media_ai.core.validate import UnsupportedPolicy, validate_request
 
 # --------------------------------------------------------------------------
 # geometry

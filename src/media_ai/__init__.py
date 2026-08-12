@@ -21,9 +21,9 @@ from .core.adapter import Adapter
 from .core.binding import BindingSpec, Constraints, ProviderSpec
 from .core.errors import ErrorCategory, MediaError
 from .core.registry import catalog, register_manifest, unregister_manifest
+from .core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from .core.retry import retry
 from .core.scene import Scene, derive_scene
-from .core.result import Artifact, GenerationResult, JobHandle, JobStatus
 from .core.types import (
     DialogueRequest,
     DialogueTurn,

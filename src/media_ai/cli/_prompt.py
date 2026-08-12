@@ -61,8 +61,9 @@ import shutil
 import sys
 import textwrap
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol
 
 __all__ = [
     "Option",

@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
-from ..core.result import SCHEMA_VERSION
 from ..core.config import config_path
+from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
 from . import common
 from ._prompt import Cancelled, Option, get_prompter, run_steps

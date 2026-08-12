@@ -24,13 +24,13 @@ from __future__ import annotations
 import shutil
 import tomllib
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 from .. import __version__
+from ..core.config import config_path
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..core.config import config_path
 from ..credentials.tomlwrite import dumps, write_public
 from ._discovery import SKILL_PREFIX, skill_root
 
@@ -158,7 +158,7 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
     return written
 
 
-@lru_cache(maxsize=None)
+@cache
 def _packaged_tree(name: str) -> dict[str, str]:
     """The packaged skill's files, read once per process.
 

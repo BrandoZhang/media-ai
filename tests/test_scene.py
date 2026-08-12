@@ -138,6 +138,7 @@ def test_a_placeholder_is_never_recommended_but_is_still_reported():
     """The two halves have to differ: an agent needs to know mock exists, and must not
     be told to send work to it."""
     from conftest import CATALOG
+
     from media_ai.core.resolve import _recommendable
 
     class _Fake:

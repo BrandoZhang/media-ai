@@ -17,13 +17,14 @@ from pathlib import Path
 
 import pytest
 from conftest import PNG_1x1_BYTES
+
 from media_ai import Adapter, Artifact, GenerationResult, MediaError, register_manifest
 from media_ai.core import registry
-from media_ai.core.validate import validate_request
 from media_ai.core.config import Config, UserBinding
 from media_ai.core.resolve import available_bindings, resolve
 from media_ai.core.scene import Scene
 from media_ai.core.types import ImageRequest
+from media_ai.core.validate import validate_request
 
 ACME_MANIFEST = """
 [provider]

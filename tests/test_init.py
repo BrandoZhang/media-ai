@@ -16,8 +16,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
-
 from conftest import CATALOG
+
 from media_ai.cli import init as init_mod
 from media_ai.cli._discovery import core_skills, selectable_skills
 from media_ai.cli._prompt import Cancelled, GoBack, ScriptedPrompter
@@ -1104,6 +1104,7 @@ class TestEveryProbeStrategyActuallyRuns:
 
     def _run(self, monkeypatch, binding_id, responses):
         from conftest import FakeClient, adapter_for
+
         import media_ai.cli._verify as verify_mod
 
         adapter = adapter_for(binding_id)

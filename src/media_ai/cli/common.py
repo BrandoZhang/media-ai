@@ -7,11 +7,11 @@ from __future__ import annotations
 import argparse
 import json
 
-from ..core.validate import UnsupportedPolicy
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
 from ..core.result import error_payload
 from ..core.types import GeometrySpec, MediaRef
+from ..core.validate import UnsupportedPolicy
 from ..credentials.redaction import redact_obj
 
 _TRUE = {"1", "true", "yes", "y", "on"}

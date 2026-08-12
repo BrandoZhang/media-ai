@@ -5,15 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import PNG_1x1, PNG_1x1_BYTES
-from media_ai.core.validate import validate_request
+from conftest import PNG_1x1, PNG_1x1_BYTES, adapter_for
+
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.types import GeometrySpec, ImageRequest, JobRef, MediaRef, VideoRequest
-from conftest import adapter_for
+from media_ai.core.validate import validate_request
 
 
 def test_text2image_body_uses_model_size_and_sequential(fake_provider, tmp_path):
-    prov, fake = fake_provider("volc-ark/seedream-4.5", [{"data": [{"b64_json": PNG_1x1}], "usage": {"total_tokens": 7}, "model": "m"}])
+    prov, fake = fake_provider(
+        "volc-ark/seedream-4.5", [{"data": [{"b64_json": PNG_1x1}], "usage": {"total_tokens": 7}, "model": "m"}]
+    )
     req = ImageRequest(prompt="dune", output=tmp_path / "o.png", model="doubao-seedream-5-0-260128",
                        geometry=GeometrySpec(width=768, height=432), count=1, seed=1)
     res = prov.generate_image(req)
@@ -244,7 +246,9 @@ def test_video_wait_true_output_safety_raises(fake_provider, tmp_path):
 
 
 def test_get_job_failed_raises_categorized(fake_provider, tmp_path):
-    prov, _ = fake_provider("volc-ark/seedance-2.0", [{"status": "failed", "error": {"code": "InternalServiceError", "message": "boom"}}])
+    prov, _ = fake_provider(
+        "volc-ark/seedance-2.0", [{"status": "failed", "error": {"code": "InternalServiceError", "message": "boom"}}]
+    )
     with pytest.raises(MediaError) as ei:
         prov.get_job(JobRef(provider="volc", id="t"))
     assert ei.value.category == ErrorCategory.PROVIDER and ei.value.retryable is True

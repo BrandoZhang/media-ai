@@ -592,7 +592,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     if pid == 0:  # child
         os.close(r)
         os.dup2(w, 1)
-        src = "import sys\nsys.path[:0] = %r\n" % (sys.path,) + textwrap.dedent(body)
+        src = f"import sys\nsys.path[:0] = {sys.path!r}\n" + textwrap.dedent(body)
         os.execv(sys.executable, [sys.executable, "-c", src])
     os.close(w)
     os.set_blocking(fd, False)
@@ -926,7 +926,7 @@ def run_in_pty_watching_the_terminal(body: str, keys: list[bytes]) -> str:
     """
     pid, fd = pty.fork()
     if pid == 0:  # child
-        src = "import sys\nsys.path[:0] = %r\n" % (sys.path,) + textwrap.dedent(body)
+        src = f"import sys\nsys.path[:0] = {sys.path!r}\n" + textwrap.dedent(body)
         os.execv(sys.executable, [sys.executable, "-c", src])
     os.set_blocking(fd, False)
     captured, deadline, sent = b"", time.time() + 4.0, False

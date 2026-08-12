@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import wave
 
+from conftest import adapter_for
+
 from media_ai.core.errors import MediaError
 from media_ai.core.types import (
     DialogueRequest,
@@ -15,7 +17,6 @@ from media_ai.core.types import (
     SoundEffectRequest,
     SpeechRequest,
 )
-from conftest import adapter_for
 
 
 def _is_valid_wav(path) -> bool:
@@ -105,6 +106,7 @@ def test_the_mock_binding_declares_what_it_implements():
     declaring more than it supports — the validator refuses the request either way.
     """
     from conftest import CATALOG
+
     from media_ai.core.scene import Scene
 
     spec = CATALOG.get("mock/mock")

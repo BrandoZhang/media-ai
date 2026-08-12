@@ -14,7 +14,6 @@ a command group covers exactly the scenes under it — which is why joining clip
 from __future__ import annotations
 
 import sys
-
 from importlib import import_module
 
 # Group -> the `cli` module implementing it, imported on dispatch rather than up front.

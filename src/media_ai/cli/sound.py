@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..core.validate import validate_request
 from ..core.logging import get_logger
 from ..core.types import SoundEffectRequest
+from ..core.validate import validate_request
 from . import common
 
 

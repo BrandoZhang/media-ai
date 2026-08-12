@@ -19,8 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core.adapter import Adapter
-from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult
+from ..core.scene import Scene, derive_scene
 from ..core.types import AnimationRequest
 
 #: The mime an animated container is actually served as. APNG is the odd one: it is a

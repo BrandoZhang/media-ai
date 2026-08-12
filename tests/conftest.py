@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 
 import pytest
+
 from media_ai.core import registry
 from media_ai.core.binding import builtin_catalog
 

@@ -8,11 +8,12 @@ idempotent GET/DELETE are retried.
 
 from __future__ import annotations
 
-import io
 import http.client
+import io
 import urllib.error
 
 import pytest
+
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.logging import configure
 from media_ai.providers import _http
