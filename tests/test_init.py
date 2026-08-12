@@ -220,12 +220,16 @@ def test_existing_skill_can_be_skipped(home):
 
 
 def test_existing_skill_can_be_overwritten(home):
+    # The sentinel has to be a string the packaged skills cannot plausibly contain:
+    # this read "stale", which the skill text later acquired as part of the word
+    # `skills_stale`, and the assertion started failing on a passing install.
+    sentinel = "SENTINEL-e4c1a7-not-in-any-packaged-skill"
     dest = home / "sk"
     (dest / "media-ai-shared").mkdir(parents=True)
-    (dest / "media-ai-shared" / "SKILL.md").write_text("stale", encoding="utf-8")
+    (dest / "media-ai-shared" / "SKILL.md").write_text(sentinel, encoding="utf-8")
     args = make_args(skills_only=True, skills_dest=str(dest))
     run(args, [pick("media-ai-image"), 0])  # 0 = "overwrite"
-    assert "stale" not in (dest / "media-ai-shared" / "SKILL.md").read_text()
+    assert sentinel not in (dest / "media-ai-shared" / "SKILL.md").read_text()
 
 
 # ------------------------------------------------------- what the menu asks about

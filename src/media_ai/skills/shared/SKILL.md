@@ -79,6 +79,15 @@ can run verbatim, and `error.details` naming candidates or alternatives:
   "details": {"candidates": ["<provider-a>/<model>", "<provider-b>/<model>"]}}}
 ```
 
+Either object may also carry `notices[]` — facts about the *installation* rather than
+about this call, each with a closed-set `kind` and usually a runnable `action`. It is
+absent when there is nothing to say. `kind: "skills_stale"` means these instructions
+were written by a different build of `{{cli}}`: run the `action` and re-read the skill,
+especially if the call just failed with exit 2.
+
+**Ignore keys you do not recognise** — new fields arrive without a `schema_version`
+bump; only a change to an existing field's meaning bumps it.
+
 Full JSON shapes → `references/machine-contract.md`.
 
 ## Naming a binding
