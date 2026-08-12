@@ -1,4 +1,4 @@
-"""``media-ai job query|cancel`` — poll/finalize or cancel an async generation job.
+"""``<cli> job query|cancel`` — poll/finalize or cancel an async generation job.
 
 Use ``query --output`` to finalize a task submitted with ``video generate
 --wait false`` (downloads the finished video). ``cancel`` stops a queued task
@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..brand import cli_name
 from ..core.types import JobRef
 from . import common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai job", description="Query or cancel an async job.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} job", description="Query or cancel an async job.")
     sub = ap.add_subparsers(dest="op", required=True)
     for op, help_text in (("query", "poll a job and optionally download its result"),
                           ("cancel", "cancel a queued or running job")):

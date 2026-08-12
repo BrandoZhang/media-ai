@@ -122,8 +122,20 @@ def test_removing_a_directory_that_is_not_a_skill_is_refused(home):
 
 
 def test_a_path_traversing_name_is_refused(home):
-    with pytest.raises(MediaError, match="not a media-ai skill"):
+    with pytest.raises(MediaError, match=r"not a media-ai-\* skill"):
         remove_skill(home / "sk", "../../etc")
+
+
+def test_another_brands_skill_is_refused(home):
+    """The prefix guard is branded, so an uninstall is scoped to its own build's
+    copies. That is what lets two brands share an agent's skills directory — and the
+    reason `doctor` names the leftovers, so they are not read as a failed uninstall."""
+    dest = home / "sk"
+    (dest / "otherbrand-image").mkdir(parents=True)
+    (dest / "otherbrand-image" / "SKILL.md").write_text("x", encoding="utf-8")
+    with pytest.raises(MediaError, match=r"not a media-ai-\* skill"):
+        remove_skill(dest, "otherbrand-image")
+    assert (dest / "otherbrand-image" / "SKILL.md").is_file()
 
 
 def test_a_symlinked_skill_is_unlinked_not_followed(home):

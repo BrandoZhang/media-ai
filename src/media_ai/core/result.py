@@ -22,6 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..brand import cmd
+
 SCHEMA_VERSION = 2
 
 
@@ -109,7 +111,7 @@ class JobHandle:
             "model": self.model,
             "job": job,
             "output": self.output,
-            "poll": f"media-ai job query {target} --id {self.id} --output {self.output}",
+            "poll": f"{cmd('job', 'query', target)} --id {self.id} --output {self.output}",
             "meta": self.meta,
         }
 

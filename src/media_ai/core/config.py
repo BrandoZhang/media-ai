@@ -1,4 +1,4 @@
-"""``~/.config/media-ai/config.toml`` — which bindings exist here, and which are default.
+"""``~/.config/<brand>/config.toml`` — which bindings exist here, and which are default.
 
 Two tables, both non-secret::
 
@@ -44,6 +44,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..brand import cmd, config_dir
 from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
@@ -54,7 +55,7 @@ SCHEMA = 2
 
 
 def config_path() -> Path:
-    return Path(os.getenv("MEDIA_CONFIG_FILE", "~/.config/media-ai/config.toml")).expanduser()
+    return Path(os.getenv("MEDIA_CONFIG_FILE") or config_dir() / "config.toml").expanduser()
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ def _reject_v1(data: dict, path: Path) -> None:
     if stale:
         raise _fail(
             f"{path} uses the pre-binding format ([{'], ['.join(stale)}]). Configuration is now "
-            "per binding — run `media-ai init` to write it, or delete the file to start over.",
+            f"per binding — run `{cmd('init')}` to write it, or delete the file to start over.",
             code="config_schema_outdated",
         )
 
@@ -228,7 +229,7 @@ def save_config(config: "Config", *, header: str | None = None) -> Path | None:
 def render_config(config: Config, *, header: str | None = None) -> str:
     """Serialize a :class:`Config` back to TOML.
 
-    Written by ``media-ai init`` and ``media-ai config set-default``. Comments are not
+    Written by ``init`` and ``config set-default``. Comments are not
     preserved — callers back the previous file up before replacing it.
     """
     from ..credentials.tomlwrite import dumps

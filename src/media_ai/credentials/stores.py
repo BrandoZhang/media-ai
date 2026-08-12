@@ -25,6 +25,7 @@ import stat
 from collections.abc import Callable
 from pathlib import Path
 
+from ..brand import config_dir
 from ..core.errors import ErrorCategory, MediaError
 
 __all__ = [
@@ -42,7 +43,7 @@ def credentials_path() -> Path:
     Public because ``init``/``uninstall``/``doctor`` all have to name the same file
     this module reads; a second copy of the default is a bug waiting to happen.
     """
-    return Path(os.getenv("MEDIA_CREDENTIALS_FILE", "~/.config/media-ai/credentials.toml")).expanduser()
+    return Path(os.getenv("MEDIA_CREDENTIALS_FILE") or config_dir() / "credentials.toml").expanduser()
 
 
 def _read() -> dict:
@@ -99,7 +100,7 @@ def register_secret_backend(scheme: str, fn: Callable[[str], str]) -> None:
 
     The built-in schemes (``env``, ``cred``, ``keychain``, ``broker``) are handled
     directly; everything else arrives here, so a deployment adds its own vault
-    without a fork and without media-ai taking a dependency on it.
+    without a fork and without this project taking a dependency on it.
     """
     _BACKENDS[scheme] = fn
 

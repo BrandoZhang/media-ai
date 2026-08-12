@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from ..brand import cmd
 from ..core.validate import UnsupportedPolicy
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
@@ -40,7 +41,7 @@ def add_toggle(ap: argparse.ArgumentParser, *names: str, dest: str | None = None
 
 def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--binding", default=None,
-                    help="<provider>/<model>, e.g. volc-ark/seedance-2.0 (see: media-ai bindings list)")
+                    help=f"<provider>/<model>, e.g. volc-ark/seedance-2.0 (see: {cmd('bindings', 'list')})")
     ap.add_argument("--provider", default=None, help="provider name; with --model it names a binding")
     ap.add_argument("--model", default=None, help="model name; used alone only when one binding serves it")
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")

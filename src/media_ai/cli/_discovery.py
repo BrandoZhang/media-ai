@@ -1,6 +1,6 @@
 """What the packaged Agent Skills are, and which providers a selection of them needs.
 
-``media-ai init`` is skill-first: a user picks the things they want to do ("generate
+``init`` is skill-first: a user picks the things they want to do ("generate
 images") rather than the vendors they want to configure. Two questions follow from
 that, and this module answers both: *what can be picked* — each skill's blurb, its
 install tier, and what it drags in with it, read from the skill's own frontmatter —
@@ -9,16 +9,16 @@ and *what a pick costs*, i.e. the set of providers then worth asking about.
 The mapping is **derived, never hardcoded** — a skill's name gives its command
 group, the group gives its :class:`~media_ai.core.scene.Scene` set, and the manifests
 say which bindings serve those scenes. So a new binding appears in setup without
-touching this file, which is the same rule ``media-ai capabilities`` follows.
+touching this file, which is the same rule the ``capabilities`` command follows.
 
 Two consequences fall out of deriving it, both load-bearing for the wizard's size:
 
 - A skill maps to bindings by **union, not product**. Picking image + video + speech
   asks about every binding serving any of those scenes, once each — not once per
   combination.
-- Skills driving no scene contribute nothing. ``media-ai-capabilities``/``-usage``
-  are offline, ``media-ai-shared`` is documentation, and ``media-ai-job`` polls a job
-  some *other* skill created — so none of them widens the credential ask. That falls
+- Skills driving no scene contribute nothing. The ``capabilities``/``usage`` skills are
+  offline, ``shared`` is documentation, and ``job`` polls a job some *other* skill
+  created — so none of them widens the credential ask. That falls
   out of the derivation rather than needing a maintained exclusion list. So does the
   free local backend: ``video.concat`` is served by a binding with
   ``auth.kind = "none"``, and nothing with nothing to ask gets asked about.
@@ -30,25 +30,26 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 
+from ..brand import skill_name, skill_prefix
 from ..core.config import Config
 from ..core.registry import catalog
 from ..core.scene import Scene, scenes_for_group
 from ._frontmatter import parse as parse_frontmatter
+from ._render import render
 
 __all__ = [
-    "SKILL_PREFIX",
     "SkillInfo",
     "available_skills",
     "bindings_for_skills",
     "core_skills",
+    "group_of",
+    "packaged_groups",
     "scenes_for_skill",
     "resolve_selection",
     "selectable_skills",
     "skill_info",
     "skill_root",
 ]
-
-SKILL_PREFIX = "media-ai-"
 
 #: Install tiers, declared per skill in ``metadata.install.tier``.
 #:
@@ -66,28 +67,47 @@ DEFAULT_TIER = "optional"
 
 
 @lru_cache(maxsize=None)
-def available_skills() -> tuple[str, ...]:
-    """Skill directory names shipped inside the package, sorted.
+def packaged_groups() -> tuple[str, ...]:
+    """The command groups the package ships a skill for, sorted — ``("animation", …)``.
 
-    Cached: the answer cannot change within a process, and it is asked once per
-    `needs` edge during resolution and once per scanned root in `doctor` — each time
-    an `iterdir()` of a resource directory that may live inside a zip.
+    The packaged directories are named for the group alone (``skills/image/``), not for
+    the installed skill (``media-ai-image``), so that the brand enters the tree in
+    exactly one place: :func:`media_ai.brand.skill_name`. A packaged directory carrying
+    the name would be a second copy of it, and one that no rename could reach.
+
+    Cached rather than :func:`available_skills`, which is a pure function of this and of
+    the brand: caching the branded names would make the cache go stale the moment a test
+    patches the brand, for an `iterdir()` this already avoids repeating.
     """
     root = files("media_ai") / "skills"
-    return tuple(sorted(p.name for p in root.iterdir() if p.is_dir() and p.name.startswith(SKILL_PREFIX)))
+    return tuple(sorted(p.name for p in root.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()))
+
+
+def available_skills() -> tuple[str, ...]:
+    """Installed skill directory names shipped inside the package, sorted.
+
+    Branded — ``media-ai-image``, or ``<brand>-image`` for a renamed build. This is the
+    name a skill has on disk and the one every other function here takes.
+    """
+    return tuple(skill_name(g) for g in packaged_groups())
 
 
 def skill_root(skill: str):
-    """The packaged directory for one skill (a ``Traversable``, not necessarily a Path)."""
-    return files("media_ai") / "skills" / skill
+    """The packaged directory for one skill (a ``Traversable``, not necessarily a Path).
+
+    Takes the *installed* (branded) name and maps it back to the packaged group
+    directory, so callers never have to hold both forms.
+    """
+    return files("media_ai") / "skills" / group_of(skill)
 
 
 def group_of(skill: str) -> str:
-    return skill[len(SKILL_PREFIX):] if skill.startswith(SKILL_PREFIX) else skill
+    prefix = skill_prefix()
+    return skill[len(prefix):] if skill.startswith(prefix) else skill
 
 
 def scenes_for_skill(skill: str) -> frozenset[Scene]:
-    """Scenes a skill drives, from its ``media-ai-<group>`` name.
+    """Scenes a skill drives, from its ``<brand>-<group>`` name.
 
     Empty for a skill that drives no generation at all; callers read that as "needs no
     credential" rather than as an error, because that is exactly what it means for
@@ -136,9 +156,16 @@ def skill_info(skill: str) -> SkillInfo:
 
 
 def _frontmatter(skill: str) -> dict:
-    """``metadata`` plus ``description`` from a packaged SKILL.md, flattened."""
+    """``metadata`` plus ``description`` from a packaged SKILL.md, flattened.
+
+    Rendered before parsing, exactly as the installed copy will be: a ``needs:`` edge
+    reads ``{{skill}}job``, and :func:`resolve_selection` matches it against the branded
+    names from :func:`available_skills`. Parsing the raw template instead would leave
+    every dependency unresolvable — silently, since an unknown ``need`` is skipped as a
+    third-party name rather than raised on.
+    """
     try:
-        text = (skill_root(skill) / "SKILL.md").read_text(encoding="utf-8")
+        text = render((skill_root(skill) / "SKILL.md").read_text(encoding="utf-8"))
     except (OSError, FileNotFoundError):
         return {}
     front = parse_frontmatter(text)

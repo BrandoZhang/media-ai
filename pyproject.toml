@@ -4,6 +4,13 @@ requires = ["setuptools>=62.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
+# The distribution name, and below it the executable's. Both are the brand, and both
+# have to be spelled out here because this file is static — so `tests/test_brand.py`
+# pins them to `media_ai.brand.CLI_NAME`, the way `tests/test_version.py` pins the
+# installer's fallback ref to `media_ai.__version__`. A rebrand edits `brand.py`,
+# these two lines, and `CLI_NAME` in `install/install.sh`; nothing else in the tree
+# names the tool. `uv tool` keys installs by *distribution* name, so renaming that
+# too is what lets two builds coexist rather than replace each other.
 name = "media-ai"
 # Read from `media_ai.__version__` (see [tool.setuptools.dynamic] below) so the
 # version lives in exactly one place. setuptools parses that assignment statically,
@@ -19,6 +26,10 @@ dependencies = [
 ]
 
 [project.scripts]
+# The import package stays `media_ai` under every brand: it is the resource root for
+# `skills/` and `bindings/`, and the entry-point group third-party manifests register
+# under (`media_ai.bindings`). A distribution whose name differs from its import name
+# is ordinary; renaming the import package would break every plugin for no gain.
 media-ai = "media_ai.__main__:main"
 
 [project.optional-dependencies]

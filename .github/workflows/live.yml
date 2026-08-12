@@ -41,7 +41,7 @@ jobs:
           # manifest declares. Configure a binding only when one of them actually holds
           # a value — so this workflow needs no edit when a binding is added, and it
           # configures nothing it cannot use.
-          uv run media-ai bindings available > available.json
+          uv run python -m media_ai bindings available > available.json
           uv run python .github/scripts/configure_live_bindings.py available.json
       - name: Live regression tests
         run: uv run pytest -m live -v

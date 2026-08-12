@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# media-ai installer.
+# Installer for the CLI named in CLI_NAME below.
 #
 #   curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash
 #
-# Installs uv if missing, installs media-ai from git, self-tests offline, then hands
-# over to `media-ai init` for configuration.
+# Installs uv if missing, installs the package from git, self-tests offline, then hands
+# over to `<cli> init` for configuration.
 #
 # Everything lives inside main() and main is called on the last line: a curl that dies
 # mid-transfer leaves a truncated function definition that is never invoked, rather
@@ -12,9 +12,17 @@
 
 set -euo pipefail
 
+# Where the code comes from. Not the brand: a renamed build still installs from the
+# repository it was forked from unless that is changed too.
 REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 # Fallback when the releases API is unreachable or rate-limited. Bump on release.
 DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.5.2}"
+# The CLI's name, and the distribution `uv tool` keys the install by. Both are pinned
+# to `media_ai.brand.CLI_NAME` by tests/test_brand.py — this script is outside the
+# package and cannot import it, which is exactly why a test holds them together
+# (the same arrangement DEFAULT_VERSION has with `media_ai.__version__`).
+CLI_NAME="media-ai"
+DIST_NAME="$CLI_NAME"
 
 main() {
   local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
@@ -58,7 +66,7 @@ main() {
     return 0
   fi
 
-  say "installing media-ai (${version})…"
+  say "installing ${DIST_NAME} (${version})…"
   uv tool install --force "$spec" >&2
 
   check_path
@@ -152,9 +160,9 @@ parse_tag() {
 }
 
 check_path() {
-  command -v media-ai >/dev/null 2>&1 && return 0
+  command -v "$CLI_NAME" >/dev/null 2>&1 && return 0
   local bin="$HOME/.local/bin"
-  err "media-ai installed but is not on PATH."
+  err "${CLI_NAME} installed but is not on PATH."
   case "${SHELL:-}" in
     */zsh) err "  echo 'export PATH=\"$bin:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
     */fish) err "  fish_add_path $bin" ;;
@@ -174,7 +182,7 @@ self_test() {
   # run from, and adds a line to it every time it is re-run.
   local tmp status=0
   tmp="$(mktemp -d)"
-  MEDIA_USAGE_LOG="$tmp/usage.jsonl" media-ai image generate --binding mock/mock --prompt "install check" \
+  MEDIA_USAGE_LOG="$tmp/usage.jsonl" "$CLI_NAME" image generate --binding mock/mock --prompt "install check" \
     --output "$tmp/probe.png" >/dev/null 2>"$tmp/err" || status=$?
   if [ "$status" -eq 0 ]; then
     say "self-test passed (offline, no key needed)"
@@ -200,16 +208,16 @@ run_init() {
   # left to right, so the other order lets bash's own ENXIO message escape.
   if ! : 2>/dev/null < /dev/tty; then
     say "no terminal available; skipping setup. Configure later with:"
-    printf '      media-ai init\n' >&2
+    printf '      %s init\n' "$CLI_NAME" >&2
     return 0
   fi
   # stdout is discarded for the same reason run_uninstall discards it: `init` ends by
   # printing its machine-contract JSON object, which after a wizard the user just
   # finished reading is noise landing under the closing line.
   if [ -n "$skills_dest" ]; then
-    media-ai init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
+    "$CLI_NAME" init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
   else
-    media-ai init < /dev/tty >/dev/null || true
+    "$CLI_NAME" init < /dev/tty >/dev/null || true
   fi
 }
 
@@ -228,27 +236,27 @@ run_uninstall() {
   : 2>/dev/null < /dev/tty || have_tty=0
   if [ "$assume_yes" -eq 1 ] || [ "$have_tty" -eq 0 ]; then flags+=(--yes); fi
 
-  if command -v media-ai >/dev/null 2>&1; then
+  if command -v "$CLI_NAME" >/dev/null 2>&1; then
     say "removing installed Agent Skills and configuration…"
     if [ "$have_tty" -eq 1 ]; then
-      media-ai uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
+      "$CLI_NAME" uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
     else
-      media-ai uninstall "${flags[@]+"${flags[@]}"}" >/dev/null || true
+      "$CLI_NAME" uninstall "${flags[@]+"${flags[@]}"}" >/dev/null || true
     fi
   else
-    err "media-ai is not on PATH; skipping skill removal (run 'media-ai uninstall' yourself if it is installed elsewhere)"
+    err "${CLI_NAME} is not on PATH; skipping skill removal (run '${CLI_NAME} uninstall' yourself if it is installed elsewhere)"
   fi
 
   if [ "$dry_run" -eq 1 ]; then
-    say "would run: uv tool uninstall media-ai"
+    say "would run: uv tool uninstall ${DIST_NAME}"
     return 0
   fi
-  if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q '^media-ai'; then
-    say "removing the media-ai CLI…"
-    uv tool uninstall media-ai >&2
+  if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q "^${DIST_NAME}"; then
+    say "removing the ${CLI_NAME} CLI…"
+    uv tool uninstall "$DIST_NAME" >&2
   else
-    err "media-ai was not installed as a uv tool; remove it however you installed it:"
-    err "  pip uninstall media-ai"
+    err "${DIST_NAME} was not installed as a uv tool; remove it however you installed it:"
+    err "  pip uninstall ${DIST_NAME}"
   fi
   return 0
 }

@@ -1,4 +1,4 @@
-"""``media-ai init`` — set up bindings, scene defaults, and Agent Skills.
+"""``<cli> init`` — set up bindings, scene defaults, and Agent Skills.
 
 Skill-first: a user picks what they want to *do* ("generate images") and the wizard
 derives which **bindings** could serve that, from the manifests. Nothing here holds a
@@ -24,6 +24,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..brand import cli_name, cmd
 from ..core.binding import AuthKind
 from ..core.config import Config, config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
@@ -47,16 +48,24 @@ from ._discovery import (
 from ._prompt import Cancelled, GoBack, Option, get_prompter, run_steps
 from ._skillstore import SKILL_DESTS, copy_skill, installed_skills, record_install, skill_is_current
 
-CREDENTIALS_HEADER = (
-    "media-ai credentials — written by `media-ai init`.\n"
-    "SECRETS: keep this file chmod 600; the CLI refuses to read it otherwise.\n"
-    "Each [<name>] is an account. The wizard names one after the binding that\n"
-    "uses it, so `which key did this binding use?` has a one-line answer."
-)
-CONFIG_HEADER = (
-    "media-ai config — written by `media-ai init`.\n"
-    "NON-SECRET: safe to share. Bindings and scene defaults, never a key."
-)
+def credentials_header() -> str:
+    """The comment block written at the top of ``credentials.toml``."""
+    cli = cli_name()
+    return (
+        f"{cli} credentials — written by `{cli} init`.\n"
+        "SECRETS: keep this file chmod 600; the CLI refuses to read it otherwise.\n"
+        "Each [<name>] is an account. The wizard names one after the binding that\n"
+        "uses it, so `which key did this binding use?` has a one-line answer."
+    )
+
+
+def config_header() -> str:
+    """The comment block written at the top of ``config.toml`` by the wizard."""
+    cli = cli_name()
+    return (
+        f"{cli} config — written by `{cli} init`.\n"
+        "NON-SECRET: safe to share. Bindings and scene defaults, never a key."
+    )
 
 
 #: Re-exported so the wizard and everything that has to clean up after it name the
@@ -100,8 +109,8 @@ def _backup(path: Path) -> Path | None:
 def _skill_choices(skills: list[str]) -> list[Option]:
     """One row per skill: what it costs (hint) and what it is (detail).
 
-    A bare list of ``media-ai-*`` names is not a choice a user can make — nothing on
-    it says what ``media-ai-sound`` does, or that ``media-ai-concat`` needs no key. So
+    A bare list of ``<brand>-*`` names is not a choice a user can make — nothing on
+    it says what the ``sound`` skill does, or that ``concat`` needs no key. So
     the skill's own blurb is shown beside it.
     """
     out = []
@@ -129,15 +138,15 @@ def _dest_state(path: Path) -> tuple[str, str]:
     """``(hint, sentence)`` describing what is already at ``path``.
 
     "exists" on its own was the wrong answer to the wrong question: it left the user
-    unable to tell whether the *directory* was there or whether media-ai's skills were
+    unable to tell whether the *directory* was there or whether this tool's skills were
     already in it — which is the difference between a first install and a refresh.
     """
     if not path.is_dir():
         return "", "Does not exist yet; it will be created."
     here = installed_skills(path)
     if here:
-        return f"{len(here)} installed", f"Already holds {len(here)} media-ai skill(s), which this will bring up to date."
-    return "", "The directory is there, with no media-ai skills in it yet."
+        return f"{len(here)} installed", f"Already holds {len(here)} {cli_name()} skill(s), which this will bring up to date."
+    return "", f"The directory is there, with no {cli_name()} skills in it yet."
 
 
 #: Sentinel for the "somewhere else" row. A row rather than a follow-up question:
@@ -417,7 +426,7 @@ def _ask_one_credential(bid: str, skills: list[str], mode: int, prompter) -> dic
     spec = cat.get(bid)
     provider = cat.providers[spec.provider]
     env = provider.auth.env or (f"{provider.name.upper().replace('-', '_')}_API_KEY",)
-    label = f"{bid} — unlocks {', '.join(s.removeprefix('media-ai-') for s in skills)}"
+    label = f"{bid} — unlocks {', '.join(group_of(s) for s in skills)}"
     if provider.setup_hint:
         label += f"\n  {provider.setup_hint}"
     already = _env_already_set(env)
@@ -446,7 +455,7 @@ def _binding_choice(bid: str, skills: list[str]) -> Option:
     elif spec.lifecycle.value == "preview":
         bits.append("preview")
     bits.append(f"verified {spec.verified}" if spec.verified else "never live-tested")
-    bits.append(", ".join(s.removeprefix("media-ai-") for s in skills))
+    bits.append(", ".join(group_of(s) for s in skills))
     return Option(bid, hint=" · ".join(bits), value=bid)
 
 
@@ -460,7 +469,7 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
     The question is only asked about the scenes where there is genuinely something to
     choose. A scene with a single candidate is not a decision, and it used to be skipped
     entirely whenever the group's answer went to a binding that did not serve it: choose
-    a model for ``media-ai video`` and ``video.concat`` — served by ``local/ffmpeg``
+    a model for the ``video`` group and ``video.concat`` — served by ``local/ffmpeg``
     alone, offered in the same list, and never the answer anyone gives to "which model
     generates my video" — was left with no default at all, so a fresh install refused
     ``video concat`` while naming the binding it should have used in the hint.
@@ -470,7 +479,7 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
     ``eleven-multilingual-v2`` (speech only), ``eleven-v3`` (dialogue only) and
     ``gemini-tts`` (both), answer the group question with either ElevenLabs model, and
     the *other* scene had two candidates, neither of them the answer — so it was dropped
-    on the same floor ``video.concat`` used to land on, and ``media-ai speech dialogue``
+    on the same floor ``video.concat`` used to land on, and ``speech dialogue``
     refused on a fresh install. Those scenes get their own question rather than an
     inferred sibling: a default is what every unflagged call silently gets, which is the
     last place to substitute something nobody chose.
@@ -483,7 +492,7 @@ def _ask_scene_defaults(bindings: list[str], skills: list[str], prompter) -> dic
         contested = sorted({b for candidates in serves.values() if len(candidates) > 1 for b in candidates})
         chosen = None
         if contested:
-            idx = prompter.select(f"Default for `media-ai {group}` when no binding is named",
+            idx = prompter.select(f"Default for `{cli_name()} {group}` when no binding is named",
                                   [Option(b, hint=cat.get(b).title, value=b) for b in contested])
             chosen = contested[idx]
         for scene, candidates in serves.items():
@@ -543,7 +552,7 @@ def _wizard(args, prompter) -> dict:
     (``--skills-dest``, ``--skills-only``, no provider needed) — the driver skips over
     those on the way back, so "back" always lands on a real question.
     """
-    prompter.intro("media-ai setup")
+    prompter.intro(f"{cli_name()} setup")
     for title, message in announcements():
         prompter.box(title, message)
     summary: dict = {
@@ -683,7 +692,7 @@ def _ask_defaults(args, prompter, answers: _Answers) -> None:
     The candidates are the bindings configured here **plus the ones that need no
     configuring**. Leaving those out was a bug with teeth: ``local/ffmpeg`` requires no
     credential, so it never appeared in ``creds``, so no default was ever written for the
-    scenes only it serves — and ``media-ai video concat`` on a fresh install answered
+    scenes only it serves — and ``video concat`` on a fresh install answered
     ``no_default_binding`` for a binding that was sitting right there, free and offline.
     Whether a binding needs a key has nothing to do with whether a caller may omit its
     name, and this step is the one that decides the latter.
@@ -747,7 +756,7 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
         # at env:// keeps its key out of the filesystem entirely, which is the whole
         # reason that option exists.
         path = credentials_path()
-        pending.append((path, _render(path, _load(path) | raw_keys, CREDENTIALS_HEADER), write_private))
+        pending.append((path, _render(path, _load(path) | raw_keys, credentials_header()), write_private))
     if answers.creds or answers.defaults:
         pending.append((config_path(), _render_config(answers), write_public))
 
@@ -788,7 +797,7 @@ def _render_config(answers: _Answers) -> str:
         defaults=dict(existing.defaults) | answers.defaults,
         path=config_path(), exists=True,
     )
-    return render_config(merged, header=CONFIG_HEADER)
+    return render_config(merged, header=config_header())
 
 
 def _render(path: Path, data: dict, header: str) -> str:
@@ -860,16 +869,16 @@ def _report(summary: dict, prompter) -> None:
     elif summary["bindings"]:
         prompter.note(
             "\nNo default was set, so every call has to name a binding:\n"
-            f"  media-ai config set-default <scene> {summary['bindings'][0]}"
+            f"  {cmd('config', 'set-default')} <scene> {summary['bindings'][0]}"
         )
     # Named in full, and only here. `mock/mock` draws a picture of the prompt, so the
     # one safe way to mention it is as something the reader is deliberately asking for.
     prompter.note("\nTry it offline (draws a placeholder — no key, no network):\n"
-                  "  media-ai image generate --binding mock/mock --prompt hello --output /tmp/x.png")
+                  f"  {cmd('image', 'generate')} --binding mock/mock --prompt hello --output /tmp/x.png")
     prompter.outro(
         "Dry run — nothing was changed."
         if dry
-        else "Done. `media-ai doctor` checks this install; `media-ai uninstall` undoes it."
+        else f"Done. `{cmd('doctor')}` checks this install; `{cmd('uninstall')}` undoes it."
     )
 
 
@@ -877,7 +886,8 @@ def _report(summary: dict, prompter) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="media-ai init", description="Configure credentials, bindings, and Agent Skills.")
+    ap = argparse.ArgumentParser(prog=f"{cli_name()} init",
+                                 description="Configure credentials, bindings, and Agent Skills.")
     ap.add_argument("--verify", action="store_true", help="probe each key after writing (off by default)")
     ap.add_argument("--advanced", action="store_true",
                     help="also configure each binding's wire identifier (Ark endpoint ID where applicable)")

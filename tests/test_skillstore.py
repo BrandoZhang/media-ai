@@ -74,11 +74,25 @@ class TestStaleFilesAreRemoved:
 
 
 class TestSymlinkedInstalls:
-    """`skills/README.md` documents symlinking the packaged directories."""
+    """A symlink is compared by content like anything else, and must still be
+    *removable* — the two things that stayed true when it stopped being installable."""
 
-    def test_a_resolving_symlink_is_current(self, dest):
+    def test_a_symlink_to_the_packaged_tree_is_not_current(self, dest):
+        """It used to be current by construction — it *was* the packaged directory.
+        Since that directory became a template, following the link puts a literal
+        `{{cli}}` in front of the agent, so the honest answer is 'not current' and the
+        installer replaces it with a rendered copy."""
         dest.mkdir(parents=True)
         (dest / "media-ai-image").symlink_to(str(skill_root("media-ai-image")))
+        assert not skill_is_current(dest, "media-ai-image")
+
+    def test_a_symlink_to_a_rendered_tree_is_current(self, dest, tmp_path):
+        """The rule is content, not link-ness: a link to an up-to-date copy elsewhere
+        is fine, so this is not a blanket ban on symlinked installs."""
+        rendered = tmp_path / "rendered"
+        copy_skill("media-ai-image", rendered)
+        dest.mkdir(parents=True)
+        (dest / "media-ai-image").symlink_to(str(rendered / "media-ai-image"))
         assert skill_is_current(dest, "media-ai-image")
 
     def test_a_dangling_symlink_is_not_current(self, dest, tmp_path):
@@ -107,7 +121,7 @@ def test_the_packaged_tree_is_read_once_per_skill(dest, monkeypatch):
     """Every (destination, skill) pair compares against the same packaged files."""
     import media_ai.cli._skillstore as store
 
-    store._packaged_tree.cache_clear()
+    store._packaged_source.cache_clear()
     reads = []
     real = store._tree
     monkeypatch.setattr(store, "_tree", lambda root: (reads.append(str(root)), real(root))[1])

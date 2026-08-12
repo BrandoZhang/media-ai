@@ -1,6 +1,6 @@
 """Pre-flight validation against a binding's declared constraints.
 
-The same manifest that ``media-ai capabilities`` prints is what gates the request, so
+The same manifest that ``capabilities`` prints is what gates the request, so
 discovery and enforcement cannot drift: there is one declaration, read twice. Anything
 a binding does not declare is rejected **before the network call** — no key needed, no
 money spent, a machine-readable reason.
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+from ..brand import cmd
 from .binding import Constraints
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
@@ -310,7 +311,7 @@ def validate_request(
             "scene": scene.value if scene else None,
             "unsupported": [{"field": field, "reason": reason} for field, reason in issues],
         },
-        hint="media-ai capabilities --binding " + binding if binding else "media-ai capabilities",
+        hint=f"{cmd('capabilities')} --binding {binding}" if binding else cmd("capabilities"),
     )
 
 
