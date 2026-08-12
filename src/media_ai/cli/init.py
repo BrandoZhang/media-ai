@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ..brand import cli_name, cmd
 from ..core.binding import AuthKind
-from ..core.config import Config, config_path, load_config, render_config
+from ..core.config import config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.result import SCHEMA_VERSION
@@ -793,7 +793,7 @@ def _render_config(answers: _Answers) -> str:
             base_url=answers.base_urls.get(bid),
             credential=key if key.startswith("env://") else f"cred://{bid}",
         )
-    merged = Config(
+    merged = existing.merged_with(
         bindings=bindings,
         defaults=dict(existing.defaults) | answers.defaults,
         path=config_path(), exists=True,

@@ -93,7 +93,7 @@ def _set_default(args) -> dict:
     defaults = dict(config.defaults)
     for scene in scenes:
         defaults[scene.value] = args.binding
-    updated = type(config)(bindings=dict(config.bindings), defaults=defaults, path=config.path, exists=True)
+    updated = config.merged_with(defaults=defaults, exists=True)
     saved = save_config(updated, header=config_header())
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,

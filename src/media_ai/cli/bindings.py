@@ -153,7 +153,7 @@ def _add(args) -> dict:
         endpoint_id="" if args.model_id else args.endpoint_id,
         base_url=args.base_url, credential=args.credential,
     )
-    updated = type(config)(bindings=bindings, defaults=dict(config.defaults), path=config.path, exists=True)
+    updated = config.merged_with(bindings=bindings, exists=True)
     saved = save_config(updated, header=config_header())
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,

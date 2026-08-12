@@ -35,16 +35,59 @@ three are "the same declared capabilities, reached differently".
 **Defaults are keyed by scene** so a call with neither ``--provider`` nor ``--model``
 still resolves. That is the whole of what this file does about picking a binding: it
 names one per scene. It never picks a *different* one because the first failed.
+
+Versioning: a one-way door
+--------------------------
+
+``schema`` is a monotonic integer, not the release version. A file format has no
+"new feature" tier — a reader either understands a document or it does not — so the
+question it has to answer is a boolean, and a semver here would only ask every reader
+to do a range comparison to arrive at one.
+
+The two directions are deliberately not symmetric:
+
+**A newer build reads an older file.** It migrates (:func:`_migrate`) and carries on.
+There is no chain registered yet, so today this only accepts the current schema and
+refuses anything older with the same "re-run setup" answer as before — but the hook is
+where a real migration lands, rather than being invented in a hurry beside the first
+change that needs one.
+
+**An older build reads a newer file.** It refuses, with ``config_from_newer_build``,
+and says to upgrade. This is not the same failure as an outdated file and must not
+share its message: the user is holding something *ahead* of their CLI — a second
+machine, an old virtualenv, a downgrade — and "re-run setup" would talk them into
+overwriting the good file with a worse one.
+
+Unknown fields are preserved
+----------------------------
+
+Every table and key this build does not recognise is kept on the :class:`Config` and
+written back out verbatim. :func:`render_config` rebuilds the whole file from the
+parsed object, so anything not modelled here is *deleted* by the next ``bindings add``
+— and that is precisely how a field added in a later release would disappear on a
+machine that still has an older build, silently, in a command about something else.
+
+This is what makes it safe for a later version to add an optional table (an update
+preference, a marker naming where a managed entry came from) without bumping
+``schema``: an old build ignores it, but no longer eats it. The bump then buys the
+thing it is actually for — refusing a file whose *meaning* has changed — instead of
+being the only defence against field loss.
+
+Preservation only reaches as far as the writer does. ``tomlwrite.dumps`` takes
+strings, integers, booleans, lists of strings and nested tables; a value outside that
+subset (a float, a datetime, an array of tables) makes :func:`save_config` refuse,
+naming the field. Refusing beats dropping: dropping is the failure this section
+exists to remove, and it is invisible.
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ..brand import cmd, config_dir
+from ..brand import cli_name, cmd, config_dir
 from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
@@ -69,6 +112,9 @@ class UserBinding:
     base_url: str | None = None
     credential: str | None = None
     options: dict = field(default_factory=dict)
+    #: Keys in this binding's table that this build does not model, kept so writing
+    #: the config back does not delete them. See the module docstring.
+    extra: dict = field(default_factory=dict)
 
     def merged_with(self, **changes) -> UserBinding:
         """This entry with only the named fields replaced; ``None`` means "leave alone".
@@ -87,7 +133,10 @@ class UserBinding:
             for f in ("extends", "model_id", "endpoint_id", "base_url", "credential")
         }
         options = self.options if changes.get("options") is None else changes["options"]
-        return UserBinding(id=self.id, options=dict(options or {}), **kept)
+        # `extra` rides along for the same reason every other unnamed field does: this
+        # is the one path that edits an existing entry, so dropping it here would undo
+        # the preservation at exactly the moment it is needed.
+        return UserBinding(id=self.id, options=dict(options or {}), extra=dict(self.extra), **kept)
 
 
 @dataclass(frozen=True)
@@ -96,13 +145,37 @@ class Config:
     defaults: dict[str, str] = field(default_factory=dict)  # scene value -> binding id
     path: Path | None = None
     exists: bool = False
+    #: Top-level keys and tables this build does not model, kept verbatim so writing
+    #: the config back does not delete them. See the module docstring.
+    extra: dict = field(default_factory=dict)
 
     def default_for(self, scene: Scene) -> str | None:
         return self.defaults.get(scene.value)
 
+    def merged_with(self, **changes) -> Config:
+        """This config with only the named fields replaced.
+
+        The same rule as :meth:`UserBinding.merged_with`, one level up, and it exists
+        for the same reason: every writer used to rebuild the object from the fields it
+        happened to care about — ``bindings add`` from ``bindings``, ``config
+        set-default`` from ``defaults`` — so a field none of them named was dropped by
+        all of them. That is how ``extra`` would have been lost on the first write,
+        undoing the preservation it was added for. A field added after this one is
+        carried by construction rather than by three call sites remembering.
+        """
+        return replace(self, **changes)
+
 
 def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
     return MediaError(msg, category=ErrorCategory.CLI, code=code)
+
+
+#: The keys this build models inside a ``[bindings."…"]`` table. Anything else is kept
+#: on :attr:`UserBinding.extra` rather than dropped — see the module docstring.
+_BINDING_KEYS = frozenset({"extends", "model_id", "endpoint_id", "base_url", "credential", "options"})
+
+#: The top-level keys this build models. Same rule, one level up.
+_TOP_KEYS = frozenset({"schema", "bindings", "defaults"})
 
 
 def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
@@ -146,6 +219,7 @@ def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
         base_url=raw.get("base_url"),
         credential=credential,
         options=dict(options),
+        extra={k: v for k, v in raw.items() if k not in _BINDING_KEYS},
     )
 
 
@@ -166,6 +240,41 @@ def _reject_v1(data: dict, path: Path) -> None:
         )
 
 
+def _declared_schema(data: dict, path: Path) -> int:
+    """Which schema ``data`` is written in.
+
+    An absent ``schema`` is read as the current one, because a minimal hand-written
+    file should work without ceremony — and every write puts the key back, so the
+    ambiguity is met once per file at most. It is only safe because the one older
+    layout that exists is recognisable by shape (:func:`_reject_v1` reads
+    ``[profiles]``/``[providers.x]``), which is the fallback whenever a version field
+    is missing: identify the document, do not assume the newest.
+    """
+    declared = data.get("schema", SCHEMA)
+    # bool first: it is an int subclass, and `schema = true` reaching the comparisons
+    # below would be read as schema 1.
+    if isinstance(declared, bool) or not isinstance(declared, int):
+        raise _fail(f"{path}: schema must be an integer, got {declared!r}")
+    return declared
+
+
+def _migrate(data: dict, *, frm: int, path: Path) -> dict:
+    """Bring a document written in schema ``frm`` up to :data:`SCHEMA`.
+
+    The hook exists ahead of anything to run in it, and refuses rather than pretending:
+    an unmigratable file gets the same actionable answer it did before. When the first
+    real migration lands it registers here, with the change that needs it, instead of
+    being designed in the abstract now.
+    """
+    if frm == SCHEMA:
+        return data
+    raise _fail(
+        f"{path} is written in schema {frm}; this build reads schema {SCHEMA} and has no "
+        f"migration for it. Run `{cmd('init')}` to write it again, or delete the file to start over.",
+        code="config_schema_outdated",
+    )
+
+
 def load_config(path: Path | None = None) -> Config:
     """Read the config, or return an empty one when there is no file.
 
@@ -181,12 +290,16 @@ def load_config(path: Path | None = None) -> Config:
         raise _fail(f"could not read {path}: {exc}") from exc
 
     _reject_v1(data, path)
-    schema = data.get("schema", SCHEMA)
-    if schema != SCHEMA:
+    schema = _declared_schema(data, path)
+    if schema > SCHEMA:
+        # The file is ahead of the CLI, so the fix is upgrading — never re-running
+        # setup, which would overwrite a good file with one this build can express.
         raise _fail(
-            f"{path} declares schema = {schema!r}; this build reads schema = {SCHEMA}",
-            code="config_schema_outdated",
+            f"{path} was written by a newer build (schema {schema}; this one reads {SCHEMA}). "
+            f"Upgrade {cli_name()}, or point $MEDIA_CONFIG_FILE at a different file.",
+            code="config_from_newer_build",
         )
+    data = _migrate(data, frm=schema, path=path)
 
     raw_bindings = data.get("bindings", {})
     if not isinstance(raw_bindings, dict):
@@ -206,7 +319,13 @@ def load_config(path: Path | None = None) -> Config:
             raise _fail(f'{path}: [defaults]."{key}" must be a binding id')
         defaults[key] = value
 
-    return Config(bindings=bindings, defaults=defaults, path=path, exists=True)
+    return Config(
+        bindings=bindings,
+        defaults=defaults,
+        path=path,
+        exists=True,
+        extra={k: v for k, v in data.items() if k not in _TOP_KEYS},
+    )
 
 
 def save_config(config: Config, *, header: str | None = None) -> Path | None:
@@ -221,8 +340,11 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     from ..credentials.tomlwrite import backup, write_public
 
     path = config_path()
+    # Rendered before the backup, so a file that cannot be written leaves nothing
+    # behind — neither a `.bak` for a write that never happened nor a truncated file.
+    text = render_config(config, header=header)
     saved = backup(path)
-    write_public(path, render_config(config, header=header))
+    write_public(path, text)
     return saved
 
 
@@ -231,26 +353,48 @@ def render_config(config: Config, *, header: str | None = None) -> str:
 
     Written by ``init`` and ``config set-default``. Comments are not
     preserved — callers back the previous file up before replacing it.
+
+    Fields this build does not model are written back from ``extra``; a value the
+    writer's subset cannot express raises rather than being dropped.
     """
-    from ..credentials.tomlwrite import dumps
+    from ..credentials.tomlwrite import TomlWriteError, dumps
 
     data: dict = {"schema": SCHEMA}
     if config.bindings:
         data["bindings"] = {
             bid: {
-                k: v
-                for k, v in (
-                    ("extends", b.extends),
-                    ("model_id", b.model_id),
-                    ("endpoint_id", b.endpoint_id),
-                    ("base_url", b.base_url),
-                    ("credential", b.credential),
-                    ("options", b.options or None),
-                )
-                if v is not None
+                # Unknown keys first so a modelled field always wins the collision: a
+                # stale `credential` left in `extra` by some future rename must not be
+                # able to overwrite the one this build parsed and validated.
+                **b.extra,
+                **{
+                    k: v
+                    for k, v in (
+                        ("extends", b.extends),
+                        ("model_id", b.model_id),
+                        ("endpoint_id", b.endpoint_id),
+                        ("base_url", b.base_url),
+                        ("credential", b.credential),
+                        ("options", b.options or None),
+                    )
+                    if v is not None
+                },
             }
             for bid, b in sorted(config.bindings.items())
         }
     if config.defaults:
         data["defaults"] = dict(sorted(config.defaults.items()))
-    return dumps(data, header=header)
+    for key, value in config.extra.items():
+        data.setdefault(key, value)
+    try:
+        return dumps(data, header=header)
+    except TomlWriteError as exc:
+        # Reached by a hand-written value outside the writer's subset — a float
+        # timeout in `options`, a datetime, an array of tables. The alternative is
+        # dropping it, which is the failure `extra` exists to remove, so this refuses
+        # and names the field rather than quietly writing a smaller file.
+        raise _fail(
+            f"{config.path or config_path()} holds a value this build cannot write back ({exc}). "
+            "Remove or quote it, then re-run.",
+            code="config_unwritable_field",
+        ) from exc
