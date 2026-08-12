@@ -132,7 +132,7 @@ jobs:
       # passed everything, including the installer's own checks.
       - name: Lint
         if: steps.plan.outputs.release == 'true'
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check .
 
       - name: Test (offline — no creds, no network)
         if: steps.plan.outputs.release == 'true'

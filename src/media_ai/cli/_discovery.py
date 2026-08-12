@@ -27,7 +27,7 @@ Two consequences fall out of deriving it, both load-bearing for the wizard's siz
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from importlib.resources import files
 
 from ..brand import skill_name, skill_prefix
@@ -66,7 +66,7 @@ TIERS = ("core", "optional", "dependency")
 DEFAULT_TIER = "optional"
 
 
-@lru_cache(maxsize=None)
+@cache
 def packaged_groups() -> tuple[str, ...]:
     """The command groups the package ships a skill for, sorted — ``("animation", …)``.
 
@@ -135,7 +135,7 @@ class SkillInfo:
     needs: tuple[str, ...]  #: other skills that must be installed alongside it
 
 
-@lru_cache(maxsize=None)
+@cache
 def skill_info(skill: str) -> SkillInfo:
     """Parse one skill's ``metadata.install`` block.
 

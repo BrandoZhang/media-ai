@@ -19,10 +19,10 @@ import argparse
 from pathlib import Path
 
 from ..brand import cli_name, cmd
-from ..core.validate import validate_request
 from ..core.logging import get_logger
 from ..core.scene import Scene
 from ..core.types import MediaRef, VideoRequest
+from ..core.validate import validate_request
 from ..media import ffmpeg
 from . import common
 

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 from conftest import CATALOG, adapter_for
+
+from media_ai.core.errors import MediaError
 from media_ai.core.scene import Scene
 from media_ai.core.types import (
     AnimationRequest,
@@ -28,7 +30,6 @@ from media_ai.core.types import (
     VideoRequest,
 )
 from media_ai.core.validate import UnsupportedPolicy, validate_request
-from media_ai.core.errors import MediaError
 
 BINDING_IDS = [b.id for b in CATALOG.all()]
 

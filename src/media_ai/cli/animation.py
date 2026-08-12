@@ -23,10 +23,10 @@ import argparse
 from pathlib import Path
 
 from ..brand import cli_name
-from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import AnimationRequest, MediaRef
+from ..core.validate import validate_request
 from ..media.animation import CONTAINER_NAMES, KEY_MODES, SCALE_FILTERS
 from . import common
 

@@ -19,6 +19,7 @@ from ..core.result import SCHEMA_VERSION
 from ..credentials.reference import is_reference
 from . import common
 
+
 def config_header() -> str:
     """The comment block written at the top of ``config.toml``.
 

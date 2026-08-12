@@ -145,7 +145,9 @@ class VolcArkAdapter(HttpAdapter):
                 body["sequential_image_generation"] = "disabled"
 
         if stream:
-            data = self._streamed_image_response(client.request_sse_json("POST", "/images/generations", body=body, headers=headers))
+            data = self._streamed_image_response(
+                client.request_sse_json("POST", "/images/generations", body=body, headers=headers)
+            )
         else:
             data = client.request_json("POST", "/images/generations", body=body, headers=headers)
         items = [d for d in (data.get("data") or []) if d.get("url") or d.get("b64_json")]
@@ -241,9 +243,13 @@ class VolcArkAdapter(HttpAdapter):
         if req.prompt:
             content.append({"type": "text", "text": req.prompt})
         if req.first_frame:
-            content.append({"type": "image_url", "image_url": {"url": to_data_uri(req.first_frame, "image")}, "role": "first_frame"})
+            content.append(
+                {"type": "image_url", "image_url": {"url": to_data_uri(req.first_frame, "image")}, "role": "first_frame"}
+            )
         if req.last_frame:
-            content.append({"type": "image_url", "image_url": {"url": to_data_uri(req.last_frame, "image")}, "role": "last_frame"})
+            content.append(
+                {"type": "image_url", "image_url": {"url": to_data_uri(req.last_frame, "image")}, "role": "last_frame"}
+            )
         for r in req.reference_images:
             content.append({"type": "image_url", "image_url": {"url": to_data_uri(r, "image")}, "role": "reference_image"})
         for r in req.reference_videos:
@@ -251,7 +257,11 @@ class VolcArkAdapter(HttpAdapter):
         for r in req.reference_audios:
             content.append({"type": "audio_url", "audio_url": {"url": to_data_uri(r, "audio")}, "role": "reference_audio"})
         if not content:
-            raise MediaError("video generation needs a prompt or at least one reference", category=ErrorCategory.VALIDATION, provider=self.name)
+            raise MediaError(
+                "video generation needs a prompt or at least one reference",
+                category=ErrorCategory.VALIDATION,
+                provider=self.name,
+            )
         return content
 
     def _create_task(self, req: VideoRequest, client, headers) -> str:

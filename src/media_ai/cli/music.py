@@ -13,10 +13,10 @@ import json
 from pathlib import Path
 
 from ..brand import cli_name
-from ..core.validate import validate_request
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..core.types import MusicPlanRequest, MusicRequest
+from ..core.validate import validate_request
 from . import common
 
 

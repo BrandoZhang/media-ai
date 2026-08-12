@@ -48,7 +48,7 @@ class Artifact:
     role: str | None = None
 
     @classmethod
-    def from_path(cls, path: Path | str, kind: str, *, mime: str | None = None, role: str | None = None) -> "Artifact":
+    def from_path(cls, path: Path | str, kind: str, *, mime: str | None = None, role: str | None = None) -> Artifact:
         p = Path(path)
         return cls(str(p), kind, mime=mime, bytes=(p.stat().st_size if p.is_file() else 0), role=role)
 

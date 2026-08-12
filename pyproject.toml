@@ -67,4 +67,19 @@ line-length = 130
 target-version = "py311"
 
 [tool.ruff.lint]
-ignore = ["E402", "E741"]
+# Beyond ruff's default (E4/E7/E9 + F): `I` because import order is the style
+# argument that actually recurs in review and the one a machine settles for free;
+# `UP` and `B` because they catch defects rather than taste — a lost exception
+# chain (B904) or a `zip` that silently truncates (B905) are bugs, not layout.
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E402",
+    "E741",
+    # `class Foo(str, Enum)` → `StrEnum` is not a refactor this codebase can take
+    # casually: the two disagree on `__str__`/`__format__`, so every f-string and
+    # `str()` over a Scene/ErrorCategory/Modality would switch from `Scene.IMAGE_GENERATE`
+    # to `image.generate`. stdout is a machine contract (see AGENTS.md), and the
+    # serialization sites deliberately spell `.value` — the mixin is load-bearing,
+    # not legacy. Revisit only as its own change, with the JSON diffed.
+    "UP042",
+]

@@ -15,7 +15,6 @@ a command group covers exactly the scenes under it — which is why joining clip
 from __future__ import annotations
 
 import sys
-
 from importlib import import_module
 
 from .brand import cli_name
@@ -92,9 +91,9 @@ def _usage(stream) -> None:
     print("\nexamples:", file=stream)
     # The comment column is measured, not typed: a longer or shorter brand would
     # otherwise leave the `#`s in a ragged line down the middle of the help.
-    lines = [f"  {cli} {argv}" for argv, _ in _EXAMPLES]
-    width = max((len(line) for line, (_, note) in zip(lines, _EXAMPLES) if note), default=0)
-    for line, (_, note) in zip(lines, _EXAMPLES):
+    rows = [(f"  {cli} {argv}", note) for argv, note in _EXAMPLES]
+    width = max((len(line) for line, note in rows if note), default=0)
+    for line, note in rows:
         print(f"{line:<{width}}  # {note}" if note else line, file=stream)
 
 

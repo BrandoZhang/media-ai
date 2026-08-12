@@ -25,7 +25,7 @@ jobs:
       - name: Sync
         run: uv sync
       - name: Lint
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check .
       - name: Test (offline — no creds, no network)
         run: uv run pytest -q -m "not live"
       - name: Lint the workflows

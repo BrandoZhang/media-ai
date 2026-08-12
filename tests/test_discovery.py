@@ -8,6 +8,7 @@ adding a binding does not break them.
 from __future__ import annotations
 
 import pytest
+from conftest import CATALOG
 
 from media_ai.cli._discovery import (
     TIERS,
@@ -19,7 +20,6 @@ from media_ai.cli._discovery import (
     selectable_skills,
     skill_info,
 )
-from conftest import CATALOG
 from media_ai.core.scene import Scene
 
 # Skills that drive no credentialed generation: local ffmpeg, offline, or docs.

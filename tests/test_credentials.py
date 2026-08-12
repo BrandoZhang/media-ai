@@ -12,6 +12,7 @@ import json
 import pickle
 
 import pytest
+
 from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.credentials import redaction
 from media_ai.credentials.reference import BindingCredentials, is_reference, resolve_reference

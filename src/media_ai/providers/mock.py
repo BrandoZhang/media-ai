@@ -19,11 +19,11 @@ import tempfile
 from pathlib import Path
 
 from ..brand import cmd
+from ..core.adapter import Adapter
 from ..core.errors import ErrorCategory, MediaError
 from ..core.geometry import resolve_image_pixels, resolve_video_pixels
-from ..core.adapter import Adapter
-from ..core.scene import Scene, derive_scene
 from ..core.result import Artifact, GenerationResult, JobHandle, JobStatus
+from ..core.scene import Scene, derive_scene
 from ..core.types import (
     DialogueRequest,
     ImageRequest,

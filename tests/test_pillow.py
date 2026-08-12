@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 
 import pytest
+
 from media_ai.media.pillow import save_image_bytes, sniff_image_mime
 
 

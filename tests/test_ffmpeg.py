@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from media_ai.core.errors import MediaError
 from media_ai.media import ffmpeg
 

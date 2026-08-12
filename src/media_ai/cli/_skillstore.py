@@ -25,14 +25,14 @@ from __future__ import annotations
 import shutil
 import tomllib
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 from .. import __version__
 from ..brand import cli_name, skill_prefix
+from ..core.config import config_path
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
-from ..core.config import config_path
 from ..credentials.tomlwrite import dumps, write_public
 from ._discovery import skill_root
 from ._render import render
@@ -171,7 +171,7 @@ def copy_skill(name: str, dest_root: Path) -> list[Path]:
     return written
 
 
-@lru_cache(maxsize=None)
+@cache
 def _packaged_source(name: str) -> dict[str, str]:
     """The packaged skill's files **as templates**, read once per process.
 
