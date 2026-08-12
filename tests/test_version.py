@@ -20,16 +20,12 @@ from pathlib import Path
 import pytest
 
 import media_ai
+from media_ai.core import versioning
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INSTALLER = ROOT / "install" / "install.sh"
 INIT_PATH = ROOT / "src" / "media_ai" / "__init__.py"
-
-# The subset of semver this project actually publishes: MAJOR.MINOR.PATCH, plus an
-# optional pre-release suffix. Deliberately strict — `resolve_version` in the
-# installer matches tags by name, so a version that cannot be a tag is a broken release.
-_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)?$")
 
 pytestmark = pytest.mark.skipif(
     not PYPROJECT.is_file(), reason="running against an installed package, not a checkout"
@@ -48,7 +44,7 @@ def installer_default_version() -> str:
 
 
 def test_the_version_is_a_release_number():
-    assert _VERSION.match(media_ai.__version__), f"{media_ai.__version__!r} could not be a git tag"
+    assert versioning.VERSION.match(media_ai.__version__), f"{media_ai.__version__!r} could not be a git tag"
 
 
 def test_pyproject_takes_the_version_from_the_package():
@@ -189,8 +185,46 @@ ORDERED = [
 
 
 @pytest.mark.parametrize("lower,higher", ORDERED)
-def test_precedence_follows_semver(check_version, lower, higher):
-    assert check_version.precedence(lower) < check_version.precedence(higher)
+def test_precedence_follows_semver(lower, higher):
+    assert versioning.precedence(lower) < versioning.precedence(higher)
+
+
+def test_the_release_scripts_compare_versions_the_way_the_cli_does():
+    """One comparator, not two that agree on the easy cases.
+
+    A second implementation orders `0.2.0` before `0.3.0` correctly and then disagrees
+    on exactly what §11 is for — `0.9.0` against `0.10.0`, `rc.2` against `rc.10`, a
+    pre-release against its release — which is only ever noticed by a release that
+    sorted wrong. Identity rather than behaviour: a local re-definition that happens to
+    be right today is the thing this is stopping.
+    """
+    assert load_script("check_version").precedence is versioning.precedence
+    assert load_script("check_version").VERSION is versioning.VERSION
+    assert load_script("bump_version").VERSION is versioning.VERSION
+
+
+def test_the_comparison_reaches_the_scripts_without_installing_anything():
+    """`scripts/` runs under a bare interpreter, before `uv sync`.
+
+    ci.yml's first step and the release workflow's planning step both run
+    `check_version.py` with nothing installed, and it gets at the comparison by putting
+    `src` on the path. That works only while the import chain stays inside the standard
+    library — and the day it stops, the failure lands on a release, at a step that runs
+    before the tests that would have caught it. So the property is checked here rather
+    than assumed: import the module in a clean interpreter and look at what came with it.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        f"import sys; sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+        "before = set(sys.modules)\n"
+        "import media_ai.core.versioning\n"
+        "loaded = {m.split('.')[0] for m in set(sys.modules) - before}\n"
+        "print(' '.join(sorted(loaded - sys.stdlib_module_names - {'media_ai'})))\n"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == [], f"the scripts' import chain now needs {done.stdout.strip()}"
 
 
 def test_the_highest_release_is_picked_by_precedence_not_by_name(check_version):
