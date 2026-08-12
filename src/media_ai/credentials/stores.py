@@ -16,6 +16,18 @@ which is something you do on purpose rather than a precedence rule you inherit.
 
 The file must not be group- or world-readable. A looser mode is refused rather than
 silently trusted.
+
+It carries a ``schema`` number for one reason: of everything this tool writes, it is
+the only file a user cannot reconstruct. A config can be re-derived by re-running
+setup; the keys in here were pasted in from somewhere else, possibly issued once. So
+whatever this layout becomes, an existing file has to be *convertible* rather than
+replaced — and converting starts with knowing which layout you are holding.
+
+An absent ``schema`` means 1, which is what every file written before the key existed
+is. That is the "absent field" rule doing its job: nothing has to be migrated, nothing
+has to be rewritten on read, and a file this tool wrote in 2026 keeps working. The key
+appears the next time something legitimately writes the file. Reading never writes it
+— see :func:`check_schema`.
 """
 
 from __future__ import annotations
@@ -25,16 +37,26 @@ import stat
 from collections.abc import Callable
 from pathlib import Path
 
-from ..brand import config_dir
+from ..brand import cli_name, config_dir
 from ..core.errors import ErrorCategory, MediaError
 
 __all__ = [
+    "SCHEMA",
+    "check_schema",
     "credentials_path",
     "named_account",
     "register_secret_backend",
     "registered_schemes",
     "secret_backend",
 ]
+
+#: The layout of ``credentials.toml``. A monotonic integer, unrelated to the release
+#: version: this file either parses the way a build expects or it does not, which is a
+#: boolean question, and a release number would only ask every reader to derive one.
+SCHEMA = 1
+
+#: ``schema`` is reserved at the top level, so it cannot also be an account name.
+_RESERVED = "schema"
 
 
 def credentials_path() -> Path:
@@ -59,9 +81,46 @@ def _read() -> dict:
     import tomllib  # py311+
 
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
         raise MediaError(f"could not parse {path}: {exc}", category=ErrorCategory.AUTH) from exc
+    check_schema(data, path)
+    return data
+
+
+def check_schema(data: dict, path: Path) -> int:
+    """Validate a parsed credentials file's ``schema``, and return it.
+
+    Public because reading is not the only thing that has to understand the layout:
+    ``init`` merges new accounts into whatever is already on disk, and merging into a
+    file it cannot read correctly would rewrite it in an older shape — losing exactly
+    the keys this file exists to keep. One check, both callers.
+
+    A newer file gets its own answer. "Upgrade" and "re-run setup" are opposite
+    instructions, and giving the second one to somebody whose file is *ahead* of their
+    CLI talks them into overwriting the good copy.
+    """
+    declared = data.get(_RESERVED, SCHEMA)
+    # bool before int: it is an int subclass, so `schema = true` would read as 1.
+    if isinstance(declared, bool) or not isinstance(declared, int):
+        raise MediaError(
+            f"{path}: {_RESERVED} must be an integer — it is reserved at the top level "
+            f"and cannot be an account name, got {declared!r}",
+            category=ErrorCategory.AUTH, code="credentials_schema_invalid",
+        )
+    if declared > SCHEMA:
+        raise MediaError(
+            f"{path} was written by a newer build ({_RESERVED} {declared}; this one reads {SCHEMA}). "
+            f"Upgrade {cli_name()} rather than re-running setup, which would rewrite it in the older shape.",
+            category=ErrorCategory.AUTH, code="credentials_from_newer_build",
+        )
+    if declared < SCHEMA:
+        raise MediaError(
+            f"{path} is written in {_RESERVED} {declared}; this build reads {SCHEMA} and has no "
+            f"conversion for it.",
+            category=ErrorCategory.AUTH, code="credentials_schema_outdated",
+        )
+    return declared
 
 
 def named_account(name: str, *, _seen: frozenset[str] = frozenset()) -> str | None:

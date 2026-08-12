@@ -757,7 +757,7 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
         # at env:// keeps its key out of the filesystem entirely, which is the whole
         # reason that option exists.
         path = credentials_path()
-        pending.append((path, _render(path, _load(path) | raw_keys, credentials_header()), write_private))
+        pending.append((path, _render(path, _merged_credentials(path, raw_keys), credentials_header()), write_private))
     if answers.creds or answers.defaults:
         pending.append((config_path(), _render_config(answers), write_public))
 
@@ -799,6 +799,20 @@ def _render_config(answers: _Answers) -> str:
         path=config_path(), exists=True,
     )
     return render_config(merged, header=config_header())
+
+
+def _merged_credentials(path: Path, raw_keys: dict) -> dict:
+    """This run's accounts merged into whatever is already in ``credentials.toml``.
+
+    The schema is checked before the merge and stamped after it. Before, because
+    merging into a file this build cannot read correctly would rewrite it in the older
+    shape and take the keys with it — and these are the one thing here a user cannot
+    reconstruct. After, because the file that comes out is written by *this* build, so
+    it says so, whatever the file that went in claimed.
+    """
+    existing = _load(path)
+    stores.check_schema(existing, path)
+    return {**existing, **raw_keys, "schema": stores.SCHEMA}
 
 
 def _render(path: Path, data: dict, header: str) -> str:
