@@ -38,6 +38,7 @@ import pytest
 
 import media_ai
 from media_ai import brand
+from media_ai.core import update
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "media_ai"
@@ -180,9 +181,26 @@ def test_no_user_visible_string_hardcodes_the_cli():
         if path.name == "brand.py":  # the one declaration
             continue
         for node in _string_constants(ast.parse(path.read_text(encoding="utf-8"))):
-            if DEFAULT in node.value:
+            # `core.update.SOURCE_REPO` names where the code comes from, which
+            # `brand.py` says outright is not what the tool is called: a white-label
+            # build renames the executable and still fetches from the same repository.
+            # Exempted by value, not by file, so the rest of that module stays covered.
+            if DEFAULT in node.value and node.value != update.SOURCE_REPO:
                 offenders.append(f"{path.relative_to(SRC)}:{node.lineno}: {node.value[:60]!r}")
     assert not offenders, "build these from media_ai.brand instead:\n" + "\n".join(offenders)
+
+
+@needs_checkout
+def test_the_installer_fetches_from_the_repository_the_package_names():
+    """`install.sh` repeats the repository, the way it repeats the fallback version.
+
+    It cannot import Python, so the copy is unavoidable — but a drift means the
+    installer pulls from one repository while the feed is read from another, and the
+    two would disagree about what the latest release is.
+    """
+    match = re.search(r'^REPO="\$\{MEDIA_AI_REPO:-([^}]+)\}"', INSTALLER.read_text(encoding="utf-8"), re.M)
+    assert match, "install.sh no longer declares REPO the way this test reads it"
+    assert match.group(1) == update.SOURCE_REPO
 
 
 # --------------------------------------------------------- 4. the rename works

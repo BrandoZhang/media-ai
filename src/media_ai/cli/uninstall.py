@@ -33,6 +33,7 @@ from functools import partial
 from pathlib import Path
 
 from ..brand import cli_name, dist_name
+from ..core import update
 from ..core.config import config_path
 from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
@@ -204,7 +205,11 @@ def _uninstall(args, prompter) -> dict:
 
     # -- execute ---------------------------------------------------------
     summary["kept"] += choices.kept
-    doomed: list[Path] = []
+    # Derived state, so it is never asked about and never kept: nothing in it was the
+    # user's to decide, and the next run would fetch it again anyway. It also has to go
+    # for `prune_empty` below to find the config directory empty — a cache left behind
+    # is exactly the litter this command exists to remove.
+    doomed: list[Path] = [update.cache_path()] if update.cache_path().is_file() else []
     for flag, where, _what in CONFIG_FILES:
         path = where()
         if choices.files.get(flag):

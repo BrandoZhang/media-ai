@@ -35,5 +35,19 @@ def _pre_release() -> tuple[str, str]:
 
 
 def announcements() -> list[tuple[str, str]]:
-    """``[(title, body), …]`` to show under the intro, most important first."""
-    return [_pre_release()]
+    """``[(title, body), …]`` to show under the intro, most important first.
+
+    The compiled-in warning first, then whatever the published feed has to say to a
+    build of this version — a deprecation, an outage, an advisory. The feed half is
+    read from the cache :mod:`media_ai.core.update` keeps, so this cannot block even
+    when the wizard has just refreshed it, and shows nothing at all on a machine that
+    has never reached the network.
+
+    Rendered in a box and never parsed further: the three rules at the top of this
+    module hold whatever the source is.
+    """
+    from .. import __version__
+    from ..core import update
+
+    remote = [(n["title"], n["body"]) for n in update.notices_for(update.cached(), __version__)]
+    return [_pre_release(), *remote]
