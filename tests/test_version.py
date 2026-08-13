@@ -232,7 +232,7 @@ def test_the_comparison_reaches_the_scripts_without_installing_anything():
     probe = (
         f"import sys; sys.path.insert(0, {str(ROOT / 'src')!r})\n"
         "before = set(sys.modules)\n"
-        "import media_ai.core.versioning\n"
+        "import media_ai.core.update, media_ai.core.versioning\n"
         "loaded = {m.split('.')[0] for m in set(sys.modules) - before}\n"
         "print(' '.join(sorted(loaded - sys.stdlib_module_names - {'media_ai'})))\n"
     )

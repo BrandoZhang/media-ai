@@ -24,7 +24,9 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import __version__
 from ..brand import cli_name, cmd
+from ..core import update
 from ..core.binding import AuthKind
 from ..core.config import config_path, load_config, render_config
 from ..core.errors import ErrorCategory, MediaError
@@ -554,6 +556,11 @@ def _wizard(args, prompter) -> dict:
     those on the way back, so "back" always lands on a real question.
     """
     prompter.intro(f"{cli_name()} setup")
+    # The one place a fetch is affordable: the user is here, waiting, and the network
+    # is already the subject (this is where keys get configured). Bounded and silent on
+    # failure, so the worst case is the stale announcements this would have refreshed.
+    # Before the box below, so a first run on a fresh machine shows what it just read.
+    update.refresh(__version__)
     for title, message in announcements():
         prompter.box(title, message)
     summary: dict = {

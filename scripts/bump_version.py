@@ -45,15 +45,17 @@ INIT = ROOT / "src" / "media_ai" / "__init__.py"
 INSTALLER = ROOT / "install" / "install.sh"
 FEED = ROOT / "release-feed.json"
 
-#: Where a published release lives. The feed carries the link so a client telling
-#: someone a newer version exists can say where to read about it, without needing to
-#: know how this project's release URLs are shaped.
-RELEASE_URL = "https://github.com/BrandoZhang/media-ai/releases/tag/v{version}"
-
 # The one definition of what a release number looks like. Reached by path because this
 # runs before anything is installed — see media_ai/core/versioning.py.
 sys.path.insert(0, str(ROOT / "src"))
+from media_ai.core.update import SOURCE_REPO  # noqa: E402
 from media_ai.core.versioning import VERSION  # noqa: E402
+
+#: Where a published release lives. The feed carries the link so a client telling
+#: someone a newer version exists can say where to read about it, without needing to
+#: know how this project's release URLs are shaped. Derived from the one declaration
+#: of the repository, so a fork edits `core/update.py` and this follows.
+RELEASE_URL = f"https://github.com/{SOURCE_REPO}/releases/tag/v{{version}}"
 
 _INIT_LINE = re.compile(r'^__version__ = ".*"$', re.M)
 _INSTALLER_LINE = re.compile(r'^DEFAULT_VERSION="\$\{MEDIA_AI_DEFAULT_VERSION:-[^}]+\}"$', re.M)

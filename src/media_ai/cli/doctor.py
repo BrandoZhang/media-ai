@@ -23,6 +23,7 @@ import argparse
 import shutil
 import stat
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -59,6 +60,31 @@ def _check_cli() -> list[dict]:
         else _check("path", "warn", f"{cli} is not on PATH; add ~/.local/bin to it, or call it via `uv run`")
     )
     return out
+
+
+def _check_update() -> list[dict]:
+    """Whether a newer release is published, from the cache and never the network.
+
+    ``doctor`` is defined as strictly offline and that does not bend for this: the
+    cache is written by ``init`` (and, later, by an explicit check), so what is
+    reported here is what this machine last learned, with its age said out loud. A
+    diagnosis that quietly went to the network would be a different command.
+
+    An absent cache is ``ok``, not a warning — a machine that has never fetched is not
+    a broken machine, and the fix for it (run setup) is not something a diagnosis
+    should nag about.
+    """
+    from ..core import update
+
+    stamp = update.cached_at()
+    if stamp is None:
+        return [_check("update", "ok", f"no release feed cached yet (written by `{cmd('init')}`)")]
+    age = max(0, int((time.time() - stamp) // 86400))
+    when = "today" if age == 0 else f"{age} day(s) ago"
+    latest = update.latest_version(update.cached())
+    if update.is_newer(latest, __version__):
+        return [_check("update", "warn", f"{latest} is available (running {__version__}; checked {when})")]
+    return [_check("update", "ok", f"{__version__} is current as of {when}")]
 
 
 def _check_media() -> list[dict]:
@@ -227,7 +253,10 @@ def _check_skills() -> list[dict]:
 
 
 def _diagnose(args) -> dict:
-    checks = _check_cli() + _check_media() + _check_files() + _check_bindings() + _check_defaults() + _check_skills()
+    checks = (
+        _check_cli() + _check_update() + _check_media() + _check_files()
+        + _check_bindings() + _check_defaults() + _check_skills()
+    )
     status = max((c["status"] for c in checks), key=lambda s: _RANK[s], default="ok")
     _print(checks, status)
     return {
