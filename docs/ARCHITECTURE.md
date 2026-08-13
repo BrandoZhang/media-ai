@@ -160,7 +160,7 @@ model may not have learned, so a bare invocation has to work.
 | Area | What it owns |
 |---|---|
 | `core/binding.py` | Manifest schema (`ProviderSpec`/`BindingSpec`/`Constraints`), parser, `BindingCatalog` |
-| `core/config.py` | `config.toml` schema 2 — bindings + scene defaults, `extends` |
+| `core/config.py` | `config.toml` schema 2 — bindings + scene defaults, `extends`; migrates an older file, refuses a newer one, and preserves fields it does not model |
 | `core/resolve.py` | Addressing, `ResolvedBinding`, the refusal taxonomy |
 | `core/scene.py` | `Scene` + derivation from a request |
 | `core/validate.py` | Request vs declared constraints, before any call |
