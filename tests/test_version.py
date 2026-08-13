@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INSTALLER = ROOT / "install" / "install.sh"
 INIT_PATH = ROOT / "src" / "media_ai" / "__init__.py"
+FEED = ROOT / "release-feed.json"
 
 pytestmark = pytest.mark.skipif(
     not PYPROJECT.is_file(), reason="running against an installed package, not a checkout"
@@ -101,11 +102,23 @@ def sandbox(tmp_path, monkeypatch):
 
     (tmp_path / "src" / "media_ai").mkdir(parents=True)
     (tmp_path / "install").mkdir()
-    init, installer = tmp_path / "src" / "media_ai" / "__init__.py", tmp_path / "install" / "install.sh"
-    init.write_text(INIT_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-    installer.write_text(INSTALLER.read_text(encoding="utf-8"), encoding="utf-8")
-    monkeypatch.setattr(bump_version, "INIT", init)
-    monkeypatch.setattr(bump_version, "INSTALLER", installer)
+    copies = {
+        "INIT": (tmp_path / "src" / "media_ai" / "__init__.py", INIT_PATH),
+        "INSTALLER": (tmp_path / "install" / "install.sh", INSTALLER),
+        "FEED": (tmp_path / "release-feed.json", FEED),
+    }
+    for name, (dest, real) in copies.items():
+        dest.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+        monkeypatch.setattr(bump_version, name, dest)
+
+    # Every file the script writes has to be redirected, or running the suite rewrites
+    # the developer's own checkout — which is exactly what happened the day the feed
+    # became the third one. Enumerated rather than listed: a fourth file fails here on
+    # the commit that adds it, instead of in whatever it silently overwrote.
+    writes = {n for n, v in vars(bump_version).items() if isinstance(v, Path) and n != "ROOT"}
+    assert writes == set(copies), f"the sandbox does not redirect {writes - set(copies)}"
+
+    init, installer = copies["INIT"][0], copies["INSTALLER"][0]
     return bump_version, init, installer
 
 

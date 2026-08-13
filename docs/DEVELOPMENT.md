@@ -236,6 +236,48 @@ already exists, or if it was launched from a branch other than the default one �
 tags whatever ref it runs on, so that last one would otherwise release a feature
 branch.
 
+### The release feed
+
+[`release-feed.json`](../release-feed.json) at the repo root is the one document this
+project publishes *at* its users, served from the default branch:
+
+```
+https://raw.githubusercontent.com/BrandoZhang/media-ai/main/release-feed.json
+```
+
+Raw rather than the releases API: that API allows about 60 anonymous requests per hour
+per IP (the reason `install.sh` has a `DEFAULT_VERSION` to fall back to), and one office
+behind a shared NAT would exhaust it. The feed also carries things a version number
+cannot — an announcement, a binding that has been retired upstream.
+
+**Its readers are always older than it is**, and can never be upgraded to understand a
+change: they are already installed on other people's machines. So the shape only ever
+*grows*. A new key is invisible to an old reader; a renamed or re-meaninged one is a lie
+to every reader already out there. `schema` exists so a client can stop reading rather
+than misread, and bumping it abandons everyone who has not upgraded — treat it as fixed
+at 1 and add fields beside the old ones instead.
+
+`latest` is generated: `scripts/bump_version.py` writes it, so the feed moves in the
+same reviewed pull request as `__version__` rather than being committed afterwards by
+the release job — the automatic release path never writes to the default branch, and
+that is what keeps it clear of branch protection.
+
+Everything else is policy, hand-edited in a pull request like any other change:
+
+| field | meaning |
+|---|---|
+| `min_supported` | versions below this should refuse to run. **Absent means no floor** — the ordinary state |
+| `notices[]` | `{id, severity, title, body}`, optionally narrowed by `min_version`/`max_version`. Display-only |
+| `retired_bindings[]` | `{binding, since, severity, reason}` plus `alternatives`/`fixed_in`. `severity` is `warn` or `block` |
+
+Applicability is always **two explicit version fields, never an expression** like
+`"<0.6.0"`. A range language would be parsed by the *old* clients, and one that
+misparses does not fail loudly — it applies a notice, or a block, to the wrong people.
+
+`tests/test_release_feed.py` enforces all of the above, including that the file is
+stored exactly as the writer produces it, so a bump never lands a formatting diff on top
+of the version it came for.
+
 ### Where the version lives
 
 One place: `__version__` in [`src/media_ai/__init__.py`](../src/media_ai/__init__.py).
