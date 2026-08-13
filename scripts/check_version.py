@@ -18,7 +18,7 @@ The rule is one comparison against the highest released tag:
 
 Ordering is semver precedence (semver.org §11), so 0.2.1 and 0.3.0 are both acceptable
 successors to 0.2.0, and a pre-release sorts below the release it leads to
-(0.3.0-rc1 < 0.3.0).
+(0.3.0-rc1 < 0.3.0). The comparison itself lives in ``media_ai.core.versioning``.
 
 A backport is deliberately not expressible: releases are cut from the default branch
 only, so "older than the newest tag" is always a mistake here rather than a branch.
@@ -42,29 +42,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 INIT = ROOT / "src" / "media_ai" / "__init__.py"
 
-# Kept in step with scripts/bump_version.py and tests/test_version.py.
-VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)?$")
-_PARTS = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:[-.](.+))?$")
-
-
-def precedence(version: str) -> tuple:
-    """A sort key ordering versions the way semver §11 says to.
-
-    Two rules do the work that a plain tuple of numbers cannot. A version *with* a
-    pre-release sorts below the same version without one, so 0.3.0-rc1 is a step
-    towards 0.3.0 rather than past it; and within a pre-release, a numeric identifier
-    compares numerically and sorts below an alphanumeric one, so rc.9 < rc.10 rather
-    than the string order. The "more identifiers wins ties" rule falls out of tuple
-    comparison, a shorter tuple being a prefix of the longer one.
-    """
-    parsed = _PARTS.match(version)
-    if not parsed:
-        raise SystemExit(f"{version!r} is not MAJOR.MINOR.PATCH — pass 0.3.0, not v0.3.0")
-    major, minor, patch, pre = parsed.groups()
-    if pre is None:
-        return (int(major), int(minor), int(patch), 1, ())
-    ids = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in pre.split("."))
-    return (int(major), int(minor), int(patch), 0, ids)
+# The version *shape* and the semver ordering come from the package, so the rule this
+# enforces is the same one the CLI applies at runtime rather than a second copy that
+# agrees on the easy cases. Reached by path because this runs before anything is
+# installed — see media_ai/core/versioning.py, which imports nothing but `re`.
+sys.path.insert(0, str(ROOT / "src"))
+from media_ai.core.versioning import VERSION, precedence  # noqa: E402
 
 
 def declared_version() -> str:

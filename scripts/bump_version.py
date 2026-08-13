@@ -35,8 +35,10 @@ ROOT = Path(__file__).resolve().parent.parent
 INIT = ROOT / "src" / "media_ai" / "__init__.py"
 INSTALLER = ROOT / "install" / "install.sh"
 
-# Kept in step with tests/test_version.py and the release workflow's own input check.
-VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)?$")
+# The one definition of what a release number looks like. Reached by path because this
+# runs before anything is installed — see media_ai/core/versioning.py.
+sys.path.insert(0, str(ROOT / "src"))
+from media_ai.core.versioning import VERSION  # noqa: E402
 
 _INIT_LINE = re.compile(r'^__version__ = ".*"$', re.M)
 _INSTALLER_LINE = re.compile(r'^DEFAULT_VERSION="\$\{MEDIA_AI_DEFAULT_VERSION:-[^}]+\}"$', re.M)
