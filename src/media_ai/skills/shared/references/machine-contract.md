@@ -127,13 +127,17 @@ Any object above may carry a `notices` array, on success and on failure alike. I
 - `severity` is `info` or `warn`.
 - **`action`, when present, is a command that can be run verbatim.**
 
-| `kind` | what it means | what to do |
-|---|---|---|
-| `skills_stale` | The `{{cli}}` skills installed in an agent directory were written by a different build, so these instructions may describe flags this CLI no longer has | Run the `action`, then re-read the skill |
+| `kind` | `severity` | what it means | what to do |
+|---|---|---|---|
+| `skills_stale` | `warn` | The `{{cli}}` skills installed in an agent directory were written by a different build, so these instructions may describe flags this CLI no longer has | Run the `action`, then re-read the skill |
+| `update_available` | `info` | A newer `{{cli}}` release is published. Read from a cached answer — no command ever waits on the network for this | Nothing, unless upgrading is yours to decide. The `action` is the command for it |
 
 `skills_stale` is worth acting on the moment you see it — especially alongside an
 exit-2 "invalid command-line arguments", which is what following out-of-date skill
 text usually looks like from here.
+
+Both describe a **condition, not an event**, so they repeat on every command until the
+condition clears. Do not treat a repeat as new information, and do not act twice.
 
 ## Machine-friendly flags
 
