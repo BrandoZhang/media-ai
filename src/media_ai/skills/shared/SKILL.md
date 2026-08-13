@@ -88,6 +88,11 @@ especially if the call just failed with exit 2.
 **Ignore keys you do not recognise** — new fields arrive without a `schema_version`
 bump; only a change to an existing field's meaning bumps it.
 
+`{{cli}} version check` answers "is this build current?" as JSON — `update_available`,
+`latest`, and an `upgrade_command` you can run verbatim. `--offline` reads the cached
+answer without touching the network. It exits 0 whether or not an update exists; branch
+on `update_available`, never on the exit code.
+
 Full JSON shapes → `references/machine-contract.md`.
 
 ## Naming a binding

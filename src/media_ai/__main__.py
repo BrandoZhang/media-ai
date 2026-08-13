@@ -2,7 +2,7 @@
 
 Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
 ``music``, ``sound``, ``animation``, ``job``, ``capabilities``, ``bindings``,
-``config``, ``usage``.
+``config``, ``usage``, ``version``.
 Each group is also reachable directly; this umbrella reshapes argv so the group's own
 argparse sees a clean program name — built from :mod:`media_ai.brand`, so ``--help``
 under a renamed build spells the command the way the user has to type it.
@@ -38,6 +38,7 @@ _GROUPS = {
     "bindings": "bindings",
     "config": "config",
     "usage": "usage",
+    "version": "version",
 }
 
 _GROUP_HELP = {
@@ -55,6 +56,7 @@ _GROUP_HELP = {
     "bindings": "list or configure callable bindings",
     "config": "show or set scene defaults",
     "usage": "summarize the local usage ledger",
+    "version": "report this installation, and whether a newer one is published",
 }
 
 
@@ -80,6 +82,7 @@ _EXAMPLES = (
     ("bindings available", "declared but not configured yet"),
     ("config set-default video.text_to_video volc-ark/seedance-2.0", ""),
     ("capabilities --scene video.image_to_video", ""),
+    ("version check", "is a newer release published?"),
 )
 
 
@@ -123,9 +126,11 @@ def main() -> int:
     if argv and argv[0] in ("-h", "--help"):
         _usage(sys.stdout)
         return 0
-    if argv and argv[0] in ("-V", "--version", "version"):
-        # Same exemption: a version query is a request, so plain text and exit 0.
-        # `<cli> doctor` is the machine-readable route to the same number.
+    if argv and (argv[0] in ("-V", "--version") or argv == ["version"]):
+        # Same exemption: a bare version query is a request, so plain text and exit 0.
+        # `version show` and `version check` are the machine-readable route — asking
+        # for one is asking a different question, and only the bare word is intercepted
+        # here so the group below still receives its own subcommands.
         from . import __version__
 
         print(f"{cli_name()} {__version__}")

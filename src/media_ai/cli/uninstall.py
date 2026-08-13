@@ -27,17 +27,17 @@ finish the job.
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
-from ..brand import cli_name, dist_name
+from ..brand import cli_name
 from ..core import update
 from ..core.config import config_path
 from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
 from . import common
+from ._install import detect
 from ._prompt import Cancelled, Option, get_prompter, run_steps
 from ._skillstore import (
     install_roots,
@@ -232,14 +232,12 @@ def _remove_cli_hint() -> str:
     """How to remove the CLI itself — which this command deliberately does not do.
 
     Deleting the package out from under the interpreter that is running it works on
-    POSIX but is not something to do on a user's behalf, and the installer is the
-    piece that knows how it was installed. ``uv tool`` puts each tool in its own
-    environment under ``…/uv/tools/<name>``, which is what makes it recognisable here.
+    POSIX but is not something to do on a user's behalf, and the package manager is the
+    piece that knows how it was installed. Which manager that is lives in
+    :mod:`media_ai.cli._install`, shared with ``version``: a second detector here would
+    eventually tell a user to remove it one way and upgrade it another.
     """
-    parts = Path(sys.prefix).resolve().parts
-    if "uv" in parts and "tools" in parts:
-        return f"uv tool uninstall {dist_name()}"
-    return f"pip uninstall {dist_name()}"
+    return detect().remove_command()
 
 
 def _report(summary: dict, prompter) -> None:

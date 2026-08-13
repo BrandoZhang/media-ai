@@ -140,6 +140,23 @@ class UserBinding:
 
 
 @dataclass(frozen=True)
+class UpdateSettings:
+    """``[update]`` — whether this machine looks for a newer release, and where.
+
+    Two fields, and the second one is why this is in the config rather than only in the
+    environment: an internal distribution points every install at its own mirror once,
+    at setup, and a variable every shell has to export is not that.
+
+    There is no interval knob. Nobody has asked for one, the constant it would replace
+    is read in exactly one place, and a setting that exists before its use case does is
+    a setting whose default nobody has had a reason to think about.
+    """
+
+    check: bool = True
+    feed: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     bindings: dict[str, UserBinding] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)  # scene value -> binding id
@@ -147,6 +164,7 @@ class Config:
     exists: bool = False
     #: Top-level keys and tables this build does not model, kept verbatim so writing
     #: the config back does not delete them. See the module docstring.
+    update: UpdateSettings = field(default_factory=UpdateSettings)
     extra: dict = field(default_factory=dict)
 
     def default_for(self, scene: Scene) -> str | None:
@@ -175,7 +193,7 @@ def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
 _BINDING_KEYS = frozenset({"extends", "model_id", "endpoint_id", "base_url", "credential", "options"})
 
 #: The top-level keys this build models. Same rule, one level up.
-_TOP_KEYS = frozenset({"schema", "bindings", "defaults"})
+_TOP_KEYS = frozenset({"schema", "bindings", "defaults", "update"})
 
 
 def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
@@ -221,6 +239,26 @@ def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
         options=dict(options),
         extra={k: v for k, v in raw.items() if k not in _BINDING_KEYS},
     )
+
+
+def _parse_update(raw: object, path: Path) -> UpdateSettings:
+    """Validate ``[update]``, or return the defaults when it is absent.
+
+    Type-checked like every other hand-editable field here: ``check = "no"`` is a
+    string, which is truthy, so an unchecked read would turn an attempt to *disable*
+    checking into leaving it on — the one mistake this setting exists to prevent.
+    """
+    if raw is None:
+        return UpdateSettings()
+    if not isinstance(raw, dict):
+        raise _fail(f"{path}: [update] must be a table")
+    check = raw.get("check", True)
+    if not isinstance(check, bool):
+        raise _fail(f"{path}: [update].check must be true or false, got {check!r}")
+    feed = raw.get("feed")
+    if feed is not None and (not isinstance(feed, str) or not feed):
+        raise _fail(f"{path}: [update].feed must be a non-empty URL, got {feed!r}")
+    return UpdateSettings(check=check, feed=feed)
 
 
 def _reject_v1(data: dict, path: Path) -> None:
@@ -324,6 +362,7 @@ def load_config(path: Path | None = None) -> Config:
         defaults=defaults,
         path=path,
         exists=True,
+        update=_parse_update(data.get("update"), path),
         extra={k: v for k, v in data.items() if k not in _TOP_KEYS},
     )
 
@@ -384,6 +423,14 @@ def render_config(config: Config, *, header: str | None = None) -> str:
         }
     if config.defaults:
         data["defaults"] = dict(sorted(config.defaults.items()))
+    # Written only when it says something. A table of defaults in every config file is
+    # noise that invites editing settings nobody chose, and an absent one already means
+    # exactly what the defaults say.
+    if (update := config.update) != UpdateSettings():
+        data["update"] = {
+            k: v for k, v in (("check", update.check), ("feed", update.feed))
+            if v != getattr(UpdateSettings(), k)
+        }
     for key, value in config.extra.items():
         data.setdefault(key, value)
     try:
