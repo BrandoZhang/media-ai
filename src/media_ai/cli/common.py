@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from .. import __version__
 from ..brand import cmd
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
@@ -88,11 +89,14 @@ def bind(args, req):
 
 
 def stamp(result, rb, scene=None):
-    """Record which binding ran and what it was asked for, in the result's ``meta``.
+    """Record which binding ran, what it was asked for, and which build ran it.
 
     An agent that keeps the JSON can answer "what actually produced this?" from the
     artifact alone — which matters most exactly when the CLI chose the binding
-    itself, from the scene default.
+    itself, from the scene default. ``tool_version`` completes that answer: a bug
+    report, a regression bisect and a "why does this look different from last week"
+    all start from which build wrote the file, and the JSON beside it is the only
+    thing that outlives the shell it was produced in.
 
     ``scene`` is ``None`` for ``job query``, which finalizes work submitted by an
     earlier process: the binding is named on the command line, but the inputs that
@@ -104,6 +108,10 @@ def stamp(result, rb, scene=None):
         meta.setdefault("binding", rb.id)
         if scene is not None:
             meta.setdefault("scene", scene.value)
+        # Assigned, not `setdefault`-ed, unlike the two above: those may legitimately
+        # come from an adapter, while the running version is something only this
+        # process knows. A value found here came from somewhere that cannot be right.
+        meta["tool_version"] = __version__
     if hasattr(result, "binding") and getattr(result, "binding", None) is None:
         result.binding = rb.id  # a JobHandle's poll command has to name it
     return result
