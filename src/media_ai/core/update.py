@@ -35,10 +35,14 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..brand import cli_name
 from .logging import get_logger
 from .versioning import VERSION, precedence
+
+if TYPE_CHECKING:
+    from .config import UpdateSettings
 
 __all__ = [
     "FEED_URL",
@@ -49,6 +53,8 @@ __all__ = [
     "notices_for",
     "parse_feed",
     "refresh",
+    "settings",
+    "settings_from",
     "should_check",
 ]
 
@@ -94,15 +100,64 @@ def cache_path() -> Path:
     return config_path().parent / "update-cache.json"
 
 
-def feed_url() -> str:
-    """The feed to read. ``$MEDIA_UPDATE_FEED`` points at a mirror, or a ``file://``.
+# Environment beats config beats the built-in default. That is the ordinary shape for a
+# *preference*, and not a contradiction of the rule that credentials have no precedence
+# chain: that rule exists so "where did this key come from?" is answerable without
+# reasoning, and here the answer is reported by `settings_from` and printed by
+# `version check`, so it stays answerable by looking rather than by knowing the order.
 
-    An override rather than a config key because the machines that need one — an
-    air-gapped network with an internal copy, a test — need it before any config has
-    been written, and because pointing this somewhere is a decision about the machine
-    rather than about the tool.
+
+def _configured() -> UpdateSettings:
+    """``[update]`` from the config file, or the defaults if it cannot be read.
+
+    Swallowing the error is deliberate and narrow. This is consulted on the way into
+    ``init``, which is the command a user runs *because* their configuration is
+    broken — and a malformed config file surfacing first as a failure of the update
+    check would bury the real message under an unrelated one. Every other reader of
+    this file still refuses loudly.
     """
-    return os.getenv("MEDIA_UPDATE_FEED") or FEED_URL
+    from .config import UpdateSettings, load_config
+
+    try:
+        return load_config().update
+    except Exception:  # noqa: BLE001 - a preference is never worth failing a command over
+        return UpdateSettings()
+
+
+def settings() -> UpdateSettings:
+    """The effective settings, with the environment layered over the config."""
+    from .config import UpdateSettings
+
+    base = _configured()
+    env_check = os.getenv("MEDIA_UPDATE_CHECK", "").strip().lower()
+    return UpdateSettings(
+        check=(env_check not in {"0", "false", "no", "off"}) if env_check else base.check,
+        feed=os.getenv("MEDIA_UPDATE_FEED") or base.feed,
+    )
+
+
+def settings_from() -> dict[str, str]:
+    """Which layer each effective setting came from: ``env``, ``config`` or ``default``.
+
+    Reported by ``version check`` so a machine that is quietly not checking can be
+    asked *why* — the failure mode of a precedence chain is not that it is wrong, it is
+    that nobody can see which rung won.
+    """
+    base = _configured()
+    return {
+        "check": "env" if os.getenv("MEDIA_UPDATE_CHECK", "").strip() else ("config" if not base.check else "default"),
+        "feed": "env" if os.getenv("MEDIA_UPDATE_FEED") else ("config" if base.feed else "default"),
+    }
+
+
+def feed_url() -> str:
+    """The feed to read: the environment, then the config, then where this build ships.
+
+    An internal distribution points every install at its own mirror once, at setup;
+    ``$MEDIA_UPDATE_FEED`` covers the machine that needs one before any config exists
+    (an air-gapped box, a test) and wins when both are set.
+    """
+    return settings().feed or FEED_URL
 
 
 # ---------------------------------------------------------------- when to ask
@@ -110,6 +165,9 @@ def feed_url() -> str:
 
 def should_check(version: str) -> bool:
     """Whether this machine should make an unsolicited request at all.
+
+    Turned off by ``[update] check = false`` or ``MEDIA_UPDATE_CHECK=0``; see
+    :func:`settings`.
 
     Deliberately *not* :func:`media_ai.cli._prompt._nobody_is_watching`, which looks
     almost the same and answers a different question. That one asks "will a human
@@ -122,7 +180,7 @@ def should_check(version: str) -> bool:
     a development build has no meaningful "newer" to be told about, and telling someone
     working on the tool to go and install it is noise.
     """
-    if os.getenv("MEDIA_UPDATE_CHECK", "").strip().lower() in {"0", "false", "no", "off"}:
+    if not settings().check:
         return False
     if os.getenv("CI"):
         return False

@@ -71,3 +71,20 @@ credential = "env://ARK_API_KEY"
 "video.reference_to_video" = "volc-ark/seedance-2.0"
 "video.extend"             = "gemini/veo-3.1"
 "video.concat"             = "local/ffmpeg"
+
+# ------------------------------------------------------------------ update
+#
+# Whether this machine looks for a newer release, and where. Both optional — the
+# table is absent on a fresh install, and absent means the defaults below.
+#
+# The check never happens during a generation: those read a cached answer and never
+# wait on the network. A fetch happens in `media-ai init` and in
+# `media-ai version check`, and never in CI.
+#
+# `feed` points an internal distribution at its own mirror once, here, rather than at
+# every shell. `MEDIA_UPDATE_CHECK=0` and `MEDIA_UPDATE_FEED=…` override both for one
+# machine; `media-ai version check` reports which layer won.
+
+# [update]
+# check = true                                  # false: never look for a new release
+# feed  = "https://mirror.internal/feed.json"   # default: this project's published feed
