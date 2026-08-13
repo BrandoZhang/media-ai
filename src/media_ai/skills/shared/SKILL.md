@@ -83,7 +83,11 @@ Either object may also carry `notices[]` — facts about the *installation* rath
 about this call, each with a closed-set `kind` and usually a runnable `action`. It is
 absent when there is nothing to say. `kind: "skills_stale"` means these instructions
 were written by a different build of `{{cli}}`: run the `action` and re-read the skill,
-especially if the call just failed with exit 2.
+especially if the call just failed with exit 2. `kind: "update_available"` means a newer
+release exists — informational, and only yours to act on if upgrading is your call.
+
+They describe conditions, not events, so they repeat until the condition clears — a
+repeat is not new information.
 
 **Ignore keys you do not recognise** — new fields arrive without a `schema_version`
 bump; only a change to an existing field's meaning bumps it.

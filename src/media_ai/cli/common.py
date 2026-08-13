@@ -51,6 +51,47 @@ def _skills_from_another_build():
     )
 
 
+@notices.register_source
+def _a_newer_release_is_published():
+    """A newer version, from the cached feed and never from the network.
+
+    ``version check`` answers this on request; this is the same fact arriving unasked,
+    on whatever command the caller was already running — which is the only way an agent
+    that never thinks to ask ever finds out. Reading the cache is what makes that
+    affordable: the fetch happened in ``init``, or in an explicit check, and a
+    generation command still touches nothing but a file.
+
+    Stateless on purpose. A "shown once" flag would suppress it for every later session,
+    and the agent in *that* session is the one who would have acted — the notice
+    describes a condition that is still true, not an event that already happened. It
+    stops appearing when the condition does, which is the same rule ``skills_stale``
+    follows.
+
+    ``info``, not ``warn``: being a release behind is the ordinary state of a working
+    installation. Stale skills are a warning because the instructions being followed are
+    describing a different build; this is not that.
+
+    Turned off by ``[update] check = false``. ``CI`` deliberately does not turn it off —
+    that gates *unsolicited network*, and reporting something already on disk costs
+    nothing. An agent in CI is as able to act on it as anywhere else.
+    """
+    from .. import __version__
+    from ..core import update
+    from ._install import detect
+
+    if not update.settings().check:
+        return
+    latest = update.latest_version(update.cached())
+    if not update.is_newer(latest, __version__):
+        return
+    yield notices.Notice(
+        kind="update_available",
+        severity="info",
+        message=f"{cli_name()} {latest} is published; this is {__version__}.",
+        action=detect().upgrade_command(update.SOURCE_REPO, latest),
+    )
+
+
 def bool_arg(s) -> bool:
     return str(s).strip().lower() in _TRUE
 
