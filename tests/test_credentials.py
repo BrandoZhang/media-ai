@@ -14,7 +14,7 @@ import pickle
 import pytest
 
 from media_ai.core.errors import ErrorCategory, MediaError
-from media_ai.credentials import redaction
+from media_ai.credentials import redaction, stores
 from media_ai.credentials.reference import BindingCredentials, is_reference, resolve_reference
 from media_ai.credentials.secret import BrokeredHandle, Secret
 from media_ai.credentials.stores import named_account, register_secret_backend
@@ -153,6 +153,107 @@ def test_an_absent_credentials_file_is_not_an_error(tmp_path, monkeypatch):
     """Only asking it for something it does not have is."""
     monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "nope.toml"))
     assert named_account("anything") is None
+
+
+# ----------------------------------------------------------- which layout it is
+
+# `credentials.toml` is the one file here a user cannot reconstruct — a config can be
+# re-derived by re-running setup, but the keys in it were pasted from somewhere else
+# and may have been issued once. So whatever this layout becomes, an existing file has
+# to be convertible rather than replaced, and converting starts with knowing which
+# layout you are holding.
+
+
+def test_a_file_written_before_the_key_existed_still_works(tmp_path, monkeypatch):
+    """Absent means 1. Nothing is migrated, nothing is rewritten on read."""
+    _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-in-file-123456"\n')
+    assert named_account("openai") == "sk-in-file-123456"
+
+
+def test_reading_never_writes_the_key_back(tmp_path, monkeypatch):
+    """A read that stamped the file would rewrite a secret file as a side effect."""
+    path = _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-in-file-123456"\n')
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    named_account("openai")
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_a_declared_current_schema_reads_normally(tmp_path, monkeypatch):
+    _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA}\n\n[openai]\napi_key = "sk-in-file-123456"\n')
+    assert named_account("openai") == "sk-in-file-123456"
+
+
+def test_a_file_from_a_newer_build_is_refused_and_says_to_upgrade(tmp_path, monkeypatch):
+    """Not "re-run setup" — that is the opposite instruction, and it would overwrite
+    a file that is ahead of this CLI, taking the keys with it."""
+    _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA + 1}\n\n[openai]\napi_key = "sk-x-123456"\n')
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://openai")
+    assert ei.value.code == "credentials_from_newer_build"
+    assert ei.value.category is ErrorCategory.AUTH
+    assert "Upgrade" in ei.value.message
+
+
+@pytest.mark.parametrize("value", ['"1"', "true", "1.0"])
+def test_a_schema_that_is_not_an_integer_says_the_key_is_reserved(tmp_path, monkeypatch, value):
+    """`true` is the sharp one: bool is an int subclass and would read as schema 1."""
+    _creds_file(tmp_path, monkeypatch, f'schema = {value}\n\n[openai]\napi_key = "sk-x-123456"\n')
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://openai")
+    assert ei.value.code == "credentials_schema_invalid"
+
+
+def test_an_account_cannot_be_called_schema(tmp_path, monkeypatch):
+    """Reserved at the top level, and the error says so rather than reading it as 0."""
+    _creds_file(tmp_path, monkeypatch, '[schema]\napi_key = "sk-x-123456"\n')
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://schema")
+    assert "reserved" in ei.value.message
+
+
+def test_the_secret_in_a_rejected_file_is_not_in_the_message(tmp_path, monkeypatch):
+    """The refusal quotes the schema value; it must not carry the file's contents."""
+    _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA + 1}\n\n[openai]\napi_key = "sk-x-123456"\n')
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("cred://openai")
+    assert "sk-x-123456" not in str(ei.value.to_dict())
+
+
+# ---------------------------------------------------- and what the writer does with it
+
+# `init` merges this run's accounts into whatever is on disk, so it is the other half
+# of the layout question: reading has to know which shape it is holding, and writing
+# has to not rewrite a shape it does not understand.
+
+
+def test_the_writer_stamps_the_schema_onto_a_file_that_had_none(tmp_path, monkeypatch):
+    from media_ai.cli.init import _merged_credentials
+
+    path = _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-old-123456"\n')
+    merged = _merged_credentials(path, {"volc-ark/seedance-2.0": {"api_key": "sk-new-123456"}})
+    assert merged["schema"] == stores.SCHEMA
+    assert merged["openai"] == {"api_key": "sk-old-123456"}
+
+
+def test_the_writer_stamps_this_build_over_what_the_file_claimed(tmp_path, monkeypatch):
+    """The file coming out was written by this build, whatever went in said."""
+    from media_ai.cli.init import _merged_credentials
+
+    path = _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA}\n\n[openai]\napi_key = "sk-old-123456"\n')
+    assert _merged_credentials(path, {})["schema"] == stores.SCHEMA
+
+
+def test_the_writer_refuses_to_merge_into_a_newer_file(tmp_path, monkeypatch):
+    """Merging into a file it cannot read correctly would rewrite it in the older
+    shape and take the keys with it — and these are what cannot be reconstructed."""
+    from media_ai.cli.init import _merged_credentials
+
+    body = f'schema = {stores.SCHEMA + 1}\n\n[openai]\napi_key = "sk-old-123456"\n'
+    path = _creds_file(tmp_path, monkeypatch, body)
+    with pytest.raises(MediaError) as ei:
+        _merged_credentials(path, {"new": {"api_key": "sk-new-123456"}})
+    assert ei.value.code == "credentials_from_newer_build"
+    assert path.read_text(encoding="utf-8") == body
 
 
 # -------------------------------------------------------- telling the two apart
