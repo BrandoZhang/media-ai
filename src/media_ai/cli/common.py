@@ -8,7 +8,8 @@ import argparse
 import json
 
 from .. import __version__
-from ..brand import cmd
+from ..brand import cli_name, cmd
+from ..core import notices
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import configure, get_logger
 from ..core.result import error_payload
@@ -17,6 +18,37 @@ from ..core.validate import UnsupportedPolicy
 from ..credentials.redaction import redact_obj
 
 _TRUE = {"1", "true", "yes", "y", "on"}
+
+
+@notices.register_source
+def _skills_from_another_build():
+    """Installed Agent Skills whose recorded version is not this one.
+
+    Skills are *copied* into an agent's directory, so upgrading the CLI leaves
+    yesterday's instructions where the agent reads them — describing flags this build
+    may have renamed or dropped. Nothing else says so during an ordinary call, and the
+    agent following those instructions is the party that can fix it.
+
+    The install receipt records which version wrote each destination, so this is one
+    small file read and a string comparison. ``doctor`` still does the thorough thing
+    (comparing the installed tree against the packaged one byte for byte, which also
+    catches a hand-edit at the same version); this is the cheap proxy that can afford
+    to run on every command.
+    """
+    from ._skillstore import load_receipt
+
+    stale = sorted(dest for dest, entry in load_receipt().items() if entry.get("version") != __version__)
+    if not stale:
+        return
+    yield notices.Notice(
+        kind="skills_stale",
+        severity="warn",
+        message=(
+            f"Agent Skills in {', '.join(stale)} were installed by a different "
+            f"{cli_name()} build; this one is {__version__}."
+        ),
+        action=cmd("init", "--skills-only"),
+    )
 
 
 def bool_arg(s) -> bool:
@@ -187,8 +219,26 @@ def policy(args) -> UnsupportedPolicy:
 
 
 def _dump(obj: dict, pretty: bool) -> str:
-    safe = redact_obj(obj)
+    safe = redact_obj(_with_notices(obj))
     return json.dumps(safe, ensure_ascii=False, indent=2 if pretty else None)
+
+
+def _with_notices(obj):
+    """Attach ``notices[]`` to an outgoing payload, if there is anything to say.
+
+    Here rather than in each ``to_dict`` because this is the single funnel: success,
+    failure, an argparse rejection and the dispatcher's unknown-group error all render
+    through it. That last pair matters most — they are the paths where no command body
+    runs, and "you passed a flag this build does not have" is exactly what stale skills
+    look like from the outside.
+
+    A copy, never a mutation: ``emit`` renders the same object twice when
+    ``--metadata-out`` is given.
+    """
+    if not isinstance(obj, dict):
+        return obj
+    found = notices.pending()
+    return {**obj, "notices": list(found)} if found else obj
 
 
 def emit(obj: dict, args) -> int:

@@ -5,6 +5,10 @@ Parse the whole of stdout as a single JSON object (it spans multiple lines under
 `--pretty`); treat stderr as redacted human logs only. Branch on the exit code (see the
 table in `SKILL.md`) without parsing the message.
 
+**Ignore keys you do not recognise.** New fields are added without bumping
+`schema_version`; only a change to what an existing field *means* bumps it. A parser
+that rejects unknown keys breaks on an ordinary release.
+
 ## Success — `GenerationResult` (image, waited video, video concat, audio speech/music/sound)
 
 ```json
@@ -95,6 +99,41 @@ a scene belonged to the earlier process that submitted the job.
 - `details.unsupported[]` lists exactly which request fields were rejected — the
   precise fix for an exit-3 failure.
 - `io` and `unknown` both map to **exit 1** — a local failure (unreadable input, unwritable output) or an unclassified one. Neither is retryable on its own; read `error.message`.
+
+## `notices[]` — about the installation, not the call
+
+Any object above may carry a `notices` array, on success and on failure alike. It is
+**absent when there is nothing to say**, so treat a missing key as an empty list.
+
+```json
+{
+  "ok": true, "schema_version": 2, "artifacts": [],
+  "notices": [
+    {
+      "kind": "skills_stale",
+      "severity": "warn",
+      "message": "Agent Skills in /home/me/.claude/skills were installed by a different {{cli}} build; this one is 0.6.0.",
+      "action": "{{cli}} init --skills-only"
+    }
+  ]
+}
+```
+
+- A notice is about the **installation**, not about the call — the call itself
+  succeeded or failed on its own terms, and the exit code is unaffected.
+- **`kind` is the field to branch on**, from a closed set; `message` is prose for a
+  human or a model to read and must not be pattern-matched. Unknown kinds will appear
+  over time — ignore the ones you do not handle.
+- `severity` is `info` or `warn`.
+- **`action`, when present, is a command that can be run verbatim.**
+
+| `kind` | what it means | what to do |
+|---|---|---|
+| `skills_stale` | The `{{cli}}` skills installed in an agent directory were written by a different build, so these instructions may describe flags this CLI no longer has | Run the `action`, then re-read the skill |
+
+`skills_stale` is worth acting on the moment you see it — especially alongside an
+exit-2 "invalid command-line arguments", which is what following out-of-date skill
+text usually looks like from here.
 
 ## Machine-friendly flags
 
