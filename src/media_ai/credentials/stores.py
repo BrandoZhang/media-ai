@@ -406,12 +406,13 @@ def migrate_file(*, dry_run: bool = False) -> MigrationReport:
     no such file. Failing the whole command over it would make ``config migrate``
     unusable exactly where nothing is wrong.
 
-    The converted document is round-tripped through :func:`render_accounts` — the same
-    validation an ordinary write does — before anything is written, so a bad step fails
-    with the original still on disk rather than leaving keys in a shape nothing reads.
+    The converted document goes back out through :func:`save_accounts` rather than
+    straight to disk. That is the one writer, so this inherits its rules by
+    construction instead of by remembering them: the accounts are validated before
+    anything is written (a bad step fails with the original still there), the file
+    lands 0600, and the backup is capped at 0600 rather than inheriting a mode the
+    rewrite may be repairing.
     """
-    from .tomlwrite import backup, write_private
-
     path = credentials_path()
     if not path.is_file():
         return MigrationReport(path=path, present=False, frm=SCHEMA, to=SCHEMA, steps=(), applied=False)
@@ -432,11 +433,10 @@ def migrate_file(*, dry_run: bool = False) -> MigrationReport:
     for step in steps:
         data = step.apply(data)
     accounts = {name: value for name, value in data.items() if name != _RESERVED}
-    text = render_accounts(accounts, replace=True)
     summaries = tuple(s.summary for s in steps)
     if dry_run:
+        render_accounts(accounts, replace=True)  # validate only; nothing is written
         return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA, steps=summaries, applied=False)
-    saved = backup(path)
-    write_private(path, text)
+    saved = save_accounts(accounts, replace=True)
     return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA,
                            steps=summaries, applied=True, backup=saved)
