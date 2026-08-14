@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 from ..brand import cmd
 from ..credentials.reference import BindingCredentials
-from .binding import AuthKind, BindingCatalog, BindingSpec, ProviderSpec
+from .binding import AuthKind, BindingCatalog, BindingSpec, Lifecycle, ProviderSpec
 from .config import Config, UserBinding, load_config
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
@@ -87,7 +87,7 @@ class ResolvedBinding:
 
 
 def _recommendable(bindings: list[ResolvedBinding]) -> list[str]:
-    """Ids worth *suggesting*, placeholders removed.
+    """Ids worth *suggesting*: placeholders removed, and deprecations passed over.
 
     A hint is read as an instruction — the skills tell agents it is usually a command
     to run verbatim — so suggesting the offline mock would talk a machine with nothing
@@ -96,10 +96,20 @@ def _recommendable(bindings: list[ResolvedBinding]) -> list[str]:
     the point of dropping the old `$MEDIA_PROVIDER` default was to make it unreachable
     by accident. Leaving it in a hint would have put it straight back.
 
+    The two exclusions are *not* the same rule, and the difference is the whole of the
+    second one. A placeholder is dropped outright, because a fabricated result is worse
+    than no answer. A deprecated binding works — it is simply on its way out — so it is
+    only passed over while something else can be named, and is suggested when it is all
+    there is. Suppressing it there would turn "use this instead" into "no binding serves
+    this scene", which is false, and false in the direction that stops the work.
+
     Placeholders stay in the *listings* beside the hint (`available`, `alternatives`):
-    they are genuinely there, and hiding them would be a different lie.
+    they are genuinely there, and hiding them would be a different lie. So do
+    deprecated bindings, for the same reason.
     """
-    return [b.id for b in bindings if not b.spec.placeholder]
+    real = [b for b in bindings if not b.spec.placeholder]
+    current = [b.id for b in real if b.spec.lifecycle is not Lifecycle.DEPRECATED]
+    return current or [b.id for b in real]
 
 
 def _hint_for_scene(scene: Scene, alternatives: list[ResolvedBinding]) -> str:
