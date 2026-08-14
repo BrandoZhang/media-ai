@@ -196,20 +196,29 @@ Kubernetes `Secret` volumes default to mode 0644, which the resolver refuses —
 
 ### Recording that you wrote it
 
-If your provisioner needs to tell its own entries apart from ones a user added
-locally, put a table of your own in `config.toml`:
+Only worth doing if you intend to **merge**. A wholesale replace needs no bookkeeping
+and gets withdrawal right for free; a merge has to know which entries are yours, or it
+can only ever add and overwrite.
+
+If you do, `config.toml` models a `[managed]` table for exactly this:
 
 ```toml
-[acme]
-role = "team-vision"
+[managed]
+source   = "https://config.internal/media-ai/team-vision"
 revision = "2026-08-14T02:00:00Z"
-owns = ["acme/fast"]
+bindings = ["acme/fast"]
+defaults = ["image.text_to_image"]
 ```
 
-Tables this build does not model are preserved verbatim through every command that
-rewrites the file, so no upstream change is needed to keep it. Note that this is only
-worth doing if you intend to *merge*; a wholesale replace needs no bookkeeping and
-gets withdrawal right for free.
+`source` is required — an ownership claim with no owner cannot be acted on. `revision`
+is opaque; nothing here compares two of them. The listed names are not checked against
+the catalog, because this records what was written rather than declaring it again.
+`config show` reports the table, and every command that rewrites the file preserves it.
+
+Nothing in this project writes `[managed]`, and nothing reads it to decide anything —
+it is a place for a provisioner to keep its own answer. If your semantics differ, any
+table this build does not model is preserved verbatim too, so `[acme]` with whatever
+shape you want works just as well.
 
 ## Testing
 
