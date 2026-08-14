@@ -30,7 +30,40 @@ credential = "env://ARK_API_KEY"
 | `cred://<account>` | a `[<account>]` block in `credentials.toml` (chmod 600) |
 | `keychain://<service>/<account>` | the OS keychain (optional `keychain` extra) |
 | `broker://<host>` | a credential broker — this process holds only a session token |
-| `op://…`, `vault://…`, `aws-sm://…` | a registered backend (`register_secret_backend`) |
+| `op://…`, `vault://…`, `aws-sm://…` | a pluggable backend — see *Adding a scheme* below |
+
+## Adding a scheme
+
+A deployment reaches its own vault by supplying the backend for one scheme. Two ways,
+and only the first works for an installed CLI:
+
+```toml
+# pyproject.toml of your package — the entry point's *name* is the scheme
+[project.entry-points."media_ai.credentials"]
+zti = "acme_media_ai:fetch_from_config_centre"
+```
+
+```python
+# in-process, for a test or a program using this as a library
+from media_ai.credentials import register_secret_backend
+register_secret_backend("zti", fetch_from_config_centre)
+```
+
+The backend is `Callable[[str], str]` — it receives the whole reference
+(`"zti://team-vision/seedance"`) and returns the secret. `pip install` your package and
+`credential = "zti://…"` resolves; **nothing in this project changes**.
+
+Declaring is what an installed CLI can use, because there is no moment at which a
+plugin's own code would otherwise run. Registering wins over declaring for the same
+scheme, whichever happens first: it is the more specific statement, and an embedder
+that made one is not asking to be overruled by whatever is pip-installed.
+
+Two properties worth knowing. The group is **enumerated but not imported** until a
+reference actually names the scheme — so listing what exists is cheap enough to do
+inside the "no backend for scheme" error, and a plugin nobody calls is never loaded. And
+a plugin that declares a **built-in** scheme (`env`, `cred`, `keychain`, `broker`) is
+warned about and skipped rather than silently ignored: those resolve directly, so it
+would be installed, correct, and never called.
 
 **This replaced a five-layer precedence chain** (broker → secret manager → keychain →
 config file → env, first hit wins). The chain was convenient and answered the wrong

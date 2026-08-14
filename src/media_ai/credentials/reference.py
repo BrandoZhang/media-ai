@@ -28,12 +28,14 @@ import os
 from ..brand import cli_name, dist_name
 from ..core.errors import ErrorCategory, MediaError
 from .secret import BrokeredHandle, Credential, Secret
-from .stores import named_account, register_secret_backend, secret_backend
+from .stores import BUILTIN_SCHEMES, ENTRY_POINT_GROUP, named_account, register_secret_backend, secret_backend
 
 __all__ = ["is_reference", "resolve_reference", "BindingCredentials"]
 
-#: Schemes resolved in-process. Anything else needs a registered backend.
-_BUILTIN = ("env", "cred", "keychain", "broker")
+#: Schemes resolved in-process. Anything else needs a backend — see
+#: :data:`media_ai.credentials.stores.BUILTIN_SCHEMES`, which owns the list because it
+#: owns the namespace a backend registers into.
+_BUILTIN = BUILTIN_SCHEMES
 
 
 def is_reference(value: str) -> bool:
@@ -99,7 +101,8 @@ def _reveal(scheme: str, rest: str, ref: str, provider: str) -> str:
         known = ", ".join(sorted({*_BUILTIN, *_registered()}))
         raise MediaError(
             f"credential {ref!r}: no backend for scheme {scheme!r} (known: {known}); "
-            "register one with media_ai.credentials.stores.register_secret_backend",
+            f"a distribution declares one in the {ENTRY_POINT_GROUP!r} entry-point group, "
+            "or call media_ai.credentials.stores.register_secret_backend in-process",
             category=ErrorCategory.AUTH, code="credential_scheme_unknown", provider=provider,
         )
     value = backend(ref)

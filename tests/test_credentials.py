@@ -278,3 +278,105 @@ def test_replacing_skips_the_schema_check_because_nothing_is_being_merged(tmp_pa
 def test_a_raw_key_is_never_mistaken_for_a_reference(value, reference):
     """What the shareable config file is checked against before anything is written."""
     assert is_reference(value) is reference
+
+
+# ------------------------------------------------- a scheme a distribution declares
+
+# `register_secret_backend` is documented as the way a deployment adds its own vault
+# "without a fork". It was, for a library caller. An *installed CLI* has no moment at
+# which anyone's code runs, so the only way to reach it was to edit `__main__.py` —
+# which is a fork, and exactly what the sentence promises you do not need. The entry
+# point is that moment.
+
+
+class _SchemeEP:
+    def __init__(self, name, fn):
+        self.name = name
+        self._fn = fn
+
+    def load(self):
+        return self._fn()
+
+
+def declare(monkeypatch, *eps):
+    """Stand in for a distribution declaring entry points, without installing one."""
+    import importlib.metadata as md
+
+    monkeypatch.setattr(
+        md, "entry_points",
+        lambda *, group=None: list(eps) if group == stores.ENTRY_POINT_GROUP else [],
+    )
+    stores.reset_backends()
+
+
+@pytest.fixture(autouse=True)
+def _clean_backends():
+    yield
+    stores.reset_backends()
+
+
+def test_a_declared_scheme_resolves(monkeypatch):
+    declare(monkeypatch, _SchemeEP("zti", lambda: lambda ref: f"resolved:{ref}"))
+    assert resolve_reference("zti://team/seedance").reveal() == "resolved:zti://team/seedance"
+
+
+def test_a_declared_scheme_is_listed_without_being_imported(monkeypatch):
+    """Enumerating reads metadata; loading imports. Keeping them apart is what makes
+    the "known schemes" list affordable inside an error message — and what keeps a
+    plugin nobody's reference names from being imported at all.
+    """
+    imported = []
+
+    def _boom():
+        imported.append(True)
+        raise AssertionError("loaded a plugin nothing asked for")
+
+    declare(monkeypatch, _SchemeEP("vault", _boom))
+    assert "vault" in stores.registered_schemes()
+    assert not imported
+
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("wishful://thinking")
+    assert "vault" in ei.value.message
+    assert not imported
+
+
+def test_an_in_process_registration_wins_over_a_declaration(monkeypatch):
+    """Whichever happens first. An embedder that made one is not asking to be
+    overruled by whatever happens to be pip-installed."""
+    declare(monkeypatch, _SchemeEP("dual", lambda: lambda ref: "from-the-plugin"))
+    register_secret_backend("dual", lambda ref: "from-the-caller")
+    assert resolve_reference("dual://x").reveal() == "from-the-caller"
+
+
+def test_a_broken_plugin_is_a_refusal_not_a_crash(monkeypatch, caplog):
+    """One bad plugin must not take down a command that never needed it."""
+    def _boom():
+        raise RuntimeError("plugin import boom")
+
+    declare(monkeypatch, _SchemeEP("broken", _boom))
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("broken://x")
+    assert ei.value.code == "credential_scheme_unknown"
+
+
+def test_a_plugin_shadowing_a_builtin_is_told_so(monkeypatch, caplog):
+    """It would be installed, correct, and never called: `_reveal` resolves the
+    built-ins before any backend is consulted."""
+    import logging
+
+    declare(monkeypatch, _SchemeEP("env", lambda: lambda ref: "never-reached"))
+    with caplog.at_level(logging.WARNING):
+        assert "env" not in stores.registered_schemes()
+    assert "never reach it" in caplog.text
+
+    monkeypatch.setenv("SHADOW_TEST_VAR", "the-real-one-123456")
+    assert resolve_reference("env://SHADOW_TEST_VAR").reveal() == "the-real-one-123456"
+
+
+def test_the_error_names_both_ways_to_add_one(monkeypatch):
+    declare(monkeypatch)
+    with pytest.raises(MediaError) as ei:
+        resolve_reference("nowhere://x")
+    assert stores.ENTRY_POINT_GROUP in ei.value.message
+    assert "register_secret_backend" in ei.value.message
