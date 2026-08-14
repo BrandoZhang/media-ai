@@ -45,6 +45,19 @@ for an observability backend is the same kind of secret wearing a different hat.
 MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_ENDPOINT=http://localhost:4318 media-ai image generate …
 ```
 
+`media-ai init` offers the same decision — one yes/no, defaulting to whatever is
+already configured, plus the endpoint after a yes. It appears **only when there is
+something to choose**: the `otel` extra is installed (a deliberate act by somebody who
+wants this), or telemetry is already on and the question is how to turn it off. On a
+machine with neither, a "yes" would write a config that exports nothing and earns a
+warning on every later command, so the wizard stays quiet and `--telemetry-endpoint
+<url>` covers unattended provisioning:
+
+```bash
+media-ai init --non-interactive --skills-dest ~/.claude/skills \
+              --telemetry-endpoint http://collector.internal:4318
+```
+
 `MEDIA_TELEMETRY` is read three-state through `core/envflag.py`, like every other
 `MEDIA_*` flag here: unset lets the config decide, `MEDIA_TELEMETRY=0` overrules a
 config that says `true`. That direction is the point — a shared config file turning

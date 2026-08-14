@@ -98,6 +98,8 @@ credential = "env://ARK_API_KEY"
 #
 # Needs the optional extra — `pip install "media-ai[otel]"`. Enabled without it, the
 # CLI degrades to a no-op and says so in `notices[]` rather than failing a generation.
+# `media-ai init` asks about this once the extra is installed (and `--telemetry-endpoint
+# <url>` answers it unattended); `media-ai doctor` reports what is in effect.
 #
 # `MEDIA_TELEMETRY=0` overrides an `enabled = true` here, which is the point of the
 # override: a config shared between machines, one of which must not export.
