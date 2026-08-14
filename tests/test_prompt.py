@@ -581,28 +581,38 @@ def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):
 # ------------------------------------------------------- real terminal, via pty
 
 
-def _await_first_draw(fd: int, timeout: float = 10.0) -> None:
-    """Block until the child has drawn its prompt, so a key cannot arrive too early.
+def _await_prompt(fd: int, *, quiet_for: float = 0.15, timeout: float = 10.0) -> None:
+    """Block until the child has drawn its frame *and stopped drawing*.
 
     This used to be ``time.sleep(0.3)`` — a guess about how long an interpreter takes
     to start and import this package, and a guess that was wrong on a slower runner.
     Getting it wrong is not a slow test but a *misleading* one: ``tty.setraw`` flushes
-    with ``TCSAFLUSH``, so anything typed before it is discarded, and the prompt then
-    reads nothing. The failure looks like "the secret prompt returned an empty string",
-    which is a plausible product bug and was not one.
+    with ``TCSAFLUSH``, so anything typed before it is discarded and the prompt reads
+    nothing. The failure looks like "the secret prompt returned an empty string", which
+    is a plausible product bug and is not one.
 
-    The prompt having drawn itself is the real signal, and it is one the child already
-    sends: the first byte on the master means the frame is up, which is downstream of
-    both the import and the raw-mode switch.
+    First output is not enough on its own, which is the narrower race the sleep was
+    also hiding. A **line** prompt (``text``, ``secret``) draws its question while the
+    terminal is still cooked and enters raw mode only inside the read — so a key landing
+    between those two is flushed away exactly as before, just through a smaller window.
+
+    Silence is the signal that covers both. The last thing written happens inside the
+    raw block (``_read_masked`` re-shows the cursor there), so output stopping means the
+    child is blocked on ``read`` with the terminal already switched. Nothing here is a
+    guess about how fast a machine is: a slow one simply takes longer to go quiet.
     """
     deadline = time.time() + timeout
+    drew, last = False, time.time()
     while time.time() < deadline:
         try:
-            if os.read(fd, 65536):
-                return
+            chunk = os.read(fd, 65536)
         except OSError:  # nothing yet (non-blocking) or the child is gone
-            pass
-        time.sleep(0.02)
+            chunk = b""
+        if chunk:
+            drew, last = True, time.time()
+        elif drew and time.time() - last >= quiet_for:
+            return
+        time.sleep(0.01)
 
 
 def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
@@ -630,7 +640,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
             pass
 
     try:
-        _await_first_draw(fd)
+        _await_prompt(fd)
         for key in keys:
             os.write(fd, key)
             time.sleep(0.12)
