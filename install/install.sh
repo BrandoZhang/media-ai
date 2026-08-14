@@ -25,7 +25,7 @@ CLI_NAME="media-ai"
 DIST_NAME="$CLI_NAME"
 
 main() {
-  local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
+  local version="" skills_dest="" telemetry_endpoint="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0
   local keep_flags=()
 
   while [ $# -gt 0 ]; do
@@ -37,6 +37,11 @@ main() {
       --version=*)    version="${1#*=}"; shift ;;
       --skills-dest)  need_value "$@"; skills_dest="$2"; shift 2 ;;
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
+      # Spelled exactly as the wizard's own flag, like --skills-dest above: the
+      # installer passes it straight through, and a user who reads one name in
+      # `init --help` and a different one here has to learn the mapping.
+      --telemetry-endpoint)   need_value "$@"; telemetry_endpoint="$2"; shift 2 ;;
+      --telemetry-endpoint=*) telemetry_endpoint="${1#*=}"; shift ;;
       --no-init)      do_init=0; shift ;;
       --uninstall)    do_uninstall=1; shift ;;
       --keep-config)  keep_flags+=(--keep-config); shift ;;
@@ -56,11 +61,29 @@ main() {
     return $?
   fi
 
+  # Refused rather than ignored. The endpoint is written by the wizard, so with
+  # --no-init there is nowhere for it to go — and an option that is quietly dropped is
+  # worse than one that is missing, because the user believes it took effect.
+  if [ -n "$telemetry_endpoint" ] && [ "$do_init" -eq 0 ]; then
+    err "--telemetry-endpoint is written by \`$CLI_NAME init\`, which --no-init skips"
+    usage
+    return 2
+  fi
+
   check_platform
   ensure_uv
   [ -n "$version" ] || version="$(resolve_version)"
 
   local spec="git+https://github.com/${REPO}@${version}"
+  if [ -n "$telemetry_endpoint" ]; then
+    # The extra comes with the endpoint, in one install rather than as a second step:
+    # a machine configured to export, without the SDK that exports, is one that writes
+    # a collector's address into its config and then sends it nothing. PEP 508 direct
+    # reference — the only spelling that carries an extra alongside a git source.
+    # Kept off the default path so an ordinary install resolves exactly what it did
+    # before this flag existed.
+    spec="${DIST_NAME}[otel] @ git+https://github.com/${REPO}@${version}"
+  fi
   if [ "$dry_run" -eq 1 ]; then
     say "would install: uv tool install --force $spec"
     return 0
@@ -71,7 +94,7 @@ main() {
 
   check_path
   self_test
-  if [ "$do_init" -eq 1 ]; then run_init "$skills_dest"; fi
+  if [ "$do_init" -eq 1 ]; then run_init "$skills_dest" "$telemetry_endpoint"; fi
   return 0
 }
 
@@ -81,6 +104,9 @@ usage: install.sh [options]
 
   --version REF      install this git ref (tag, branch, or sha; default: latest tag)
   --skills-dest PATH install Agent Skills here without asking
+  --telemetry-endpoint URL
+                     export traces and metrics to this OTLP/HTTP collector; installs
+                     the OpenTelemetry extra and skips the telemetry prompt
   --no-init          skip the configuration wizard
   --dry-run          print what would be done and exit
 
@@ -101,9 +127,15 @@ err() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
 # so $1 is the flag and $2 is the value that has to be there. A value starting with
 # `-` counts as missing: `--version --dry-run` would otherwise install a git ref
 # literally named "--dry-run" and silently drop the flag it swallowed.
+#
+# No example in the message. It used to end `(e.g. $1 v0.2.0)`, which is a git ref
+# offered under whichever flag was empty — right for `--version`, nonsense for
+# `--skills-dest` and now for `--telemetry-endpoint`. `usage` prints directly after
+# this and names the real value for every flag, so the example was the only part that
+# could be wrong and the only part that was not needed.
 need_value() {
   if [ $# -lt 2 ] || case "$2" in -*) true ;; *) false ;; esac; then
-    err "$1 needs a value (e.g. $1 v0.2.0)"
+    err "$1 needs a value"
     usage
     exit 2
   fi
@@ -196,7 +228,12 @@ self_test() {
 }
 
 run_init() {
-  local skills_dest="${1:-}"
+  local skills_dest="${1:-}" telemetry_endpoint="${2:-}"
+  # Built as an array, the way run_uninstall builds its --keep-* flags: two optional
+  # pass-throughs are four spelled-out command lines, and the third would be eight.
+  local flags=()
+  if [ -n "$skills_dest" ]; then flags+=(--skills-dest "$skills_dest"); fi
+  if [ -n "$telemetry_endpoint" ]; then flags+=(--telemetry-endpoint "$telemetry_endpoint"); fi
   # When this script is itself being piped from curl, the pipe owns stdin, so the
   # wizard has to read the terminal directly. With no terminal at all (CI, a
   # non-interactive shell) it must not block waiting for input that will never come.
@@ -214,11 +251,10 @@ run_init() {
   # stdout is discarded for the same reason run_uninstall discards it: `init` ends by
   # printing its machine-contract JSON object, which after a wizard the user just
   # finished reading is noise landing under the closing line.
-  if [ -n "$skills_dest" ]; then
-    "$CLI_NAME" init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
-  else
-    "$CLI_NAME" init < /dev/tty >/dev/null || true
-  fi
+  # `${flags[@]+…}` because an empty array under `set -u` is an unbound variable on
+  # bash 3.2, which is the bash macOS still ships — the same expansion run_uninstall
+  # uses for the same reason.
+  "$CLI_NAME" init "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
 }
 
 run_uninstall() {

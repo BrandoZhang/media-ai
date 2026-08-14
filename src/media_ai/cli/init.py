@@ -771,7 +771,11 @@ def _ask_telemetry(args, prompter, answers: _Answers) -> None:
         answers.telemetry = replace(current, enabled=False) if current.enabled else None
         return
     endpoint = prompter.text(
-        "  OTLP/HTTP endpoint (the collector's base URL)",
+        # "<subject> — <what is being asked>", the shape every other follow-up question
+        # here uses ("elevenlabs/eleven-v3 — Base URL"). An indented continuation line
+        # is what a question *within* one step looks like; this is its own step, drawn
+        # with its own marker on the rail, so the indent read as a stray one.
+        "Telemetry — OTLP/HTTP endpoint (the collector's base URL)",
         default=current.endpoint or DEFAULT_TELEMETRY_ENDPOINT,
     ).strip()
     answers.telemetry = replace(current, enabled=True, endpoint=endpoint.rstrip("/"))

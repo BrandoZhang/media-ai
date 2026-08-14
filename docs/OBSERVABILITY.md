@@ -58,6 +58,10 @@ media-ai init --non-interactive --skills-dest ~/.claude/skills \
               --telemetry-endpoint http://collector.internal:4318
 ```
 
+`install.sh` takes the same flag under the same name and passes it through, the way it
+does `--skills-dest` — and adds the `otel` extra to the install it is already doing, so
+one command produces a machine that both is configured to export and can.
+
 `MEDIA_TELEMETRY` is read three-state through `core/envflag.py`, like every other
 `MEDIA_*` flag here: unset lets the config decide, `MEDIA_TELEMETRY=0` overrules a
 config that says `true`. That direction is the point — a shared config file turning
@@ -78,8 +82,12 @@ An installation that never exports should not carry it, and — more to the poin
 
 ```bash
 pip install "media-ai[otel]"                                  # a pip install
-uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # the installer's route
 uv sync --extra otel                                          # a checkout
+
+# or from the installer, which adds the extra to the same install rather than
+# leaving a second step — a machine configured to export, without the SDK that
+# exports, writes a collector's address into its config and sends it nothing:
+curl -fsSL …/install.sh | bash -s -- --telemetry-endpoint http://collector.internal:4318
 ```
 
 So the SDK is imported **lazily, once, and only when telemetry is enabled**. The three

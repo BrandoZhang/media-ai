@@ -34,7 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/i
 
 Installs [uv](https://docs.astral.sh/uv/) if it is missing, installs the CLI, runs an
 offline self-test, then hands over to the setup wizard. Options: `--version REF`,
-`--skills-dest PATH`, `--no-init`, `--dry-run`.
+`--skills-dest PATH`, `--telemetry-endpoint URL` (adds the OpenTelemetry extra — see
+[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)), `--no-init`, `--dry-run`.
 
 Already installed, or configuring a second machine:
 
