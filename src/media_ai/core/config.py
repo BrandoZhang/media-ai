@@ -107,7 +107,9 @@ from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 
-__all__ = ["Config", "UserBinding", "config_path", "load_config", "render_config", "snapshot"]
+__all__ = [
+    "Config", "UserBinding", "config_path", "load_config", "render_config", "save_config", "snapshot",
+]
 
 SCHEMA = 2
 
@@ -609,6 +611,11 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     because :func:`render_config` cannot round-trip comments: an edit to one field
     rewrites the whole file, and a hand-written note explaining why a binding points at
     a particular endpoint is otherwise gone with no way back.
+
+    Exported for the same reason :func:`media_ai.credentials.stores.save_accounts` is:
+    setup is not the only thing that legitimately writes this file, and a deployment
+    provisioning a machine from its own configuration service should reach the one
+    writer rather than reimplement it.
     """
     from ..credentials.tomlwrite import backup, write_public
 
