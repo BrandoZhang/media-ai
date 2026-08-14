@@ -46,6 +46,11 @@ The environment gets a say, through the variables everything else already honour
 (:func:`_color_enabled`), and ``MEDIA_NO_TTY`` / ``MEDIA_ASCII`` are the local
 overrides for forcing each by hand.
 
+Every one of those except ``NO_COLOR`` is read through
+:func:`media_ai.core.envflag.env_flag`, so ``CI=false`` means what it says and
+``MEDIA_NO_TTY=0`` overrules it — see that module for why ``NO_COLOR`` is the
+exception.
+
 Colour is also gated on the stream itself being a terminal, which is the half that
 covers the agents: a harness captures stderr through a pipe while passing ``TERM``
 through unchanged, so the environment describes a terminal that is not there. What may
@@ -64,6 +69,8 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+from ..core.envflag import env_flag
 
 __all__ = [
     "Option",
@@ -192,7 +199,7 @@ ASCII = Glyphs("T", "|", "-", "*", "o", "x", "(*)", "( )", "[+]", "[ ]", "*", ".
 
 def glyphs_for(stream) -> Glyphs:
     """The richest symbol set ``stream`` can actually encode."""
-    if os.getenv("MEDIA_ASCII"):
+    if env_flag("MEDIA_ASCII"):
         return ASCII
     encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding()
     try:
@@ -218,6 +225,8 @@ def _color_enabled(stream=None) -> bool:
     Read per call rather than cached: cheap, and a long-lived process (or a test) can
     change its environment between renders.
     """
+    # Not `env_flag`: the NO_COLOR spec asks for any non-empty value, whatever it says,
+    # so `NO_COLOR=0` disables colour. See `core/envflag.py`.
     if os.getenv("NO_COLOR"):
         return False
     if os.getenv("TERM", "") == "dumb":
@@ -1068,8 +1077,16 @@ def _nobody_is_watching() -> bool:
 
     Both take the numbered-menu fallback, which fails deterministically on EOF instead
     of waiting on an answer no one is going to give.
+
+    ``MEDIA_NO_TTY`` overrules them **in both directions**, which is the whole reason
+    the flags are read in three states. A person on a runner shell, or in a dev
+    container whose image sets ``CI``, had no way to say "there is still somebody here"
+    — the variable could only ever force the fallback on, never off.
     """
-    return bool(os.getenv("MEDIA_NO_TTY") or os.getenv("CI") or os.getenv("TERM", "") == "dumb")
+    forced = env_flag("MEDIA_NO_TTY")
+    if forced is not None:
+        return forced
+    return bool(env_flag("CI")) or os.getenv("TERM", "") == "dumb"
 
 
 def get_prompter(*, force_fallback: bool = False) -> Prompter:
