@@ -135,6 +135,86 @@ injection, retry, the result shape and the exit-code taxonomy. This is the case 
 declarative-only design could never serve, and the reason wire mapping stayed in code.
 See `tests/test_extensions.py::test_an_rpc_backend_is_first_class`.
 
+## Provisioning a machine without the wizard
+
+An internal distribution usually does not want `media-ai init`: which bindings a
+machine gets and which key each one uses are decided centrally, and the person at the
+keyboard has nothing to contribute to either. The shape that works is **authenticate,
+fetch, write the two files** — after which nothing else in the CLI knows or cares that
+it was provisioned.
+
+Only the last step is this project's business. It is two calls:
+
+```python
+from media_ai.core.config import Config, UserBinding, save_config
+from media_ai.credentials.stores import save_accounts
+
+payload = fetch_my_org_config(authenticate())        # entirely yours
+
+save_accounts({"acme/fast": payload["key"]}, replace=True)
+save_config(Config(
+    bindings={"acme/fast": UserBinding(id="acme/fast",
+                                       base_url=payload["base_url"],
+                                       credential="cred://acme/fast")},
+    defaults={"image.text_to_image": "acme/fast"},
+    exists=True,
+))
+```
+
+Reach for those rather than writing the TOML yourself. `save_accounts` carries four
+rules that are invisible from the file format and silent when got wrong: the schema is
+checked *before* a merge and stamped *after* it (merging into a file this build reads
+wrongly rewrites it in the older shape and takes the keys with it), the file lands 0600
+inside a 0700 directory or the resolver refuses to read it at all, an identical re-run
+leaves no second backup — a copy of every key, under a name nobody will remember to
+delete — and a file whose mode has drifted stays repairable by rewriting.
+
+`replace=True` makes the given accounts the whole file. That is usually what
+role-based provisioning wants: an entitlement being *withdrawn* has to remove the
+account it granted, and a merge can only ever add or overwrite. It is not the default,
+because for the wizard and for `bindings add` it would discard keys nobody asked about.
+
+Neither writer imports `media_ai.cli`, so a provisioner is a small script rather than
+a CLI command — which is the right shape anyway, since the authentication step is
+yours and does not belong in this project's argument parser.
+
+### For services, prefer keeping the key out of the file
+
+A container does not need `credentials.toml` at all. Provision (or bake in) a
+`config.toml` whose bindings use `env://`, and let the orchestrator inject the value:
+
+```toml
+[bindings."acme/fast"]
+base_url   = "https://gateway.internal/v1"
+credential = "env://ACME_GATEWAY_KEY"
+```
+
+Nothing secret is on disk, the config can go into the image, and revocation is the
+orchestrator's job rather than a file's. One trap if you do mount a file instead:
+Kubernetes `Secret` volumes default to mode 0644, which the resolver refuses — set
+`defaultMode: 0600`.
+
+### Recording that you wrote it
+
+Only worth doing if you intend to **merge**. A wholesale replace needs no bookkeeping
+and gets withdrawal right for free; a merge has to know which entries are yours, or it
+can only ever add and overwrite — and an entitlement being withdrawn would leave the
+binding it granted behind.
+
+If you do, put a table of your own in `config.toml`:
+
+```toml
+[acme]
+source   = "https://config.internal/media-ai/team-vision"
+revision = "2026-08-14T02:00:00Z"
+owns     = ["acme/fast"]
+```
+
+**Every table this build does not model is preserved verbatim** through every command
+that rewrites the file, so nothing upstream has to know the shape and nothing will eat
+it. That is deliberately better than a table this project models for you: your
+provenance rules are yours, and a schema here would only constrain them.
+
 ## Testing
 
 Adapters are exercised offline against a `FakeClient` that records request bodies and

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,7 +34,7 @@ from ..core.result import SCHEMA_VERSION
 from ..core.scene import scenes_for_group
 from ..credentials import stores
 from ..credentials.tomlwrite import backup as tomlwrite_backup
-from ..credentials.tomlwrite import dumps, write_private, write_public
+from ..credentials.tomlwrite import write_private, write_public
 from . import common
 from ._announce import announcements
 from ._discovery import (
@@ -49,17 +48,6 @@ from ._discovery import (
 )
 from ._prompt import Cancelled, GoBack, Option, get_prompter, run_steps
 from ._skillstore import SKILL_DESTS, copy_skill, installed_skills, record_install, skill_is_current
-
-
-def credentials_header() -> str:
-    """The comment block written at the top of ``credentials.toml``."""
-    cli = cli_name()
-    return (
-        f"{cli} credentials — written by `{cli} init`.\n"
-        "SECRETS: keep this file chmod 600; the CLI refuses to read it otherwise.\n"
-        "Each [<name>] is an account. The wizard names one after the binding that\n"
-        "uses it, so `which key did this binding use?` has a one-line answer."
-    )
 
 
 def config_header() -> str:
@@ -77,20 +65,6 @@ credentials_path = stores.credentials_path
 
 
 # --------------------------------------------------------------------------- io
-
-
-def _load(path: Path) -> dict:
-    """Parse an existing config, or return ``{}``. A broken file is an error, not
-    something to silently overwrite — it may be hand-written and worth keeping."""
-    if not path.is_file():
-        return {}
-    try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise MediaError(
-            f"could not read existing {path}: {exc}; fix or move it, then re-run",
-            category=ErrorCategory.CLI,
-        ) from exc
 
 
 def _backup(path: Path) -> Path | None:
@@ -763,8 +737,7 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
         # Only keys that are actually stored go in the secret file. A binding pointed
         # at env:// keeps its key out of the filesystem entirely, which is the whole
         # reason that option exists.
-        path = credentials_path()
-        pending.append((path, _render(path, _merged_credentials(path, raw_keys), credentials_header()), write_private))
+        pending.append((credentials_path(), stores.render_accounts(raw_keys), write_private))
     if answers.creds or answers.defaults:
         pending.append((config_path(), _render_config(answers), write_public))
 
@@ -806,34 +779,6 @@ def _render_config(answers: _Answers) -> str:
         path=config_path(), exists=True,
     )
     return render_config(merged, header=config_header())
-
-
-def _merged_credentials(path: Path, raw_keys: dict) -> dict:
-    """This run's accounts merged into whatever is already in ``credentials.toml``.
-
-    The schema is checked before the merge and stamped after it. Before, because
-    merging into a file this build cannot read correctly would rewrite it in the older
-    shape and take the keys with it — and these are the one thing here a user cannot
-    reconstruct. After, because the file that comes out is written by *this* build, so
-    it says so, whatever the file that went in claimed.
-    """
-    existing = _load(path)
-    stores.check_schema(existing, path)
-    return {**existing, **raw_keys, "schema": stores.SCHEMA}
-
-
-def _render(path: Path, data: dict, header: str) -> str:
-    """Serialize ``data``, turning a writer refusal into an error a user can act on."""
-    from ..credentials.tomlwrite import TomlWriteError
-
-    try:
-        return dumps(data, header=header)
-    except TomlWriteError as exc:
-        raise MediaError(
-            f"{path} holds a value this writer cannot round-trip ({exc}); move it aside, "
-            "then re-run — nothing has been changed",
-            category=ErrorCategory.CLI,
-        ) from exc
 
 
 def _write_merged(path: Path, text: str, writer, args, summary: dict) -> None:

@@ -107,7 +107,9 @@ from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 
-__all__ = ["Config", "UserBinding", "config_path", "load_config", "render_config", "snapshot"]
+__all__ = [
+    "Config", "UserBinding", "config_path", "load_config", "render_config", "save_config", "snapshot",
+]
 
 SCHEMA = 2
 
@@ -609,6 +611,11 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     because :func:`render_config` cannot round-trip comments: an edit to one field
     rewrites the whole file, and a hand-written note explaining why a binding points at
     a particular endpoint is otherwise gone with no way back.
+
+    Exported for the same reason :func:`media_ai.credentials.stores.save_accounts` is:
+    setup is not the only thing that legitimately writes this file, and a deployment
+    provisioning a machine from its own configuration service should reach the one
+    writer rather than reimplement it.
     """
     from ..credentials.tomlwrite import backup, write_public
 
@@ -622,6 +629,34 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     return saved
 
 
+def _check_credential_is_a_reference(binding: UserBinding) -> None:
+    """Refuse to write a raw key into the shareable file. The mirror of :func:`_parse_binding`.
+
+    Both directions are needed, and only one of them is in time. A raw key found on
+    *read* is a key that has already been written to a 0644 file and possibly committed;
+    the refusal is then a report of something that already happened. This one fires
+    while the value is still in memory, which is the only point at which refusing keeps
+    it secret.
+
+    The check became worth having when :func:`save_config` became a documented entry
+    point for provisioning (``docs/EXTENDING.md``): the caller most likely to get this
+    wrong is one holding a real key it just fetched, deciding which field it goes in.
+
+    Only ``credential`` is checked, because only ``credential`` has an exact rule — it
+    is a reference or it is invalid. Scanning ``extra`` for key-shaped strings would be
+    a guess, and a writer that refuses on a guess refuses legitimate values.
+    """
+    if binding.credential is None or is_reference(binding.credential):
+        return
+    raise MediaError(
+        f'binding "{binding.id}".credential must be a reference (env://VAR, cred://<account>, '
+        "keychain://<name>), never a raw key — this file is the shareable one",
+        category=ErrorCategory.AUTH, code="credential_is_raw_key",
+        details={"binding": binding.id},
+        hint="put the key in credentials.toml and refer to it as cred://<account>",
+    )
+
+
 def render_config(config: Config, *, header: str | None = None) -> str:
     """Serialize a :class:`Config` back to TOML.
 
@@ -630,8 +665,16 @@ def render_config(config: Config, *, header: str | None = None) -> str:
 
     Fields this build does not model are written back from ``extra``; a value the
     writer's subset cannot express raises rather than being dropped.
+
+    ``credential`` is checked here as well as on read, and the asymmetry is the point:
+    the reader refusing a raw key finds it *after* it has been written to a 0644 file,
+    which is the moment it stopped being a secret. Refusing to write it is the only
+    check that happens while the value is still only in memory.
     """
     from ..credentials.tomlwrite import TomlWriteError, dumps
+
+    for binding in config.bindings.values():
+        _check_credential_is_a_reference(binding)
 
     data: dict = {"schema": SCHEMA}
     if config.bindings:

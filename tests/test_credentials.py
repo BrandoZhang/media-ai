@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import tomllib
 
 import pytest
 
@@ -221,39 +222,42 @@ def test_the_secret_in_a_rejected_file_is_not_in_the_message(tmp_path, monkeypat
 
 # ---------------------------------------------------- and what the writer does with it
 
-# `init` merges this run's accounts into whatever is on disk, so it is the other half
+# Writing merges this run's accounts into whatever is on disk, so it is the other half
 # of the layout question: reading has to know which shape it is holding, and writing
 # has to not rewrite a shape it does not understand.
 
 
 def test_the_writer_stamps_the_schema_onto_a_file_that_had_none(tmp_path, monkeypatch):
-    from media_ai.cli.init import _merged_credentials
-
-    path = _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-old-123456"\n')
-    merged = _merged_credentials(path, {"volc-ark/seedance-2.0": {"api_key": "sk-new-123456"}})
+    _creds_file(tmp_path, monkeypatch, '[openai]\napi_key = "sk-old-123456"\n')
+    merged = tomllib.loads(stores.render_accounts({"volc-ark/seedance-2.0": {"api_key": "sk-new-123456"}}))
     assert merged["schema"] == stores.SCHEMA
     assert merged["openai"] == {"api_key": "sk-old-123456"}
 
 
 def test_the_writer_stamps_this_build_over_what_the_file_claimed(tmp_path, monkeypatch):
     """The file coming out was written by this build, whatever went in said."""
-    from media_ai.cli.init import _merged_credentials
-
-    path = _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA}\n\n[openai]\napi_key = "sk-old-123456"\n')
-    assert _merged_credentials(path, {})["schema"] == stores.SCHEMA
+    _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA}\n\n[openai]\napi_key = "sk-old-123456"\n')
+    assert tomllib.loads(stores.render_accounts({}))["schema"] == stores.SCHEMA
 
 
 def test_the_writer_refuses_to_merge_into_a_newer_file(tmp_path, monkeypatch):
     """Merging into a file it cannot read correctly would rewrite it in the older
     shape and take the keys with it — and these are what cannot be reconstructed."""
-    from media_ai.cli.init import _merged_credentials
-
     body = f'schema = {stores.SCHEMA + 1}\n\n[openai]\napi_key = "sk-old-123456"\n'
     path = _creds_file(tmp_path, monkeypatch, body)
     with pytest.raises(MediaError) as ei:
-        _merged_credentials(path, {"new": {"api_key": "sk-new-123456"}})
+        stores.render_accounts({"new": {"api_key": "sk-new-123456"}})
     assert ei.value.code == "credentials_from_newer_build"
     assert path.read_text(encoding="utf-8") == body
+
+
+def test_replacing_skips_the_schema_check_because_nothing_is_being_merged(tmp_path, monkeypatch):
+    """`replace=True` does not read the old file, so a shape it cannot understand is
+    not in its way — there is nothing to carry forward and nothing to rewrite wrongly.
+    """
+    _creds_file(tmp_path, monkeypatch, f'schema = {stores.SCHEMA + 1}\n\n[openai]\napi_key = "sk-old-123456"\n')
+    out = tomllib.loads(stores.render_accounts({"new": "sk-new-123456"}, replace=True))
+    assert out == {"schema": stores.SCHEMA, "new": {"api_key": "sk-new-123456"}}
 
 
 # -------------------------------------------------------- telling the two apart
