@@ -1,7 +1,19 @@
 # 重构设计：以 Binding = (Provider, Model) 为接入单元
 
-> 状态：**设计稿，待评审**。本文档是重构的唯一设计依据；实施 PR 逐条引用这里的编号。
-> 讨论轮次见文末「决策记录」。
+> **Historical — shipped, and kept for the reasoning.** This was the design document
+> for the binding refactor; the architecture it proposes is the one in `src/` today.
+> It is preserved because the *arguments* are still load-bearing — why `provider` was
+> split into five things, why nothing falls back, why a scene is the role of the inputs
+> — and those are hard to reconstruct from the code that came out of it.
+>
+> It is **not** a description of the current system, and it will not be updated to
+> track one. For what the code does now, read `docs/ARCHITECTURE.md`,
+> `docs/BINDINGS.md` and `docs/EXTENDING.md`. Where this document and the code
+> disagree, the code is right.
+>
+> (Original status line: 设计稿，待评审 — "draft, pending review". It has since been
+> reviewed, implemented and superseded by its own result. Discussion rounds are in
+> the 「决策记录」 section at the end.)
 
 ## 0. 这次重构要解决的一件事
 
