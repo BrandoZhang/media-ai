@@ -1,6 +1,6 @@
 """Unified dispatcher: ``<cli> <group> <op> [args...]``.
 
-Groups: ``init``, ``doctor``, ``uninstall``, ``image``, ``video``, ``speech``,
+Groups: ``init``, ``doctor``, ``upgrade``, ``uninstall``, ``image``, ``video``, ``speech``,
 ``music``, ``sound``, ``animation``, ``job``, ``capabilities``, ``bindings``,
 ``config``, ``usage``, ``version``.
 Each group is also reachable directly; this umbrella reshapes argv so the group's own
@@ -27,6 +27,7 @@ _GROUPS = {
     "init": "init",
     "doctor": "doctor",
     "uninstall": "uninstall",
+    "upgrade": "upgrade",
     "image": "image",
     "video": "video",
     "speech": "speech",
@@ -45,6 +46,7 @@ _GROUP_HELP = {
     "init": "configure credentials, bindings, and Agent Skills",
     "doctor": "check the installation and configuration offline",
     "uninstall": "remove installed Agent Skills and configuration",
+    "upgrade": "install the latest published release",
     "image": "generate or edit images",
     "video": "generate videos or concatenate clips",
     "speech": "generate single-voice or dialogue speech",

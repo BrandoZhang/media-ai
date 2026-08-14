@@ -118,6 +118,13 @@ def _ledger(tmp_path, monkeypatch, request):
     # A test that never writes a config still gets an empty one, so nothing reads the
     # developer's real ~/.config/media-ai while the suite runs.
     monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    # The release feed points at a file that is not there, rather than being unset.
+    # Unset means the published URL, so a test that reaches `update.refresh` without
+    # saying otherwise would make a real network call — quietly passing on a laptop and
+    # failing, or worse succeeding, in CI. A test that wants a feed writes one and
+    # points this at it. `MEDIA_UPDATE_CHECK` is left alone: the code path that decides
+    # whether to check at all is itself under test.
+    monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "no-such-feed.json").as_uri())
     registry.reset_catalog()
     return tmp_path / "usage.jsonl"
 

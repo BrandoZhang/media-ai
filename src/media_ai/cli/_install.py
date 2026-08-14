@@ -7,10 +7,10 @@ pair of detectors that disagree would tell a user to remove it one way and upgra
 another.
 
 **Nothing here runs anything.** Detection is a read of ``sys.prefix``; producing a
-command is string formatting. Replacing the package that is currently executing is the
-package manager's job, not ours, and the difference between "here is the command" and
-"we ran it for you" is the difference between a failed upgrade you can see and an
-installation in an unknown state.
+command is assembling argv. Replacing the package that is currently executing is the
+package manager's job — ``<cli> upgrade`` hands these steps to it and does no
+substitution of its own, so a failed upgrade is a package manager's error message
+rather than an installation in a state nobody can describe.
 
 An editable checkout is a *third* answer, not a failure to detect one of the first two:
 somebody working on the tool should be told to pull, not to install it over the top of
@@ -19,6 +19,7 @@ their own work tree.
 
 from __future__ import annotations
 
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,31 @@ class Install:
     method: str
     prefix: str
 
+    def upgrade_steps(self, repo: str, version: str | None = None) -> list[list[str]] | None:
+        """The commands to run, as argv, or ``None`` when running them is not ours to do.
+
+        Argv rather than a shell string, and this is the half that executes: a string
+        needs quoting, and hand-written quoting is the kind of mistake that only shows
+        up on the machine where a path had a space in it. :meth:`upgrade_command`
+        renders these back for display, so what is printed is what would run.
+
+        ``None`` covers two different situations, and the caller reports them
+        differently. An **editable** checkout has a perfectly good upgrade — ``git
+        pull`` — that this tool must not run: somebody's work tree and git state are
+        theirs, and a stash conflict caused by a CLI helpfully pulling is a bad
+        afternoon. An **unknown** install has no command at all.
+
+        pip is invoked as ``<this interpreter> -m pip`` rather than as ``pip``, because
+        which environment gets upgraded is exactly the question a bare ``pip`` on
+        ``PATH`` answers wrongly.
+        """
+        source = f"git+https://github.com/{repo}{f'@v{version}' if version else ''}"
+        if self.method == "uv-tool":
+            return [["uv", "tool", "install", "--force", source]]
+        if self.method == "pip":
+            return [[sys.executable, "-m", "pip", "install", "--upgrade", f"{dist_name()} @ {source}"]]
+        return None
+
     def upgrade_command(self, repo: str, version: str | None = None) -> str | None:
         """How to move this installation to ``version``, or ``None`` if we cannot say.
 
@@ -46,14 +72,10 @@ class Install:
         command, because this project's hints are documented as usually runnable and an
         agent will run whatever appears in one.
         """
-        ref = f"@v{version}" if version else ""
-        if self.method == "uv-tool":
-            return f"uv tool install --force git+https://github.com/{repo}{ref}"
-        if self.method == "pip":
-            return f"pip install --upgrade '{dist_name()} @ git+https://github.com/{repo}{ref}'"
         if self.method == "editable":
             return "git pull && uv sync"
-        return None
+        steps = self.upgrade_steps(repo, version)
+        return " && ".join(shlex.join(step) for step in steps) if steps else None
 
     def remove_command(self) -> str:
         """How to remove the CLI itself, which no command here does on the user's behalf.
