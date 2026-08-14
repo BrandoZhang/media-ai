@@ -160,7 +160,7 @@ def atomic_write(path: Path, text: str, *, mode: int) -> None:
         raise
 
 
-def backup(path: Path) -> Path | None:
+def backup(path: Path, *, mode_ceiling: int | None = None) -> Path | None:
     """Copy a config file aside before rewriting it, returning the copy (or ``None``).
 
     :func:`dumps` cannot round-trip comments, so the original file is the only record
@@ -168,14 +168,23 @@ def backup(path: Path) -> Path | None:
     a poll timeout was raised for. Every writer of a user-owned TOML file goes through
     here first, or an edit to one field silently discards the reasoning beside it.
 
-    Created at the *source file's* mode from the start rather than written and then
+    Created at the source file's mode from the start rather than written and then
     chmod-ed: a backup of ``credentials.toml`` holds every key in it, and the second
     order leaves them in a world-readable file for as long as the write takes — and
     permanently if the process dies in between.
+
+    ``mode_ceiling`` is the other half of that, and it is the half inheriting the source
+    mode gets wrong. A caller pairing this with :func:`write_private` is usually
+    *repairing* a loose mode — that is the documented remedy for one — so inheriting it
+    leaves a copy of every key at 0644 beside a file just fixed to 0600, permanently,
+    as a side effect of the fix. The mode written is the tightest of the two, so a 0400
+    file keeps its 0400 and a 0644 one does not hand its keys on.
     """
     if not path.is_file():
         return None
     mode = path.stat().st_mode & 0o777
+    if mode_ceiling is not None:
+        mode &= mode_ceiling
     for n in range(1, 1000):
         candidate = path.with_suffix(path.suffix + f".bak{'' if n == 1 else n}")
         if not candidate.exists():

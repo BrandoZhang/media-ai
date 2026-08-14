@@ -67,7 +67,7 @@ credentials_path = stores.credentials_path
 # --------------------------------------------------------------------------- io
 
 
-def _backup(path: Path) -> Path | None:
+def _backup(path: Path, *, mode_ceiling: int | None = None) -> Path | None:
     """Copy a file aside before rewriting it — see :func:`tomlwrite.backup`.
 
     Wrapped only to turn the "too many backups" case into the CLI's error contract;
@@ -75,7 +75,7 @@ def _backup(path: Path) -> Path | None:
     file reaches the same one.
     """
     try:
-        return tomlwrite_backup(path)
+        return tomlwrite_backup(path, mode_ceiling=mode_ceiling)
     except OSError as exc:
         raise MediaError(str(exc), category=ErrorCategory.CLI) from exc
 
@@ -798,7 +798,10 @@ def _write_merged(path: Path, text: str, writer, args, summary: dict) -> None:
         summary["wrote"].append(str(path))  # nothing happened; `dry_run: true` says so
         return
     if not _unchanged(path, text):
-        backup = _backup(path)
+        # The secret file's backup may never be looser than the file itself is about to
+        # be — and re-running the wizard is exactly how a loose mode gets repaired, so
+        # the source's own mode is the wrong thing to inherit. See `tomlwrite.backup`.
+        backup = _backup(path, mode_ceiling=0o600 if writer is write_private else None)
         if backup:
             summary["backed_up"].append(str(backup))
     writer(path, text)

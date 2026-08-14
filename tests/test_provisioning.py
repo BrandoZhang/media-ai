@@ -256,3 +256,45 @@ def test_every_reference_form_still_writes(home, credential):
     """The check must not be tighter than the resolver, or it refuses working configs."""
     save_config(Config(bindings={"a/b": UserBinding(id="a/b", credential=credential)}, exists=True))
     assert load_config().bindings["a/b"].credential == credential
+
+
+# --------------------------------------------- and what the backup must never be
+
+
+def test_the_backup_of_a_loose_file_is_not_left_loose(home):
+    """The fix must not leave a copy of what it fixed.
+
+    A group/world-readable `credentials.toml` is unusable — the resolver refuses it —
+    and rewriting is the documented remedy. The rewrite backs the old file up first,
+    and a backup that inherited the source's mode would leave every key in a 0644 file
+    beside the 0600 one the repair just produced: permanently, silently, and *because*
+    the user did the right thing.
+    """
+    path = home / "credentials.toml"
+    stores.save_accounts({"gw": "sk-old-123456"})
+    path.chmod(0o644)
+
+    saved = stores.save_accounts({"gw": "sk-new-123456"})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert saved is not None and "sk-old-123456" in saved.read_text(encoding="utf-8")
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+
+
+def test_a_tighter_mode_is_kept_rather_than_widened(home):
+    """The ceiling is a ceiling, not an assignment: 0400 stays 0400."""
+    path = home / "credentials.toml"
+    stores.save_accounts({"gw": "sk-old-123456"})
+    path.chmod(0o400)
+
+    saved = stores.save_accounts({"gw": "sk-new-123456"})
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o400
+
+
+def test_the_config_backup_keeps_the_public_mode(home):
+    """`config.toml` is the shareable one; nothing here should tighten it by accident."""
+    from media_ai.core.config import Config, UserBinding, save_config
+
+    save_config(Config(bindings={"a/b": UserBinding(id="a/b")}, exists=True))
+    saved = save_config(Config(bindings={"c/d": UserBinding(id="c/d")}, exists=True))
+    assert saved is not None
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o644
