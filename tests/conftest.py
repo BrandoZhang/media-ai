@@ -116,8 +116,13 @@ def _ledger(tmp_path, monkeypatch, request):
                 "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_CONFIG_FILE"):
         monkeypatch.delenv(var, raising=False)
     # A test that never writes a config still gets an empty one, so nothing reads the
-    # developer's real ~/.config/media-ai while the suite runs.
+    # developer's real ~/.config/media-ai while the suite runs. Both files, not just the
+    # config: unsetting `MEDIA_CREDENTIALS_FILE` sends the resolver to the real path,
+    # which was survivable only while nothing in the suite *wrote* there. It stopped
+    # being survivable the moment `config migrate` grew a credentials half — a test
+    # asserting "nothing to convert" would have converted the developer's own keys.
     monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
     # The release feed points at a file that is not there, rather than being unset.
     # Unset means the published URL, so a test that reaches `update.refresh` without
     # saying otherwise would make a real network call — quietly passing on a laptop and
