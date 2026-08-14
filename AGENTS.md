@@ -19,7 +19,7 @@ bash install/test_parse.sh              # installer unit tests (CI also runs she
 # pip fallback: pip install -e ".[test]" ruff  →  run ruff/pytest/`python -m media_ai` directly
 ```
 
-Requires Python **3.11+** (uses `tomllib`); `uv` fetches a matching interpreter. ffmpeg + Pillow come bundled via `imageio-ffmpeg`/`pillow` (no system install needed). CI (`.github/workflows/ci.yml`) runs `ruff check` + `pytest -q`. The CLI-integration tests self-skip if Pillow/ffmpeg are absent, so the suite stays green on a bare box.
+Requires Python **3.11+** (uses `tomllib`); `uv` fetches a matching interpreter. ffmpeg + Pillow come bundled via `imageio-ffmpeg`/`pillow` (no system install needed). CI (`.github/workflows/ci.yml`) runs `pytest -q` on Python 3.11-3.14 and `ruff check` once. The CLI-integration tests self-skip if Pillow/ffmpeg are absent, so the suite stays green on a bare box.
 
 ## Architecture
 

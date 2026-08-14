@@ -3,8 +3,38 @@ on:
   push:
     branches: [main]
   pull_request:
+
+# Two jobs, split by one question: does the answer depend on which interpreter is
+# running? The suite does, so it runs on every version `requires-python` admits. Lint,
+# the version check and the installer's own tests do not — `ruff` reads its target from
+# `pyproject.toml`, `shellcheck` reads bash, and `check_version.py` compares strings —
+# so running them four times would only buy four identical answers and four minutes.
 jobs:
   test:
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Every version gets its answer. Stopping at the first failure hides whether the
+      # break is "3.14 only" or "everything past 3.11", which is the first thing anyone
+      # would want to know.
+      fail-fast: false
+      matrix:
+        # `pyproject.toml` says `requires-python = ">=3.11"`, and until this matrix
+        # existed only 3.11 had ever run — a promise about four interpreters, checked
+        # on one. Adding a release here is the whole cost of admitting it.
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Sync
+        run: uv sync
+      - name: Test (offline — no creds, no network)
+        run: uv run pytest -q -m "not live"
+
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +56,6 @@ jobs:
         run: uv sync
       - name: Lint
         run: uv run ruff check .
-      - name: Test (offline — no creds, no network)
-        run: uv run pytest -q -m "not live"
       - name: Lint the workflows
         run: uv run actionlint
 

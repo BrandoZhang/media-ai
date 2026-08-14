@@ -159,8 +159,15 @@ the *tests*; they are not read by the CLI, which takes everything it knows about
 call from the binding. Keep them cheap — one small artifact per binding.
 
 **CI:** `.github/workflows/ci.yml` runs the offline suite (`-m "not live"`) on every
-push/PR. `.github/workflows/live.yml` runs `-m live` **manually only** (Actions →
-*live* → *Run workflow*), reading keys from repo **Secrets**.
+push/PR, on **every Python `requires-python` admits** — 3.11 through 3.14. It is two
+jobs split by one question: does the answer depend on which interpreter is running?
+The suite does; `ruff` (whose target comes from `pyproject.toml`), `shellcheck`,
+`actionlint` and the version check do not, so they run once. `fail-fast: false`,
+because "3.14 only" and "everything past 3.11" are different problems and the matrix
+is the only thing that can tell them apart.
+
+`.github/workflows/live.yml` runs `-m live` **manually only** (Actions → *live* →
+*Run workflow*), reading keys from repo **Secrets**.
 
 That job configures itself: it runs `media-ai bindings available`, which reports per
 binding the conventional variables its own manifest declares, and adds every binding
