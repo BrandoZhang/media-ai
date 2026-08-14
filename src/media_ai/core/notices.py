@@ -41,12 +41,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-__all__ = ["KINDS", "Notice", "pending", "register_source", "reset"]
+__all__ = ["KINDS", "Notice", "add", "clear", "pending", "register_source", "reset"]
 
 #: Every ``kind`` that can appear. Adding one is a deliberate edit here, next to the
 #: consumers that have to learn it — which is the point of a closed set. Entries are
 #: added with the code that produces them, never in advance.
-KINDS = frozenset({"skills_stale", "update_available"})
+KINDS = frozenset({"skills_stale", "update_available", "binding_deprecated"})
 
 _SEVERITIES = frozenset({"info", "warn"})
 
@@ -76,6 +76,7 @@ class Notice:
 
 
 _SOURCES: list[Callable[[], Iterable[Notice]]] = []
+_ADDED: list[Notice] = []
 _CACHE: tuple[dict, ...] | None = None
 
 
@@ -90,6 +91,23 @@ def register_source(fn: Callable[[], Iterable[Notice]]) -> Callable[[], Iterable
     return fn
 
 
+def add(notice: Notice) -> None:
+    """Add a notice about *this call*, rather than about the installation.
+
+    The registered sources answer standing questions — is this build current, are the
+    skills current — and can be asked at any point because the answer does not depend
+    on what was run. A binding being deprecated is not like that: it is only worth
+    saying when the call actually resolved to that binding, and only the code that
+    resolved it knows.
+
+    Resets the collection, so an ``add`` after something has already asked is not
+    silently dropped. A command emits one payload at the end, so the ordering that
+    matters is only ever "everything, then render".
+    """
+    _ADDED.append(notice)
+    reset()
+
+
 def pending() -> tuple[dict, ...]:
     """Every notice for this process, as dicts. Computed once.
 
@@ -99,7 +117,7 @@ def pending() -> tuple[dict, ...]:
     """
     global _CACHE
     if _CACHE is None:
-        out: list[Notice] = []
+        out: list[Notice] = list(_ADDED)
         for fn in _SOURCES:
             try:
                 out.extend(fn())
@@ -113,3 +131,9 @@ def reset() -> None:
     """Forget what was collected. For tests, and for registration to take effect."""
     global _CACHE
     _CACHE = None
+
+
+def clear() -> None:
+    """Forget the added notices too. Tests only — a process emits one payload."""
+    _ADDED.clear()
+    reset()

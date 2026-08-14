@@ -52,7 +52,10 @@ __all__ = [
     "latest_version",
     "notices_for",
     "parse_feed",
+    "below_floor",
+    "minimum_supported",
     "refresh",
+    "retirement_for",
     "settings",
     "settings_from",
     "should_check",
@@ -260,6 +263,70 @@ def notices_for(feed: dict | None, version: str) -> list[dict]:
             continue
         out.append(entry)
     return out
+
+
+# ------------------------------------------------------- what it may withhold
+
+# The only two fields that change behaviour rather than display, and both can only
+# *stop* something. That asymmetry is the security model: a feed nobody authenticates
+# must not be able to point a call anywhere, so the worst a wrong or hostile one can do
+# is refuse. Reading them is deliberately unforgiving in the same direction — anything
+# not understood is ignored, because the alternative to a missed block is a fleet
+# locked out by a typo.
+
+
+def minimum_supported(feed: dict | None) -> str | None:
+    """The floor below which this build should stop calling providers, if one is set.
+
+    Absent is the ordinary state and means no floor — an absent limit is an absent
+    field here as everywhere, and a sentinel would invite a comparison against it. An
+    unparseable value is also ``None``: a floor nobody can read is not a floor, and
+    guessing at one is how a published typo becomes an outage.
+    """
+    floor = (feed or {}).get("min_supported")
+    if not isinstance(floor, str) or not VERSION.match(floor):
+        return None
+    return floor
+
+
+def below_floor(version: str, feed: dict | None) -> str | None:
+    """The floor ``version`` falls below, or ``None`` when it does not."""
+    floor = minimum_supported(feed)
+    if not floor:
+        return None
+    try:
+        return floor if precedence(version) < precedence(floor) else None
+    except ValueError:
+        return None
+
+
+def retirement_for(binding_id: str, feed: dict | None) -> dict | None:
+    """The retirement that applies to ``binding_id`` *today*, or ``None``.
+
+    ``since`` is the date it starts applying; absent means immediately, and a date that
+    is not a date drops the entry. ``severity`` must be one this build knows —
+    ``warn`` or ``block`` — and an unrecognised one drops the entry rather than being
+    rounded up to the stricter reading. A newer feed inventing a severity is exactly
+    the case where an old client should do nothing: it cannot know what the new word
+    means, and acting on a guess in the blocking direction turns "this build is old"
+    into "this build refuses to work".
+    """
+    from datetime import date
+
+    for entry in (feed or {}).get("retired_bindings", []) or []:
+        if not isinstance(entry, dict) or entry.get("binding") != binding_id:
+            continue
+        if entry.get("severity") not in {"warn", "block"}:
+            continue
+        since = entry.get("since")
+        if since is not None:
+            try:
+                if date.fromisoformat(str(since)) > date.today():
+                    continue
+            except ValueError:
+                continue
+        return entry
+    return None
 
 
 # ----------------------------------------------------------------- the cache

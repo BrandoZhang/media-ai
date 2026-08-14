@@ -98,6 +98,15 @@ a scene belonged to the earlier process that submitted the job.
   `io`/`unknown`→1). `retryable` is true for `rate_limit`, `timeout`, `provider`.
 - `details.unsupported[]` lists exactly which request fields were rejected — the
   precise fix for an exit-3 failure.
+- Two other exit-3 codes come from the **published feed** rather than from the request,
+  and both are refusals to start rather than failures of the call:
+  - `binding_retired` — that binding is gone upstream. `details.alternatives[]` names
+    what to use instead, and `hint` names one this machine can already call.
+    `--allow-retired-binding` forces the call through; it will probably fail, and it is
+    **not for an agent to set unprompted**.
+  - `version_unsupported` — this build is below the published minimum. There is no
+    override. `{{cli}} doctor`, `version`, `upgrade` and `uninstall` keep working, so
+    the way out is always reachable.
 - `io` and `unknown` both map to **exit 1** — a local failure (unreadable input, unwritable output) or an unclassified one. Neither is retryable on its own; read `error.message`.
 
 ## `notices[]` — about the installation, not the call
@@ -131,6 +140,7 @@ Any object above may carry a `notices` array, on success and on failure alike. I
 |---|---|---|---|
 | `skills_stale` | `warn` | The `{{cli}}` skills installed in an agent directory were written by a different build, so these instructions may describe flags this CLI no longer has | Run the `action`, then re-read the skill |
 | `update_available` | `info` | A newer `{{cli}}` release is published. Read from a cached answer — no command ever waits on the network for this | Nothing, unless upgrading is yours to decide. The `action` is the command for it, and `{{cli}} upgrade` runs it — neither is for an agent to do unprompted |
+| `binding_deprecated` | `warn` | The binding this call used is being retired upstream. It still works today | Move to the binding named in `action` before it stops |
 
 `skills_stale` is worth acting on the moment you see it — especially alongside an
 exit-2 "invalid command-line arguments", which is what following out-of-date skill
