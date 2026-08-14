@@ -159,12 +159,20 @@ the *tests*; they are not read by the CLI, which takes everything it knows about
 call from the binding. Keep them cheap — one small artifact per binding.
 
 **CI:** `.github/workflows/ci.yml` runs the offline suite (`-m "not live"`) on every
-push/PR, on **every Python `requires-python` admits** — 3.11 through 3.14. It is two
-jobs split by one question: does the answer depend on which interpreter is running?
-The suite does; `ruff` (whose target comes from `pyproject.toml`), `shellcheck`,
-`actionlint` and the version check do not, so they run once. `fail-fast: false`,
-because "3.14 only" and "everything past 3.11" are different problems and the matrix
-is the only thing that can tell them apart.
+push/PR, on **every Python `requires-python` admits** — 3.11 through 3.14 — plus one
+job on macOS. It is two jobs split by one question: does the answer depend on which
+interpreter is running? The suite does; `ruff` (whose target comes from
+`pyproject.toml`), `shellcheck`, `actionlint` and the version check do not, so they run
+once. `fail-fast: false`, because "3.14 only" and "everything past 3.11" are different
+problems and the matrix is the only thing that can tell them apart.
+
+The same question decides the operating system and gives a different answer. What
+differs on macOS is the platform, not the interpreter — `termios` and `/dev/tty` for
+the wizard, file modes, and which `ffmpeg` binary `imageio-ffmpeg` unpacks — none of
+which varies by Python version. So macOS is **one** job on the floor version, not a
+second column: a cross-product would buy three more answers to a question already
+answered. Windows is not covered; `_prompt` degrades to the numbered menu there
+(`termios` is absent) but `install.sh` is bash, so the installed path is POSIX.
 
 `.github/workflows/live.yml` runs `-m live` **manually only** (Actions → *live* →
 *Run workflow*), reading keys from repo **Secrets**.

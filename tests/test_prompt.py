@@ -581,6 +581,30 @@ def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):
 # ------------------------------------------------------- real terminal, via pty
 
 
+def _await_first_draw(fd: int, timeout: float = 10.0) -> None:
+    """Block until the child has drawn its prompt, so a key cannot arrive too early.
+
+    This used to be ``time.sleep(0.3)`` — a guess about how long an interpreter takes
+    to start and import this package, and a guess that was wrong on a slower runner.
+    Getting it wrong is not a slow test but a *misleading* one: ``tty.setraw`` flushes
+    with ``TCSAFLUSH``, so anything typed before it is discarded, and the prompt then
+    reads nothing. The failure looks like "the secret prompt returned an empty string",
+    which is a plausible product bug and was not one.
+
+    The prompt having drawn itself is the real signal, and it is one the child already
+    sends: the first byte on the master means the frame is up, which is downstream of
+    both the import and the raw-mode switch.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if os.read(fd, 65536):
+                return
+        except OSError:  # nothing yet (non-blocking) or the child is gone
+            pass
+        time.sleep(0.02)
+
+
 def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     """Run ``body`` in a child with a real controlling terminal, feeding ``keys``.
 
@@ -606,7 +630,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
             pass
 
     try:
-        time.sleep(0.3)
+        _await_first_draw(fd)
         for key in keys:
             os.write(fd, key)
             time.sleep(0.12)
@@ -786,7 +810,20 @@ def test_pty_ctrl_c_still_cancels_rather_than_going_back():
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
 def test_pty_ctrl_c_cancels_and_restores_terminal():
-    """Ctrl-C must raise Cancelled *and* leave the terminal out of raw mode."""
+    """Ctrl-C must raise Cancelled *and* leave the terminal out of raw mode.
+
+    "Out of raw mode" is asserted as the flags a user would *feel* — echo, line
+    editing, and Ctrl-C still being a signal — rather than as byte equality of the whole
+    termios record. Two bits in ``lflag`` are the driver's running state and not
+    settings anybody wrote: ``FLUSHO`` (output is currently discarded, toggled by
+    Ctrl-O) and ``PENDIN`` (input is waiting to be retyped after a Ctrl-R). macOS
+    reports one of them differently after the restore, and comparing the whole word
+    called that a terminal left broken.
+
+    So the comparison names what it means. Every other field is still compared exactly,
+    and the bits that changed are printed, so a real regression — `ECHO` never coming
+    back — fails here with the bit named rather than as `restored=False`.
+    """
     body = """
         import sys, termios
         from media_ai.cli._prompt import get_prompter, Cancelled
@@ -799,10 +836,20 @@ def test_pty_ctrl_c_cancels_and_restores_terminal():
             print("RESULT=no-cancel")
         except Cancelled:
             after = termios.tcgetattr(fd)
-            print("RESULT=cancelled restored=%s" % (before == after))
+            names = ["iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc"]
+            other = [n for n, a, b in zip(names, before, after) if a != b and n != "lflag"]
+            # Everything in lflag except the driver's own status bits.
+            status = getattr(termios, "FLUSHO", 0) | getattr(termios, "PENDIN", 0)
+            settings_kept = (before[3] & ~status) == (after[3] & ~status)
+            moved = [n for n in ("ECHO", "ECHOE", "ECHOK", "ECHONL", "ECHOPRT", "ECHOCTL",
+                                 "ECHOKE", "ICANON", "ISIG", "IEXTEN", "NOFLSH", "TOSTOP",
+                                 "FLUSHO", "PENDIN", "EXTPROC", "ALTWERASE")
+                     if (before[3] ^ after[3]) & getattr(termios, n, 0)]
+            print("RESULT=cancelled restored=%s moved=%s other=%s"
+                  % (settings_kept and not other, ",".join(moved), ",".join(other)))
     """
     out = run_in_pty(body, [CTRL_C])
-    assert "RESULT=cancelled restored=True" in out
+    assert "RESULT=cancelled restored=True" in out, out
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
