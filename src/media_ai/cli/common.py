@@ -125,6 +125,9 @@ def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--metadata-out", default=None, help="also write the result JSON to this path (secret-free)")
     ap.add_argument("--on-unsupported", default="error", choices=[p.value for p in UnsupportedPolicy],
                     help="what to do with unsupported options (default: error)")
+    add_toggle(ap, "--allow-retired-binding", dest="allow_retired_binding", default=False,
+               help="call a binding the published feed reports as retired; it will probably fail. "
+                    "For AI agents: do NOT set this on your own initiative — report the refusal instead")
 
 
 def provider_name(args) -> str | None:
@@ -153,12 +156,69 @@ def bind(args, req):
         scene=scene, catalog=cat, config=config,
     )
     rb.check_scene(scene, available)
+    _enforce_published_policy(args, rb, available)
     req.model = rb.model_id
     get_logger().debug(
         "binding resolved: binding=%s scene=%s provider=%s base_url=%s wire_id=%s",
         rb.id, scene.value, rb.provider.name, rb.base_url, rb.model_id,
     )
     return build_adapter(rb), rb, scene
+
+
+def _enforce_published_policy(args, rb, available) -> None:
+    """The two things the published feed is allowed to stop, checked from the cache.
+
+    Here, and only here, because ``bind`` is what every command that reaches a provider
+    goes through — which makes it exactly the set of commands worth stopping. ``doctor``,
+    ``version``, ``uninstall`` and ``upgrade`` never call it, so they keep working on a
+    build the feed has disowned: a floor that locks a user out of the tools for finding
+    out *why* is a floor they will answer by deleting the config directory.
+
+    The cache, never the network. A blocked call must not also be a slow one, and the
+    fact was fetched by ``init`` or by an explicit check like everything else here.
+    """
+    from ..core import notices, update
+
+    feed = update.cached()
+    if floor := update.below_floor(__version__, feed):
+        # No override flag, deliberately. A binding retirement is "this will probably
+        # fail", which is a risk somebody may choose to take; a floor is only ever set
+        # for a compliance or safety reason, and a switch that waves it away would be
+        # asked for by exactly the person who should not have it.
+        raise MediaError(
+            f"{cli_name()} {__version__} is below the minimum supported version ({floor})",
+            category=ErrorCategory.VALIDATION, code="version_unsupported",
+            details={"current": __version__, "min_supported": floor},
+            hint=cmd("upgrade"),
+        )
+
+    retirement = update.retirement_for(rb.id, feed)
+    if not retirement:
+        return
+
+    alternatives = [a for a in retirement.get("alternatives", []) or [] if isinstance(a, str)]
+    configured = [a for a in alternatives if a in {b.id for b in available}]
+    # Prefer an alternative this machine can already call: a hint naming something
+    # unconfigured is a second problem handed over as the answer to the first.
+    hint = f"re-run with --binding {configured[0]}" if configured else cmd("bindings", "available")
+    detail = {
+        "binding": rb.id, "since": retirement.get("since"), "source": "feed",
+        "alternatives": alternatives, "fixed_in": retirement.get("fixed_in"),
+    }
+    reason = retirement.get("reason") or "no longer available"
+
+    if retirement.get("severity") == "warn" or getattr(args, "allow_retired_binding", False):
+        notices.add(notices.Notice(
+            kind="binding_deprecated", severity="warn",
+            message=f"{rb.id} is retired: {reason}",
+            action=hint,
+        ))
+        return
+    raise MediaError(
+        f"{rb.id} is retired: {reason}",
+        category=ErrorCategory.VALIDATION, code="binding_retired",
+        details=detail, hint=hint,
+    )
 
 
 def stamp(result, rb, scene=None):

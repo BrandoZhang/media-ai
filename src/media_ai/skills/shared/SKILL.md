@@ -64,6 +64,11 @@ the id alone. Run `{{cli}} bindings list` for the ones this machine has.
   | 8 | safety / moderation block | change the prompt |
   | 9 | not found (unknown binding / job) | run `{{cli}} bindings available` |
 
+Two exit-3 codes come from the published feed rather than from your request:
+`binding_retired` (that binding is gone upstream — `error.details.alternatives[]` names
+replacements) and `version_unsupported` (this build is below the published minimum —
+no override; `{{cli}} upgrade`). Both refuse *before* the call, so nothing was spent.
+
 Success carries `artifacts[]` + `usage` + `meta`, and `meta` records **which binding
 ran and what scene it was asked for** — keep it, and "what produced this file?" stays
 answerable later.
