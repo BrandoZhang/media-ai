@@ -326,6 +326,9 @@ def save_accounts(accounts: Mapping[str, object], *, replace: bool = False,
     except OSError:
         unchanged = False
     if not unchanged:
-        saved = backup(path)
+        # Ceiling, because this write is also the documented repair for a loose mode:
+        # inheriting it would leave a world-readable copy of every key beside a file
+        # this call just fixed. See `tomlwrite.backup`.
+        saved = backup(path, mode_ceiling=0o600)
     write_private(path, text)
     return saved
