@@ -180,5 +180,6 @@ model may not have learned, so a bare invocation has to work.
   in-process (`register_manifest`) or as a `media_ai.bindings` entry point.
 - **A non-HTTP backend** — `transport = "rpc"`: no base URL, no HTTP client, no status
   mapping. The adapter builds its own connection. See [EXTENDING.md](EXTENDING.md).
-- **A new credential source** — register a scheme with `register_secret_backend`.
+- **A new credential source** — declare a scheme in the `media_ai.credentials` entry-point
+  group, or `register_secret_backend` in-process. See [CREDENTIALS.md](CREDENTIALS.md).
 - **A new scene** — add a `Scene` value, its derivation, and declare it where served.

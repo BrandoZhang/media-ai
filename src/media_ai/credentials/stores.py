@@ -76,8 +76,11 @@ from pathlib import Path
 
 from ..brand import cli_name, cmd, config_dir
 from ..core.errors import ErrorCategory, MediaError
+from ..core.logging import get_logger
 
 __all__ = [
+    "BUILTIN_SCHEMES",
+    "ENTRY_POINT_GROUP",
     "SCHEMA",
     "check_schema",
     "credentials_header",
@@ -221,25 +224,94 @@ def named_account(name: str, *, _seen: frozenset[str] = frozenset()) -> str | No
 
 # -- pluggable secret-manager backends -------------------------------------
 
+#: Schemes resolved in-process by :mod:`media_ai.credentials.reference`. Anything else
+#: goes to a backend. Here rather than there because this module owns the namespace a
+#: backend registers into, and two copies of the list would eventually disagree.
+BUILTIN_SCHEMES = ("env", "cred", "keychain", "broker")
+
+#: The entry-point group a distribution declares a scheme in. The entry point's *name*
+#: is the scheme, so ``registered_schemes`` can list what exists without importing any
+#: of it — which is what lets the "no backend for scheme" error name a plugin that is
+#: installed but was never reached.
+ENTRY_POINT_GROUP = "media_ai.credentials"
+
 _BACKENDS: dict[str, Callable[[str], str]] = {}
+_LOADED: dict[str, Callable[[str], str] | None] = {}
+_SHADOW_WARNED: set[str] = set()
 
 
 def register_secret_backend(scheme: str, fn: Callable[[str], str]) -> None:
     """Teach the resolver a reference scheme (``op``, ``vault``, ``aws-sm``, …).
 
-    The built-in schemes (``env``, ``cred``, ``keychain``, ``broker``) are handled
-    directly; everything else arrives here, so a deployment adds its own vault
-    without a fork and without this project taking a dependency on it.
+    The built-in schemes are handled directly; everything else arrives here, so a
+    deployment adds its own vault without this project taking a dependency on it.
+
+    In-process, and therefore for something already running: a test, an embedder, a
+    program using this as a library. **An installed CLI has no moment at which to call
+    it**, which is why the same thing can be declared instead — see
+    :data:`ENTRY_POINT_GROUP`. Registration wins over a declaration for the same scheme,
+    whichever happens first: it is the more specific statement, and an embedder that
+    made one is not asking to be overruled by whatever happens to be pip-installed.
     """
     _BACKENDS[scheme] = fn
 
 
+def _declared() -> dict[str, object]:
+    """Entry points in :data:`ENTRY_POINT_GROUP`, by scheme name, **not loaded**.
+
+    Enumerating reads distribution metadata; loading imports the plugin. Keeping them
+    apart is what makes listing the known schemes cheap enough to do inside an error
+    message, and means a plugin nobody's reference names is never imported at all.
+    """
+    from importlib.metadata import entry_points
+
+    try:
+        eps = entry_points(group=ENTRY_POINT_GROUP)
+    except TypeError:  # pragma: no cover - very old importlib API
+        eps = entry_points().get(ENTRY_POINT_GROUP, [])  # type: ignore[attr-defined]
+    found = {}
+    for ep in eps:
+        name = getattr(ep, "name", "")
+        if name in BUILTIN_SCHEMES:
+            # Declared but unreachable: `_reveal` handles the builtins before any
+            # backend is consulted. Said out loud, once, because the alternative is a
+            # plugin that is installed, correct, and simply never called.
+            if name not in _SHADOW_WARNED:
+                _SHADOW_WARNED.add(name)
+                get_logger().warning(
+                    "credential plugin %r declares the built-in scheme %r, which is resolved "
+                    "directly and will never reach it; rename the entry point", name, name,
+                )
+            continue
+        found[name] = ep
+    return found
+
+
 def secret_backend(scheme: str) -> Callable[[str], str] | None:
-    return _BACKENDS.get(scheme)
+    """The backend for ``scheme``: registered in-process, else declared, else ``None``."""
+    if scheme in _BACKENDS:
+        return _BACKENDS[scheme]
+    if scheme not in _LOADED:
+        ep = _declared().get(scheme)
+        try:
+            _LOADED[scheme] = ep.load() if ep is not None else None
+        except Exception as exc:  # noqa: BLE001 - one broken plugin must not break the CLI
+            # Cached as absent, so a plugin that fails to import fails once and the
+            # caller gets the ordinary "no backend for this scheme" refusal.
+            get_logger().warning("skipping credential plugin %r: %s", scheme, exc)
+            _LOADED[scheme] = None
+    return _LOADED[scheme]
 
 
 def registered_schemes() -> tuple[str, ...]:
-    return tuple(sorted(_BACKENDS))
+    """Every non-built-in scheme this installation could resolve, registered or declared."""
+    return tuple(sorted({*_BACKENDS, *_declared()}))
+
+
+def reset_backends() -> None:
+    """Forget what was loaded from entry points. For tests."""
+    _LOADED.clear()
+    _SHADOW_WARNED.clear()
 
 
 # -- writing ----------------------------------------------------------------
