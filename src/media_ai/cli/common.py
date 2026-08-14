@@ -156,7 +156,11 @@ def bind(args, req):
         scene=scene, catalog=cat, config=config,
     )
     rb.check_scene(scene, available)
-    _enforce_published_policy(args, rb, available)
+    # Two sources say a binding is on its way out, and only one of them speaks per
+    # call: the feed knows about withdrawals that happened after this build shipped, so
+    # when it has an opinion the manifest's older one adds nothing but a second line.
+    if not _enforce_published_policy(args, rb, available):
+        _note_declared_deprecation(rb, available)
     req.model = rb.model_id
     get_logger().debug(
         "binding resolved: binding=%s scene=%s provider=%s base_url=%s wire_id=%s",
@@ -165,7 +169,7 @@ def bind(args, req):
     return build_adapter(rb), rb, scene
 
 
-def _enforce_published_policy(args, rb, available) -> None:
+def _enforce_published_policy(args, rb, available) -> bool:
     """The two things the published feed is allowed to stop, checked from the cache.
 
     Here, and only here, because ``bind`` is what every command that reaches a provider
@@ -176,6 +180,9 @@ def _enforce_published_policy(args, rb, available) -> None:
 
     The cache, never the network. A blocked call must not also be a slow one, and the
     fact was fetched by ``init`` or by an explicit check like everything else here.
+
+    Returns whether the feed had anything to say about *this binding*, so the manifest's
+    own declaration can stay quiet rather than repeating it.
     """
     from ..core import notices, update
 
@@ -194,7 +201,7 @@ def _enforce_published_policy(args, rb, available) -> None:
 
     retirement = update.retirement_for(rb.id, feed)
     if not retirement:
-        return
+        return False
 
     alternatives = [a for a in retirement.get("alternatives", []) or [] if isinstance(a, str)]
     configured = [a for a in alternatives if a in {b.id for b in available}]
@@ -210,15 +217,61 @@ def _enforce_published_policy(args, rb, available) -> None:
     if retirement.get("severity") == "warn" or getattr(args, "allow_retired_binding", False):
         notices.add(notices.Notice(
             kind="binding_deprecated", severity="warn",
-            message=f"{rb.id} is retired: {reason}",
-            action=hint,
+            message=f"{rb.id} is retired: {reason}"
+                    + (f" Use {configured[0]} instead." if configured else ""),
+            # Not the error's hint. A hint is instructional and "re-run with --binding X"
+            # is the best thing to say there; a notice's `action` is documented as
+            # runnable verbatim, and the skills tell agents so.
+            action=_how_to_switch(alternatives, available),
         ))
-        return
+        return True
     raise MediaError(
         f"{rb.id} is retired: {reason}",
         category=ErrorCategory.VALIDATION, code="binding_retired",
         details=detail, hint=hint,
     )
+
+
+def _note_declared_deprecation(rb, available) -> None:
+    """A deprecation the manifest already knew about, said out loud at the call.
+
+    ``capabilities`` has reported ``lifecycle`` all along and ``init`` labels the row,
+    but neither reaches the caller who passed no binding flags and got the scene
+    default — which is the ordinary case, and precisely the one where nobody chose this
+    binding at all. The manifest knew; nothing said so.
+
+    Same ``kind`` as the feed's version, because a consumer branches on the kind and
+    "which document told us" is not its problem. ``info``, not ``warn``: a deprecated
+    binding still works, and the feed's retirement — which means it probably does not —
+    is the one that earns the stronger severity.
+    """
+    from ..core import notices
+    from ..core.binding import Lifecycle
+
+    if rb.spec.lifecycle is not Lifecycle.DEPRECATED:
+        return
+    # A manifest cannot declare `deprecated` without naming a replacement (the parser
+    # refuses it), so this always has somewhere to point.
+    replacement = rb.spec.replacement
+    notices.add(notices.Notice(
+        kind="binding_deprecated", severity="info",
+        message=f"{rb.id} is deprecated; {replacement} replaces it.",
+        action=_how_to_switch([replacement] if replacement else [], available),
+    ))
+
+
+def _how_to_switch(alternatives: list[str], available) -> str:
+    """A runnable command for "move off this binding", preferring one already here.
+
+    Two different situations and two different next steps: an alternative this machine
+    can already call needs checking against the request (limits and scenes differ
+    between models, which is the whole reason a binding is the unit), while one it
+    cannot needs adding, and ``bindings available`` prints the exact command for that.
+    """
+    configured = [a for a in alternatives if a in {b.id for b in available}]
+    if configured:
+        return cmd("capabilities", "--binding", configured[0])
+    return cmd("bindings", "available")
 
 
 def stamp(result, rb, scene=None):
