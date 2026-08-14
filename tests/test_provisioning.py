@@ -214,3 +214,45 @@ def test_nothing_in_the_write_path_imports_the_cli(home):
     )
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
     assert done.stdout.strip() == "False"
+
+
+# ---------------------------------------------------- and what must never land
+
+
+def test_a_raw_key_is_refused_before_the_config_file_is_written(home):
+    """The reader has always refused one. Refusing on *read* finds it after it has been
+    written to a 0644 file and possibly committed — a report of something that already
+    happened. This fires while the value is still in memory, which is the only moment
+    at which refusing keeps it secret.
+
+    The caller most likely to get this wrong is a provisioner holding a real key it has
+    just fetched, deciding which field it goes in.
+    """
+    with pytest.raises(MediaError) as exc:
+        save_config(Config(bindings={
+            "acme/fast": UserBinding(id="acme/fast", credential="sk-live-SECRET-abcdef"),
+        }, exists=True))
+    assert exc.value.code == "credential_is_raw_key"
+    assert not (home / "config.toml").exists()
+    assert "sk-live-SECRET-abcdef" not in str(exc.value)
+
+
+def test_the_refusal_does_not_damage_an_existing_config(home):
+    """`render_config` runs before the backup, so a refused write leaves no `.bak`
+    either — nothing at all happened."""
+    save_config(Config(bindings={"mock/mock": UserBinding(id="mock/mock")}, exists=True))
+    before = (home / "config.toml").read_text(encoding="utf-8")
+    with pytest.raises(MediaError):
+        save_config(Config(bindings={"a/b": UserBinding(id="a/b", credential="sk-raw-123456")}, exists=True))
+    assert (home / "config.toml").read_text(encoding="utf-8") == before
+    assert list(home.glob("config.toml.bak*")) == []
+
+
+@pytest.mark.parametrize("credential", [
+    "env://ACME_KEY", "cred://acme/fast", "keychain://media-ai/acme", "broker://gw.internal",
+    "op://vault/item/field", None,
+])
+def test_every_reference_form_still_writes(home, credential):
+    """The check must not be tighter than the resolver, or it refuses working configs."""
+    save_config(Config(bindings={"a/b": UserBinding(id="a/b", credential=credential)}, exists=True))
+    assert load_config().bindings["a/b"].credential == credential
