@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..brand import cli_name
+from .envflag import env_flag
 from .logging import get_logger
 from .versioning import VERSION, precedence
 
@@ -132,9 +133,9 @@ def settings() -> UpdateSettings:
     from .config import UpdateSettings
 
     base = _configured()
-    env_check = os.getenv("MEDIA_UPDATE_CHECK", "").strip().lower()
+    env_check = env_flag("MEDIA_UPDATE_CHECK")
     return UpdateSettings(
-        check=(env_check not in {"0", "false", "no", "off"}) if env_check else base.check,
+        check=base.check if env_check is None else env_check,
         feed=os.getenv("MEDIA_UPDATE_FEED") or base.feed,
     )
 
@@ -148,7 +149,7 @@ def settings_from() -> dict[str, str]:
     """
     base = _configured()
     return {
-        "check": "env" if os.getenv("MEDIA_UPDATE_CHECK", "").strip() else ("config" if not base.check else "default"),
+        "check": "env" if env_flag("MEDIA_UPDATE_CHECK") is not None else ("config" if not base.check else "default"),
         "feed": "env" if os.getenv("MEDIA_UPDATE_FEED") else ("config" if base.feed else "default"),
     }
 
@@ -185,7 +186,7 @@ def should_check(version: str) -> bool:
     """
     if not settings().check:
         return False
-    if os.getenv("CI"):
+    if env_flag("CI"):
         return False
     return bool(VERSION.match(version))
 
