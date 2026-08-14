@@ -130,7 +130,7 @@ Any object above may carry a `notices` array, on success and on failure alike. I
 | `kind` | `severity` | what it means | what to do |
 |---|---|---|---|
 | `skills_stale` | `warn` | The `{{cli}}` skills installed in an agent directory were written by a different build, so these instructions may describe flags this CLI no longer has | Run the `action`, then re-read the skill |
-| `update_available` | `info` | A newer `{{cli}}` release is published. Read from a cached answer — no command ever waits on the network for this | Nothing, unless upgrading is yours to decide. The `action` is the command for it |
+| `update_available` | `info` | A newer `{{cli}}` release is published. Read from a cached answer — no command ever waits on the network for this | Nothing, unless upgrading is yours to decide. The `action` is the command for it, and `{{cli}} upgrade` runs it — neither is for an agent to do unprompted |
 
 `skills_stale` is worth acting on the moment you see it — especially alongside an
 exit-2 "invalid command-line arguments", which is what following out-of-date skill
