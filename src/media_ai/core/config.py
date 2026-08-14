@@ -102,7 +102,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -624,10 +624,10 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     rewrites the whole file, and a hand-written note explaining why a binding points at
     a particular endpoint is otherwise gone with no way back.
 
-    Exported for the same reason :func:`media_ai.credentials.stores.save_accounts` is:
-    setup is not the only thing that legitimately writes this file, and a deployment
-    provisioning a machine from its own configuration service should reach the one
-    writer rather than reimplement it.
+    Takes a whole :class:`Config`, so a caller holding only *part* of one — the
+    bindings it provisions, say — must load and merge first or it writes a file with
+    everything else missing. :func:`save_bindings` is that caller's entry point;
+    reach for this one only when the object in hand really is the whole document.
     """
     from ..credentials.tomlwrite import backup, write_public
 
@@ -667,6 +667,55 @@ def _check_credential_is_a_reference(binding: UserBinding) -> None:
         details={"binding": binding.id},
         hint="put the key in credentials.toml and refer to it as cred://<account>",
     )
+
+
+def save_bindings(
+    bindings: Mapping[str, UserBinding] | None = None,
+    *,
+    defaults: Mapping[str, str] | None = None,
+    replace: bool = False,
+    header: str | None = None,
+) -> Path | None:
+    """Write bindings and scene defaults into the config, keeping everything else.
+
+    The counterpart to :func:`media_ai.credentials.stores.save_accounts`, and it exists
+    for the same reason that one does: a caller with part of a document should not have
+    to know what the rest of it contains.
+
+    Building a fresh :class:`Config` and handing it to :func:`save_config` looks like
+    the obvious way to provision a machine, and it silently deletes every table the
+    caller did not think about — ``[update]`` (which is where an internal distribution
+    put its own release feed), ``[telemetry]``, and any table a fork keeps its own
+    records in. That is the same defect ``bindings add`` once had one level down, where
+    rebuilding an entry from the arguments a command happened to receive dropped the
+    hand-configured ``endpoint_id`` beside them. The fix there was
+    :meth:`UserBinding.merged_with`; this is the fix one level up, made the default
+    rather than something to remember.
+
+    A named binding is replaced **whole**, not merged field by field: a provisioner
+    states the complete definition of the entries it owns, and a field-wise merge would
+    make clearing one impossible. Use :meth:`UserBinding.merged_with` for the other
+    case — editing one field of an entry somebody else wrote — which is what
+    ``bindings add`` does.
+
+    ``replace=True`` makes the given bindings the whole ``[bindings]`` table. That is
+    what role-based provisioning wants: an entitlement being withdrawn has to *remove*
+    the binding it granted, and a merge can only add or overwrite. It is scoped to
+    bindings and defaults and reaches nothing else — which is exactly the line a
+    hand-written recipe gets wrong, since "replace the configuration" and "replace the
+    bindings in it" look alike right up until the feed URL is gone.
+
+    ``defaults=None`` leaves the ``[defaults]`` table alone, under ``replace`` too:
+    dropping every scene default is not implied by naming a set of bindings, and a
+    machine with none refuses every call that does not name one.
+    """
+    config = load_config()
+    kept = {} if replace else dict(config.bindings)
+    kept.update(bindings or {})
+    changes: dict = {"bindings": kept, "exists": True}
+    if defaults is not None:
+        changes["defaults"] = dict(defaults) if replace else {**config.defaults, **defaults}
+    return save_config(config.merged_with(**changes), header=header)
 
 
 def render_config(config: Config, *, header: str | None = None) -> str:

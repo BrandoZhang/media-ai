@@ -146,22 +146,30 @@ it was provisioned.
 Only the last step is this project's business. It is two calls:
 
 ```python
-from media_ai.core.config import Config, UserBinding, save_config
+from media_ai.core.config import UserBinding, save_bindings
 from media_ai.credentials.stores import save_accounts
 
 payload = fetch_my_org_config(authenticate())        # entirely yours
 
 save_accounts({"acme/fast": payload["key"]}, replace=True)
-save_config(Config(
-    bindings={"acme/fast": UserBinding(id="acme/fast",
-                                       base_url=payload["base_url"],
-                                       credential="cred://acme/fast")},
+save_bindings(
+    {"acme/fast": UserBinding(id="acme/fast",
+                              base_url=payload["base_url"],
+                              credential="cred://acme/fast")},
     defaults={"image.text_to_image": "acme/fast"},
-    exists=True,
-))
+    replace=True,
+)
 ```
 
-Reach for those rather than writing the TOML yourself. `save_accounts` carries four
+**`save_bindings`, not `save_config`.** The second takes a whole document, so building a
+fresh `Config` from the bindings you provision deletes every table you did not think
+about — `[update]` (which is where you put your own release feed), `[telemetry]`, and
+whatever table you keep your own records in. `save_bindings` loads first and writes back
+what it was not asked about; `replace` is scoped to bindings and defaults and reaches
+nothing else. Reach for `save_config` only when the object in hand really is the whole
+document.
+
+Reach for these rather than writing the TOML yourself. `save_accounts` carries four
 rules that are invisible from the file format and silent when got wrong: the schema is
 checked *before* a merge and stamped *after* it (merging into a file this build reads
 wrongly rewrites it in the older shape and takes the keys with it), the file lands 0600
@@ -169,10 +177,15 @@ inside a 0700 directory or the resolver refuses to read it at all, an identical 
 leaves no second backup — a copy of every key, under a name nobody will remember to
 delete — and a file whose mode has drifted stays repairable by rewriting.
 
-`replace=True` makes the given accounts the whole file. That is usually what
-role-based provisioning wants: an entitlement being *withdrawn* has to remove the
-account it granted, and a merge can only ever add or overwrite. It is not the default,
-because for the wizard and for `bindings add` it would discard keys nobody asked about.
+`replace=True` makes the given accounts the whole file, and the given bindings the
+whole `[bindings]` table. That is usually what role-based provisioning wants: an
+entitlement being *withdrawn* has to remove what it granted, and a merge can only ever
+add or overwrite. It is not the default, because for the wizard and for `bindings add`
+it would discard entries nobody asked about.
+
+A named binding is replaced **whole** rather than merged field by field — you state the
+complete definition of the entries you own. `UserBinding.merged_with` is the other case,
+editing one field of an entry somebody else wrote, which is what `bindings add` does.
 
 Neither writer imports `media_ai.cli`, so a provisioner is a small script rather than
 a CLI command — which is the right shape anyway, since the authentication step is

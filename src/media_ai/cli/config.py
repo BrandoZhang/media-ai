@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 
 from ..brand import cli_name, cmd
-from ..core.config import SCHEMA, config_path, load_config, migrate_file, save_config
+from ..core.config import SCHEMA, config_path, load_config, migrate_file, save_bindings
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.resolve import available_bindings
@@ -104,11 +104,14 @@ def _set_default(args) -> dict:
             details={"supported_scenes": sorted(s.value for s in rb.spec.scenes)},
         )
 
-    defaults = dict(config.defaults)
-    for scene in scenes:
-        defaults[scene.value] = args.binding
-    updated = config.merged_with(defaults=defaults, exists=True)
-    saved = save_config(updated, header=config_header())
+    # Through the one writer that keeps the rest of the file, rather than rebuilding a
+    # `Config` here: `[update]`, `[telemetry]` and anything a fork keeps its own records
+    # in are none of this command's business, and staying out of their way should not
+    # depend on remembering they exist.
+    saved = save_bindings(
+        defaults={scene.value: args.binding for scene in scenes},
+        header=config_header(),
+    )
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "binding": args.binding,

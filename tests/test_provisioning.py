@@ -298,3 +298,118 @@ def test_the_config_backup_keeps_the_public_mode(home):
     saved = save_config(Config(bindings={"c/d": UserBinding(id="c/d")}, exists=True))
     assert saved is not None
     assert stat.S_IMODE(saved.stat().st_mode) == 0o644
+
+
+# ------------------------------------------------- writing part of a document
+
+# `save_config` takes a *whole* config, so a caller holding only the bindings it
+# provisions has to load and merge first. Doing it the obvious way instead — build a
+# fresh `Config`, hand it over — deletes every table nobody thought about, silently, on
+# a command about something else. That is the same defect `bindings add` once had one
+# level down, and `save_bindings` is the fix made the default rather than a thing to
+# remember.
+
+PROVISIONED = """\
+schema = 2
+
+[bindings."personal/one"]
+credential = "env://MY_KEY"
+
+[defaults]
+"video.text_to_video" = "personal/one"
+
+[update]
+check = false
+feed = "https://internal.example/feed.json"
+
+[telemetry]
+enabled = true
+
+[acme]
+role = "team-vision"
+"""
+
+
+@pytest.fixture
+def furnished(home):
+    (home / "config.toml").write_text(PROVISIONED, encoding="utf-8")
+    return home / "config.toml"
+
+
+def written(path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def org_binding():
+    return {"acme/fast": UserBinding(id="acme/fast", credential="cred://acme/fast")}
+
+
+def test_provisioning_keeps_the_tables_it_was_not_asked_about(furnished):
+    """The measured failure: an internal feed URL, the telemetry settings and a fork's
+    own records, all gone because the caller named bindings."""
+    from media_ai.core.config import save_bindings
+
+    save_bindings(org_binding(), defaults={"image.text_to_image": "acme/fast"}, replace=True)
+
+    after = written(furnished)
+    assert after["update"] == {"check": False, "feed": "https://internal.example/feed.json"}
+    assert after["telemetry"] == {"enabled": True}
+    assert after["acme"] == {"role": "team-vision"}
+
+
+def test_replace_is_scoped_to_bindings(furnished):
+    """"Replace the configuration" and "replace the bindings in it" look alike right up
+    until the feed URL is gone."""
+    from media_ai.core.config import save_bindings
+
+    save_bindings(org_binding(), replace=True)
+
+    after = written(furnished)
+    assert set(after["bindings"]) == {"acme/fast"}, "the withdrawn binding is still there"
+    assert "update" in after and "telemetry" in after and "acme" in after
+
+
+def test_merging_is_the_default(furnished):
+    from media_ai.core.config import save_bindings
+
+    save_bindings(org_binding())
+    assert set(written(furnished)["bindings"]) == {"personal/one", "acme/fast"}
+
+
+def test_a_named_binding_is_replaced_whole_not_field_by_field(furnished):
+    """A provisioner states the complete definition of what it owns; a field-wise merge
+    would make clearing one impossible. `UserBinding.merged_with` is the other case."""
+    from media_ai.core.config import save_bindings
+
+    save_bindings({"personal/one": UserBinding(id="personal/one", base_url="https://new/v1")})
+    assert written(furnished)["bindings"]["personal/one"] == {"base_url": "https://new/v1"}
+
+
+def test_defaults_are_left_alone_unless_given(furnished):
+    """Dropping every scene default is not implied by naming a set of bindings, and a
+    machine with none refuses every call that does not name one."""
+    from media_ai.core.config import save_bindings
+
+    save_bindings(org_binding(), replace=True)
+    assert written(furnished)["defaults"] == {"video.text_to_video": "personal/one"}
+
+
+def test_defaults_merge_unless_replacing(furnished):
+    from media_ai.core.config import save_bindings
+
+    save_bindings(defaults={"image.text_to_image": "acme/fast"})
+    assert written(furnished)["defaults"] == {
+        "video.text_to_video": "personal/one", "image.text_to_image": "acme/fast",
+    }
+    save_bindings(defaults={"image.text_to_image": "acme/fast"}, replace=True)
+    assert written(furnished)["defaults"] == {"image.text_to_image": "acme/fast"}
+
+
+def test_it_still_refuses_a_raw_key(furnished):
+    """The write-time guard is not bypassed by the merging writer."""
+    from media_ai.core.config import save_bindings
+
+    with pytest.raises(MediaError) as exc:
+        save_bindings({"a/b": UserBinding(id="a/b", credential="sk-live-SECRET-abcdef")})
+    assert exc.value.code == "credential_is_raw_key"
+    assert written(furnished)["bindings"].keys() == {"personal/one"}
