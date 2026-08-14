@@ -1,8 +1,12 @@
-"""``media-ai config show|set-default`` — the scene defaults, and what is in effect.
+"""``media-ai config show|set-default|migrate`` — the scene defaults, and what is in effect.
 
 ``set-default`` is what makes a bare ``media-ai video generate --prompt …`` work: it
 names the binding a scene uses when the caller says nothing. That is the only choice
 this CLI makes on anyone's behalf, and it is made here, once, in writing.
+
+``migrate`` is the other half of the schema door: an ordinary read converts what it can
+without touching the file, and anything it cannot is sent here, where the rewrite has a
+name and a ``--dry-run``.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import argparse
 
 from ..brand import cli_name, cmd
-from ..core.config import config_path, load_config, save_config
+from ..core.config import SCHEMA, config_path, load_config, migrate_file, save_config
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.resolve import available_bindings
@@ -28,6 +32,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sd.add_argument("scene", help="e.g. video.text_to_video, or a group like 'video' for all its scenes")
     sd.add_argument("binding", help="the binding id to use")
     common.add_global_args(sd)
+    mig = sub.add_parser("migrate", help=f"bring config.toml up to the schema this build reads ({SCHEMA})")
+    mig.add_argument("--dry-run", action="store_true", help="report what would change, and write nothing")
+    common.add_global_args(mig)
     return ap
 
 
@@ -108,8 +115,27 @@ def _set_default(args) -> dict:
     }
 
 
+def _migrate(args) -> dict:
+    """Convert the config file, or say that there is nothing to convert.
+
+    Exits 0 when the file is already current. "Nothing to do" is the success case of a
+    command whose whole job is to make a thing true, and a script that runs this before
+    every start would otherwise have to special-case the ordinary answer.
+    """
+    report = migrate_file(dry_run=args.dry_run)
+    return {
+        "ok": True, "schema_version": SCHEMA_VERSION,
+        "config": str(report.path),
+        "from_schema": report.frm,
+        "to_schema": report.to,
+        "migrated": report.applied,
+        "steps": list(report.steps),
+        "backup": str(report.backup) if report.backup else None,
+    }
+
+
 def _do(args) -> dict:
-    return {"show": _show, "set-default": _set_default}[args.op](args)
+    return {"show": _show, "set-default": _set_default, "migrate": _migrate}[args.op](args)
 
 
 def main() -> int:

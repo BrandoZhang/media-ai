@@ -131,10 +131,31 @@ def _check_files() -> list[dict]:
 
 
 def _config_check(config: Path) -> dict:
+    """The config file: readable, and written in a schema this build can work with.
+
+    The schema verdict belongs to this entry rather than a second one, by the rule
+    above — "a file's worst finding is its finding". A file this build refuses is not
+    usefully described as an `ok` config plus a `fail` about its version.
+    """
+    from ..core.config import SCHEMA, declared_schema, load_config
+
     if not config.is_file():
         return _check("config", "ok", f"{config} (absent — built-in defaults apply)")
     if bad := _unparseable(config):
         return _check("config", "fail", bad)
+    try:
+        declared = declared_schema(config)
+        load_config()
+    except MediaError as exc:
+        # Whatever went wrong, the message already names the file and, where one exists,
+        # the command that settles it: a schema from a newer build, a layout with no
+        # migration, a value this build cannot write back.
+        return _check("config", "fail", exc.message)
+    if declared != SCHEMA:
+        # Not a warning: it loaded, so nothing here is broken — the file is simply older
+        # than the build reading it, and says the same thing either way.
+        return _check("config", "ok", f"{config} (schema {declared}, read as {SCHEMA}; "
+                                      f"`{cmd('config', 'migrate')}` writes it back)")
     return _check("config", "ok", str(config))
 
 

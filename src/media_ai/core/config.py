@@ -46,11 +46,10 @@ to do a range comparison to arrive at one.
 
 The two directions are deliberately not symmetric:
 
-**A newer build reads an older file.** It migrates (:func:`_migrate`) and carries on.
-There is no chain registered yet, so today this only accepts the current schema and
-refuses anything older with the same "re-run setup" answer as before — but the hook is
-where a real migration lands, rather than being invented in a hurry beside the first
-change that needs one.
+**A newer build reads an older file.** It migrates (:func:`_migrate`) and carries on —
+but only through the steps that lose nothing, and only in memory. A step that needs a
+decision, or a layout with no step at all, refuses and names the command that deals
+with it. The steps live in :mod:`media_ai.core.migrations`.
 
 **An older build reads a newer file.** It refuses, with ``config_from_newer_build``,
 and says to upgrade. This is not the same failure as an outdated file and must not
@@ -78,12 +77,28 @@ strings, integers, booleans, lists of strings and nested tables; a value outside
 subset (a float, a datetime, an array of tables) makes :func:`save_config` refuse,
 naming the field. Refusing beats dropping: dropping is the failure this section
 exists to remove, and it is invisible.
+
+One view per invocation
+-----------------------
+
+A single command reads this file more than once — ``bind()`` resolves against it, and
+the update notice asks it whether checking is even on. :func:`snapshot` makes those
+reads one read, and the reason is not the saved syscall (it is one small file); it is
+that two reads can disagree. An editor saving between them, or a concurrent
+``bindings add``, would let one call resolve against a binding the other has never
+heard of, inside a single JSON object that claims to describe one invocation.
+
+The cache holds the *failure* too, so a file that becomes unreadable mid-command does
+not make one call site succeed and the next one raise. :func:`save_config` clears it,
+because this process is the one party allowed to change the answer.
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -92,7 +107,7 @@ from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 
-__all__ = ["Config", "UserBinding", "config_path", "load_config", "render_config"]
+__all__ = ["Config", "UserBinding", "config_path", "load_config", "render_config", "snapshot"]
 
 SCHEMA = 2
 
@@ -299,18 +314,113 @@ def _declared_schema(data: dict, path: Path) -> int:
 def _migrate(data: dict, *, frm: int, path: Path) -> dict:
     """Bring a document written in schema ``frm`` up to :data:`SCHEMA`.
 
-    The hook exists ahead of anything to run in it, and refuses rather than pretending:
-    an unmigratable file gets the same actionable answer it did before. When the first
-    real migration lands it registers here, with the change that needs it, instead of
-    being designed in the abstract now.
+    Reading applies only the **lossless** steps, and only in memory: a rename or a
+    filled-in default says the same thing the old document said, so there is nothing to
+    ask about and nothing to write. The file is left alone until something edits it for
+    its own reasons — reading a config is not a command that modifies one, and a `-h`
+    that rewrote a file would be a surprise nobody asked for.
+
+    A lossy step refuses here and points at ``config migrate``, which is where a
+    decision the user has to see gets made. The registry is in
+    :mod:`media_ai.core.migrations`; when it is empty this is exactly the old
+    behaviour — accept the current schema, refuse anything older with a runnable answer.
     """
+    from .migrations import plan
+
     if frm == SCHEMA:
         return data
+    steps = plan(frm, SCHEMA)
+    if steps and all(s.lossless for s in steps):
+        for step in steps:
+            data = step.apply(data)
+        return data
     raise _fail(
-        f"{path} is written in schema {frm}; this build reads schema {SCHEMA} and has no "
-        f"migration for it. Run `{cmd('init')}` to write it again, or delete the file to start over.",
+        _outdated_message(frm, path, steps=steps),
         code="config_schema_outdated",
     )
+
+
+def _outdated_message(frm: int, path: Path, *, steps: list | None) -> str:
+    """Why this file cannot just be read, and the one command that changes that.
+
+    Two different situations, and telling them apart is the whole value: a file this
+    build *can* convert but not silently gets pointed at ``config migrate``, while one
+    nothing can convert is told to start over. Offering the migrate command for a
+    layout with no migration would be sending someone to a command that can only fail.
+    """
+    from .migrations import UNMIGRATABLE
+
+    head = f"{path} is written in schema {frm}; this build reads schema {SCHEMA}"
+    if steps:
+        return (
+            f"{head}. Converting it needs a decision that cannot be made for you — "
+            f"run `{cmd('config', 'migrate')}` to see it."
+        )
+    why = UNMIGRATABLE.get(frm)
+    reason = f" ({why})" if why else " and has no migration for it"
+    return (
+        f"{head}{reason}. Run `{cmd('init')}` to write it again, or delete the file to start over."
+    )
+
+
+class _Snapshot:
+    """One lazily-read config, or the exception reading it raised."""
+
+    __slots__ = ("_value", "_error", "_read")
+
+    def __init__(self) -> None:
+        self._value: Config | None = None
+        self._error: BaseException | None = None
+        self._read = False
+
+    def get(self, path: Path) -> Config:
+        if not self._read:
+            self._read = True
+            try:
+                self._value = _read_config(path)
+            except BaseException as exc:  # noqa: BLE001 - re-raised below, never swallowed
+                self._error = exc
+        if self._error is not None:
+            raise self._error
+        assert self._value is not None
+        return self._value
+
+
+_ACTIVE: _Snapshot | None = None
+
+
+@contextmanager
+def snapshot() -> Iterator[None]:
+    """Make every :func:`load_config` in this block read the file once.
+
+    Installed by ``cli.common.run`` around a whole command, which is the scope that
+    matches the promise: one invocation, one view of the configuration. Nested and
+    restored rather than set and cleared, so a test that opens one inside another gets
+    its own — and so the process leaves no cache behind after the block, which is what
+    keeps a long-lived embedder (a test session, an SDK caller) from being handed an
+    answer read before its own edit.
+
+    Nothing outside the block changes behaviour: with no snapshot active, every call
+    reads, exactly as before.
+    """
+    global _ACTIVE
+    outer, _ACTIVE = _ACTIVE, _Snapshot()
+    try:
+        yield
+    finally:
+        _ACTIVE = outer
+
+
+def invalidate() -> None:
+    """Forget the snapshot's answer. Called by :func:`save_config`.
+
+    The snapshot exists so two readers cannot disagree; a writer that left it in place
+    would create the same disagreement from the other side — ``bindings add`` writing a
+    binding and then reporting a config that does not contain it.
+    """
+    global _ACTIVE
+    if _ACTIVE is not None:
+        _ACTIVE = _Snapshot()
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -318,18 +428,24 @@ def load_config(path: Path | None = None) -> Config:
 
     An absent file is a legitimate state: a fresh install can still run the bindings
     that need no credential.
+
+    Inside :func:`snapshot`, and only when no explicit ``path`` is given, the answer is
+    the one already read for this invocation. An explicit path is always read: a caller
+    that named a file is asking about *that* file, not about the one in effect.
     """
-    path = path or config_path()
-    if not path.is_file():
-        return Config(path=path, exists=False)
+    if path is None and _ACTIVE is not None:
+        return _ACTIVE.get(config_path())
+    return _read_config(path or config_path())
+
+
+def _document(path: Path) -> dict:
+    """The parsed TOML, checked as far as its schema number and no further."""
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise _fail(f"could not read {path}: {exc}") from exc
-
     _reject_v1(data, path)
-    schema = _declared_schema(data, path)
-    if schema > SCHEMA:
+    if (schema := _declared_schema(data, path)) > SCHEMA:
         # The file is ahead of the CLI, so the fix is upgrading — never re-running
         # setup, which would overwrite a good file with one this build can express.
         raise _fail(
@@ -337,8 +453,28 @@ def load_config(path: Path | None = None) -> Config:
             f"Upgrade {cli_name()}, or point $MEDIA_CONFIG_FILE at a different file.",
             code="config_from_newer_build",
         )
-    data = _migrate(data, frm=schema, path=path)
+    return data
 
+
+def declared_schema(path: Path | None = None) -> int:
+    """Which schema the file on disk is written in, without modelling its contents.
+
+    For ``doctor``, which wants to report the number even for a file it is about to
+    call broken for some other reason.
+    """
+    path = path or config_path()
+    return _declared_schema(_document(path), path)
+
+
+def _read_config(path: Path) -> Config:
+    if not path.is_file():
+        return Config(path=path, exists=False)
+    data = _document(path)
+    return _build_config(_migrate(data, frm=_declared_schema(data, path), path=path), path)
+
+
+def _build_config(data: dict, path: Path) -> Config:
+    """Validate a document already brought up to :data:`SCHEMA`, and model it."""
     raw_bindings = data.get("bindings", {})
     if not isinstance(raw_bindings, dict):
         raise _fail(f"{path}: [bindings] must be a table")
@@ -384,6 +520,7 @@ def save_config(config: Config, *, header: str | None = None) -> Path | None:
     text = render_config(config, header=header)
     saved = backup(path)
     write_public(path, text)
+    invalidate()
     return saved
 
 
@@ -445,3 +582,56 @@ def render_config(config: Config, *, header: str | None = None) -> str:
             "Remove or quote it, then re-run.",
             code="config_unwritable_field",
         ) from exc
+
+
+@dataclass(frozen=True)
+class MigrationReport:
+    """What ``config migrate`` found, and what it did about it."""
+
+    path: Path
+    frm: int
+    to: int
+    steps: tuple[str, ...]
+    applied: bool
+    backup: Path | None = None
+
+
+def migrate_file(*, dry_run: bool = False) -> MigrationReport:
+    """Convert the config file in effect to :data:`SCHEMA`, in place.
+
+    The explicit half of the one-way door. Reading applies the lossless steps in memory
+    and never writes; this is where a step that *loses* something — a field with no new
+    home, a credential chain that has to become one reference — is allowed to run,
+    because the user asked for it and is shown what it did.
+
+    It is deliberately not "run every pending migration on startup". A config file is
+    the thing a user hand-edits and shares between machines, and the failure mode of an
+    automatic rewrite is discovering afterwards that the older build on the other
+    machine can no longer read it. Here the rewrite is a command with a name.
+    """
+    from .migrations import plan
+
+    path = config_path()
+    if not path.is_file():
+        raise _fail(f"{path} does not exist; nothing to migrate", code="config_absent")
+    data = _document(path)
+    frm = _declared_schema(data, path)
+    if frm == SCHEMA:
+        return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=(), applied=False)
+
+    steps = plan(frm, SCHEMA)
+    if steps is None:
+        raise _fail(_outdated_message(frm, path, steps=None), code="config_schema_outdated")
+
+    for step in steps:
+        data = step.apply(data)
+    # Validated before it is written, and written from the modelled object rather than
+    # from the migrated dict: a migration that produced something this build cannot
+    # parse must fail with the original file still on disk, not leave a config nothing
+    # can read. `_build_config` is the same parse every ordinary read does.
+    config = _build_config(data, path)
+    summaries = tuple(s.summary for s in steps)
+    if dry_run:
+        return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=summaries, applied=False)
+    saved = save_config(config)
+    return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=summaries, applied=True, backup=saved)
