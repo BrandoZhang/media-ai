@@ -77,6 +77,43 @@ stays readable by an older CLI. Common ones: `poll_interval`, `poll_timeout`,
 `http_timeout`; Gemini `inline_max_bytes`; OpenAI `org`, `project`; ElevenLabs
 `voice`.
 
+## `[managed]` — entries an organisation wrote
+
+An internal distribution can configure a machine without the wizard: fetch a document,
+write the bindings and scene defaults it names. The moment a *second* fetch happens,
+one question decides whether that is safe — **which entries does the push own?** So the
+answer is written down beside them:
+
+```toml
+[managed]
+source   = "https://internal.example/media-ai/setup.json"
+revision = "2026-08-14T02:00:00Z"
+bindings = ["acme/fast", "acme/pro"]
+defaults = ["image.text_to_image"]
+```
+
+Without it a second push has two ways to be wrong and both are silent: overwrite what
+the user typed, or leave behind an entry it wrote earlier and has since dropped.
+
+A **set in one table**, not a marker on each entry. The question that gets asked is
+"what did the push write?", which a set answers in one read; and `[defaults]` is a flat
+scene-to-id map with nowhere to hang a marker, so per-entry markers would need this
+table for half the answer anyway. It also keeps a binding table describing what the
+binding *is* — provenance is about who may rewrite it, not about what it does.
+
+`revision` is opaque — a timestamp, an ETag, a build number, whatever the source calls
+its own version. Nothing compares two of them, because nothing here knows what one
+means; it is carried so a push can recognise its own last answer and a human can be
+told which one they are looking at.
+
+`media-ai config show` reports the table when it is there, which is what makes "why is
+this binding here — I never added it?" answerable. Every command that rewrites the
+file preserves it, including ones with nothing to do with provenance.
+
+**Nothing writes it yet.** It is modelled ahead of the push that will, because the
+alternative is modelling it after a fleet already holds org-written entries in files
+that do not say so — and then nothing can tell them from what a user typed.
+
 ## Addressing at call time
 
 | | |
