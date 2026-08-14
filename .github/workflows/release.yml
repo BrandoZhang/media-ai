@@ -205,6 +205,20 @@ jobs:
           git tag -a "v$VERSION" -m "v$VERSION"
           git push origin "v$VERSION"
 
+      # Written whether or not the release is published, so a dry run shows it too —
+      # this is the part of the notes a human is meant to read before merging.
+      - name: Compatibility notes
+        id: compat
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          python scripts/compat_notes.py > compat.md
+          if [ -s compat.md ]; then
+            cat compat.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No file format or floor changed in this release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Publish the release
         if: steps.plan.outputs.release == 'true' && !inputs.dry_run
         env:
@@ -212,10 +226,20 @@ jobs:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
           set -euo pipefail
+          # The notes are assembled here rather than left to `--generate-notes`, because
+          # the compatibility section has to come *first* — it is the part that says
+          # whether upgrading costs anything, and a reader who stops at the changelog
+          # has stopped before it. Asking the API for the generated half and
+          # concatenating is also one less thing to be wrong about than relying on how
+          # two note flags combine, on a step that only ever runs at release time.
+          gh api --method POST \
+            "repos/${{ github.repository }}/releases/generate-notes" \
+            -f "tag_name=v$VERSION" --jq .body > generated.md
+          cat compat.md generated.md > notes.md
           # 0.x is published as a pre-release: the CLI's own setup banner says the
           # interfaces can still change, and install.sh already lists releases rather
           # than asking for /releases/latest precisely so pre-releases are found.
-          flags=(--title "v$VERSION" --generate-notes --verify-tag)
+          flags=(--title "v$VERSION" --notes-file notes.md --verify-tag)
           case "$VERSION" in 0.*) flags+=(--prerelease) ;; esac
           gh release create "v$VERSION" dist/* "${flags[@]}"
 

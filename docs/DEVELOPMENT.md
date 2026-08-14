@@ -223,6 +223,33 @@ python scripts/check_version.py          # what CI will say about this tree
 A `0.x` version is published as a **pre-release**. `install.sh` lists releases rather
 than asking for `/releases/latest` precisely so it still finds them.
 
+### Compatibility notes
+
+The release notes lead with a **Compatibility** section, above the generated changelog,
+written by [`scripts/compat_notes.py`](../scripts/compat_notes.py):
+
+```bash
+python scripts/compat_notes.py           # what this tree would add to the notes
+python scripts/compat_notes.py v0.5.2    # …compared against a specific release
+```
+
+A changelog built from commit subjects reports the release version and says nothing
+about the other four numbers — the config schema, the credentials schema, the result
+`schema_version`, the feed schema — which are the ones that can break something a user
+already has. So the script reads those constants out of the previous release's tree,
+compares them with this one's, and writes a row for each that moved, plus the feed's
+`min_supported` if a floor was set or lifted.
+
+**It prints nothing when nothing moved.** A section that appears every release saying
+"no change" is read once and skipped forever, which costs exactly the attention the one
+that matters needs.
+
+It reports; it does not judge. No diffing of code, no guessing at severity, no
+"breaking" label — every line is checkable against two git trees.
+`tests/test_compat_notes.py` keeps each pattern matching the constant it claims to
+watch, because the failure mode of a renamed constant is that the section silently
+stops appearing.
+
 ### Releasing without a pull request
 
 **Actions → “release” → “Run workflow”** takes an optional version. Give it one and the
