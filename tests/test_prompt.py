@@ -810,7 +810,20 @@ def test_pty_ctrl_c_still_cancels_rather_than_going_back():
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
 def test_pty_ctrl_c_cancels_and_restores_terminal():
-    """Ctrl-C must raise Cancelled *and* leave the terminal out of raw mode."""
+    """Ctrl-C must raise Cancelled *and* leave the terminal out of raw mode.
+
+    "Out of raw mode" is asserted as the flags a user would *feel* — echo, line
+    editing, and Ctrl-C still being a signal — rather than as byte equality of the whole
+    termios record. Two bits in ``lflag`` are the driver's running state and not
+    settings anybody wrote: ``FLUSHO`` (output is currently discarded, toggled by
+    Ctrl-O) and ``PENDIN`` (input is waiting to be retyped after a Ctrl-R). macOS
+    reports one of them differently after the restore, and comparing the whole word
+    called that a terminal left broken.
+
+    So the comparison names what it means. Every other field is still compared exactly,
+    and the bits that changed are printed, so a real regression — `ECHO` never coming
+    back — fails here with the bit named rather than as `restored=False`.
+    """
     body = """
         import sys, termios
         from media_ai.cli._prompt import get_prompter, Cancelled
@@ -824,12 +837,18 @@ def test_pty_ctrl_c_cancels_and_restores_terminal():
         except Cancelled:
             after = termios.tcgetattr(fd)
             names = ["iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc"]
-            diff = [n for n, a, b in zip(names, before, after) if a != b]
-            print("RESULT=cancelled restored=%s diff=%s" % (before == after, ",".join(diff)))
+            other = [n for n, a, b in zip(names, before, after) if a != b and n != "lflag"]
+            # Everything in lflag except the driver's own status bits.
+            status = getattr(termios, "FLUSHO", 0) | getattr(termios, "PENDIN", 0)
+            settings_kept = (before[3] & ~status) == (after[3] & ~status)
+            moved = [n for n in ("ECHO", "ECHOE", "ECHOK", "ECHONL", "ECHOPRT", "ECHOCTL",
+                                 "ECHOKE", "ICANON", "ISIG", "IEXTEN", "NOFLSH", "TOSTOP",
+                                 "FLUSHO", "PENDIN", "EXTPROC", "ALTWERASE")
+                     if (before[3] ^ after[3]) & getattr(termios, n, 0)]
+            print("RESULT=cancelled restored=%s moved=%s other=%s"
+                  % (settings_kept and not other, ",".join(moved), ",".join(other)))
     """
     out = run_in_pty(body, [CTRL_C])
-    # The diff is in the message because "restored=False" on its own says a terminal was
-    # left broken without saying how, and the answer is one of seven fields.
     assert "RESULT=cancelled restored=True" in out, out
 
 
