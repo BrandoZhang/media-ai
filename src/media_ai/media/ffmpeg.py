@@ -8,8 +8,10 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
+from ..core import telemetry
 from ..core.errors import ErrorCategory, MediaError
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
@@ -53,13 +55,26 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     Both halves are deliberate: ``stdin=DEVNULL`` is what enforces it, in one place a new
     call site cannot forget, and ``-nostdin`` says so on the command line that a failure
     message prints.
+
+    Being the single spawn site makes it the single place to time one, too. A local
+    encode has no HTTP span to account for it, so without this a ``video concat`` or an
+    animation export is a minute of wall clock a trace cannot explain. The command line
+    is *not* an attribute: it carries the caller's paths, and a span is not where those
+    should turn up.
     """
-    return subprocess.run(
-        [ffmpeg_exe(), "-hide_banner", "-nostdin", *args],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-    )
+    started = time.monotonic()
+    with telemetry.span("subprocess.ffmpeg", **{"process.executable.name": "ffmpeg", "argv.count": len(args)}) as sp:
+        proc = subprocess.run(
+            [ffmpeg_exe(), "-hide_banner", "-nostdin", *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+        )
+        elapsed_ms = (time.monotonic() - started) * 1000
+        sp.set(**{"process.exit_code": proc.returncode, "duration_ms": round(elapsed_ms, 1)})
+        telemetry.observe("media_ai.subprocess.duration", elapsed_ms, process="ffmpeg",
+                          outcome="ok" if proc.returncode == 0 else "error")
+        return proc
 
 
 def ffmpeg_exe() -> str:

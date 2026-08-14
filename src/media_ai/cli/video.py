@@ -19,10 +19,8 @@ import argparse
 from pathlib import Path
 
 from ..brand import cli_name, cmd
-from ..core.logging import get_logger
 from ..core.scene import Scene
 from ..core.types import MediaRef, VideoRequest
-from ..core.validate import validate_request
 from ..media import ffmpeg
 from . import common
 
@@ -87,8 +85,11 @@ def _concat(args) -> object:
     rb = resolve(binding=args.binding, provider=args.provider, model=args.model,
                  scene=Scene.VIDEO_CONCAT, catalog=cat, config=config)
     rb.check_scene(Scene.VIDEO_CONCAT, available_bindings(cat, config))
-    result = build_adapter(rb).concat(inputs, Path(args.output), width=args.width, height=args.height)
-    return common.stamp(result, rb, Scene.VIDEO_CONCAT)
+    adapter = build_adapter(rb)
+    return common.produce(
+        lambda: adapter.concat(inputs, Path(args.output), width=args.width, height=args.height),
+        None, rb, Scene.VIDEO_CONCAT, name="concat",
+    )
 
 
 def _generate(args) -> object:
@@ -105,9 +106,8 @@ def _generate(args) -> object:
         return_last_frame=args.return_last_frame, wait=args.wait, options=common.parse_options(args.option),
     )
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
-        get_logger().warning("unsupported (proceeding): %s", w)
-    return common.stamp(adapter.generate_video(req), rb, scene)
+    common.check(req, args, rb, scene)
+    return common.produce(adapter.generate_video, req, rb, scene)
 
 
 def main() -> int:

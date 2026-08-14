@@ -121,7 +121,12 @@ so `{{cli}} video generate --prompt "…" --output clip.mp4` works. Reach for
 region.
 
 Other global flags: `--on-unsupported {error,warn,ignore}` (default `error`),
-`--pretty`, `--metadata-out <path>`, `--log-level`, `--verbose` (redacted HTTP diagnostics on stderr).
+`--pretty`, `--metadata-out <path>`, `--log-level`, `--log-format {text,json}`,
+`--verbose` (redacted HTTP diagnostics on stderr).
+
+`--log-format json` makes the stderr diagnostics one JSON object per line, which is
+worth having if you keep logs. It changes nothing on stdout: that is exactly one JSON
+object in either case.
 
 ## Scenes
 

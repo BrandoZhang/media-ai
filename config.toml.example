@@ -88,3 +88,31 @@ credential = "env://ARK_API_KEY"
 # [update]
 # check = true                                  # false: never look for a new release
 # feed  = "https://mirror.internal/feed.json"   # default: this project's published feed
+
+# ------------------------------------------------------------- telemetry
+#
+# Structured logs are always on (stderr, `--log-level`). OpenTelemetry traces and
+# metrics are not: a CLI that exports on first run ships the caller's prompts to a
+# collector nobody declared, so the table is absent on a fresh install and absent means
+# off. See docs/OBSERVABILITY.md.
+#
+# Needs the optional extra — `pip install "media-ai[otel]"`. Enabled without it, the
+# CLI degrades to a no-op and says so in `notices[]` rather than failing a generation.
+#
+# `MEDIA_TELEMETRY=0` overrides an `enabled = true` here, which is the point of the
+# override: a config shared between machines, one of which must not export.
+# `MEDIA_TELEMETRY_EXPORTER`, `MEDIA_TELEMETRY_ENDPOINT` and `MEDIA_TELEMETRY_TIMEOUT`
+# override the rest for one invocation.
+#
+# There is deliberately no header or token key: a collector behind authentication is
+# configured through OTel's own OTEL_EXPORTER_OTLP_HEADERS. This file is the shareable
+# one — it refuses a raw provider key, and a collector token is the same kind of secret.
+
+# [telemetry]
+# enabled        = true
+# exporter       = "otlp"                   # otlp | console (stderr) | none (record only)
+# endpoint       = "http://localhost:4318"  # OTLP/HTTP base URL; /v1/traces etc. appended
+# service        = "media-ai"               # service.name; default: this CLI's own name
+# timeout        = 5                        # seconds for the whole flush at exit
+# sample_percent = 100                      # whole percent of traces kept
+# logs           = true                     # also export log records, correlated by trace id

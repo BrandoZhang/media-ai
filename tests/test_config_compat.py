@@ -57,13 +57,15 @@ def roundtrip(cfg) -> dict:
 def test_an_unknown_top_level_table_survives_a_write(cfg):
     """The case this exists for: a later release adds a table, an older build writes.
 
-    Nothing in this build reads `[telemetry]`, and that is exactly the point — the build
-    that does not understand a table must still hand it back. `[update]` used to be the
-    example here and then became a real one, which is the whole lifecycle in miniature:
-    a field arrives unknown, survives, and is understood a release later.
+    Nothing in this build reads `[dashboard]`, and that is exactly the point — the build
+    that does not understand a table must still hand it back. Two tables have now made
+    the whole trip: `[update]` was the example here first, `[telemetry]` was the example
+    after it, and both are modelled today. That is the lifecycle in miniature — a table
+    arrives unknown, survives an old build's write, and is understood a release later —
+    and it only works because the *first* step is free.
     """
-    write(cfg, f'schema = {SCHEMA}\n\n[telemetry]\nenabled = false\nsample_rate = 10\n')
-    assert roundtrip(cfg)["telemetry"] == {"enabled": False, "sample_rate": 10}
+    write(cfg, f'schema = {SCHEMA}\n\n[dashboard]\nenabled = false\nrefresh_seconds = 10\n')
+    assert roundtrip(cfg)["dashboard"] == {"enabled": False, "refresh_seconds": 10}
 
 
 def test_a_provenance_table_a_distribution_wrote_survives(cfg):

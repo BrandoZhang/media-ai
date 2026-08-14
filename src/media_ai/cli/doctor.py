@@ -28,9 +28,10 @@ import tomllib
 from pathlib import Path
 
 from .. import __version__
-from ..brand import cli_name, cmd
+from ..brand import cli_name, cmd, dist_name
 from ..core.config import config_path
 from ..core.errors import MediaError
+from ..core.logging import FORMATS
 from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
 from . import common
@@ -85,6 +86,38 @@ def _check_update() -> list[dict]:
     if update.is_newer(latest, __version__):
         return [_check("update", "warn", f"{latest} is available (running {__version__}; checked {when})")]
     return [_check("update", "ok", f"{__version__} is current as of {when}")]
+
+
+def _check_telemetry() -> list[dict]:
+    """Whether telemetry would run, answered without exporting anything.
+
+    The failure worth catching is the quiet one: telemetry enabled, the SDK extra not
+    installed, and every command exporting nothing. That reaches an operator at runtime
+    as a ``notices[]`` entry on whatever they happened to run next — this is where
+    somebody can ask the question directly, before wondering why a dashboard is empty.
+
+    Offline like every other check here. Whether the *collector* is reachable is a
+    different question, one that costs a request, and the answer to it is a span that
+    arrived or did not.
+    """
+    from ..core.telemetry import settings
+    from ..core.telemetry.runtime import EXTRA
+
+    cfg = settings()
+    if not cfg.enabled:
+        return [_check("telemetry", "ok", "off (no traces or metrics are exported)")]
+    try:
+        import opentelemetry.sdk  # noqa: F401
+    except ImportError:
+        return [_check("telemetry", "warn",
+                       f"enabled, but the OpenTelemetry SDK is not installed — nothing is exported; "
+                       f"run: pip install '{dist_name()}[{EXTRA}]'")]
+    where = {
+        "otlp": f"otlp -> {cfg.endpoint}",
+        "console": "console -> stderr",
+        "none": "recording only, nothing exported",
+    }[cfg.exporter.value]
+    return [_check("telemetry", "ok", f"on: {where} (service {cfg.service})")]
 
 
 def _check_media() -> list[dict]:
@@ -276,7 +309,7 @@ def _check_skills() -> list[dict]:
 def _diagnose(args) -> dict:
     checks = (
         _check_cli() + _check_update() + _check_media() + _check_files()
-        + _check_bindings() + _check_defaults() + _check_skills()
+        + _check_bindings() + _check_defaults() + _check_skills() + _check_telemetry()
     )
     status = max((c["status"] for c in checks), key=lambda s: _RANK[s], default="ok")
     _print(checks, status)
@@ -315,6 +348,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
     ap.add_argument("--log-level", default=None, help="stderr log level: debug, info, warning, or error")
+    ap.add_argument("--log-format", dest="log_format", default=None, choices=list(FORMATS),
+                    help="stderr log rendering (default: text); stdout is one JSON object either way")
     ap.add_argument("--metadata-out", default=None, help="also write the secret-free result JSON to this path")
     return ap
 
