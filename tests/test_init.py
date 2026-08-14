@@ -874,6 +874,12 @@ def test_skills_only_writes_no_defaults(home):
 # ------------------------------------------------------------------ telemetry
 
 
+#: The two rows of the telemetry menu, by position. Named rather than spelled `0`/`1`
+#: for the reason `pick()` names skills: a test that says `[1, "http://…"]` is about a
+#: list's ordering, and this one is about turning telemetry on.
+OFF, ON = 0, 1
+
+
 class TestTelemetry:
     """The one question setup asks about observability, and when it asks it.
 
@@ -897,7 +903,15 @@ class TestTelemetry:
         (home / "config.toml").write_text(f"schema = 2\n\n[telemetry]\nenabled = true\n{extra}", encoding="utf-8")
 
     def asked_about_telemetry(self, prompter) -> bool:
-        return any("OpenTelemetry" in q for q in prompter.asked)
+        return any("traces and metrics" in q for q in prompter.asked)
+
+    @staticmethod
+    def telemetry_menu(prompter):
+        """The rows the telemetry question offered, or ``None`` if it asked nothing."""
+        for question, options in zip(prompter.asked, prompter.offered, strict=False):
+            if "traces and metrics" in question:
+                return options
+        return None
 
     # -- when it is asked at all
 
@@ -910,16 +924,29 @@ class TestTelemetry:
         assert not (home / "config.toml").exists()
 
     def test_the_extra_brings_the_question(self, home, with_otel):
-        _summary, prompter = self.wizard(home, [False])
+        _summary, prompter = self.wizard(home, [OFF])
         assert self.asked_about_telemetry(prompter)
+
+    def test_it_is_a_menu_whose_rows_say_what_they_do(self, home, with_otel):
+        """The wizard's vocabulary for a choice, not a yes/no.
+
+        `confirm` draws a clack radio too, but it draws `Yes / No` on one line with
+        nowhere to put the consequence — and "what does yes actually do here" is the
+        whole question. Pinned on the rows rather than on the prose so a reworded label
+        stays free and a row that stops explaining itself does not.
+        """
+        _summary, prompter = self.wizard(home, [OFF])
+        rows = self.telemetry_menu(prompter)
+        assert rows is not None and len(rows) == 2
+        assert all(row.hint for row in rows), "a menu row that explains nothing is a Yes/No with extra steps"
 
     def test_an_already_enabled_machine_is_asked_even_without_the_extra(self, home):
         """The other reason the answer is worth having: this is how it gets turned off,
         and a machine whose extra was uninstalled is exactly one exporting nothing."""
         self.enabled_already(home)
-        _summary, prompter = self.wizard(home, [False])
+        _summary, prompter = self.wizard(home, [OFF])
         assert self.asked_about_telemetry(prompter)
-        assert "no longer installed" in "\n".join(prompter.asked)
+        assert "not installed" in "\n".join(prompter.asked)
 
     def test_skills_only_leaves_it_alone(self, home, with_otel):
         self.enabled_already(home)
@@ -931,32 +958,32 @@ class TestTelemetry:
     # -- what the answers write
 
     def test_yes_writes_the_endpoint(self, home, with_otel):
-        summary, _ = self.wizard(home, [True, "http://collector.internal:4318"])
+        summary, _ = self.wizard(home, [ON, "http://collector.internal:4318"])
         assert summary["telemetry"] == {"enabled": True, "endpoint": "http://collector.internal:4318"}
         table = config(home)["telemetry"]
         assert table["enabled"] is True and table["endpoint"] == "http://collector.internal:4318"
 
     def test_enter_takes_the_local_collector(self, home, with_otel):
         """`None` from the scripted prompter is "pressed enter" — the offered default."""
-        _summary, _ = self.wizard(home, [True, None])
+        _summary, _ = self.wizard(home, [ON, None])
         assert config(home)["telemetry"]["endpoint"] == "http://localhost:4318"
 
     def test_a_trailing_slash_is_trimmed(self, home, with_otel):
         """The signal paths are appended to this, so `…:4318/` would ask for `//v1/traces`."""
-        _summary, _ = self.wizard(home, [True, "http://collector:4318/"])
+        _summary, _ = self.wizard(home, [ON, "http://collector:4318/"])
         assert config(home)["telemetry"]["endpoint"] == "http://collector:4318"
 
     def test_no_on_a_machine_that_was_off_changes_nothing(self, home, with_otel):
         """Not a change, so not a write. The ask-then-apply split means a recorded answer
         is a written file, and a wizard run that altered nothing must not bring a
         config.toml into existence."""
-        summary, _ = self.wizard(home, [False])
+        summary, _ = self.wizard(home, [OFF])
         assert summary["telemetry"] is None
         assert not (home / "config.toml").exists()
 
     def test_no_on_a_machine_that_was_on_turns_it_off(self, home, with_otel):
         self.enabled_already(home)
-        summary, _ = self.wizard(home, [False])
+        summary, _ = self.wizard(home, [OFF])
         assert summary["telemetry"] == {"enabled": False, "endpoint": None}
         # `enabled = false` is the default, so the table is written back empty rather
         # than carrying a key that says what absence already says.
@@ -966,7 +993,7 @@ class TestTelemetry:
         """Merged, never rebuilt — the same rule every other writer here follows. The
         wizard asked about two fields and has no opinion about the rest."""
         self.enabled_already(home, extra="timeout = 30\nsample_percent = 25\n")
-        self.wizard(home, [True, "http://collector:4318"])
+        self.wizard(home, [ON, "http://collector:4318"])
         table = config(home)["telemetry"]
         assert table["timeout"] == 30 and table["sample_percent"] == 25
 
@@ -989,18 +1016,18 @@ class TestTelemetry:
     def test_escaping_the_endpoint_re_asks_the_previous_step(self, home, with_otel):
         """Esc abandons the *step*, so it lands on a real question rather than half of
         this one — and the step is re-run from the top, which is why it clears first."""
-        _summary, prompter = self.wizard(home, [True, GoBack, [], False])
+        _summary, prompter = self.wizard(home, [ON, GoBack, [], OFF])
         assert prompter.asked.count("Which skills should be installed?") == 2
 
     def test_the_report_says_where_it_is_going(self, home, with_otel):
-        _summary, prompter = self.wizard(home, [True, "http://collector:4318"])
+        _summary, prompter = self.wizard(home, [ON, "http://collector:4318"])
         assert "http://collector:4318" in "\n".join(prompter.notes)
 
     def test_the_report_names_the_missing_extra(self, home):
         """Enabled without the SDK is silence; the wizard says so where there is still
         something to do about it."""
         self.enabled_already(home)
-        _summary, prompter = self.wizard(home, [True, None])
+        _summary, prompter = self.wizard(home, [ON, None])
         notes = "\n".join(prompter.notes)
         assert init_mod.EXTRA in notes and "nothing is exported" in notes
 

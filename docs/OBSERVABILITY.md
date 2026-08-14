@@ -45,8 +45,20 @@ for an observability backend is the same kind of secret wearing a different hat.
 MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_ENDPOINT=http://localhost:4318 media-ai image generate …
 ```
 
-`media-ai init` offers the same decision — one yes/no, defaulting to whatever is
-already configured, plus the endpoint after a yes. It appears **only when there is
+`media-ai init` offers the same decision — a two-row menu, defaulting to whatever is
+already configured, plus the endpoint after choosing to export:
+
+```text
+◆  Export traces and metrics?
+│  ● keep it to this machine  (nothing is exported)
+│  ○ send to an OpenTelemetry collector  (OTLP/HTTP to an endpoint you name)
+│  ↑↓ move · enter confirm · esc back
+└
+```
+
+A menu rather than a yes/no because that is the wizard's vocabulary for a choice
+(`●`/`○` pick-one, `◼`/`◻` pick-any) and because a row can carry what the answer
+means, which is the whole question here. It appears **only when there is
 something to choose**: the `otel` extra is installed (a deliberate act by somebody who
 wants this), or telemetry is already on and the question is how to turn it off. On a
 machine with neither, a "yes" would write a config that exports nothing and earns a
@@ -57,10 +69,6 @@ warning on every later command, so the wizard stays quiet and `--telemetry-endpo
 media-ai init --non-interactive --skills-dest ~/.claude/skills \
               --telemetry-endpoint http://collector.internal:4318
 ```
-
-`install.sh` takes the same flag under the same name and passes it through, the way it
-does `--skills-dest` — and adds the `otel` extra to the install it is already doing, so
-one command produces a machine that both is configured to export and can.
 
 `MEDIA_TELEMETRY` is read three-state through `core/envflag.py`, like every other
 `MEDIA_*` flag here: unset lets the config decide, `MEDIA_TELEMETRY=0` overrules a
@@ -82,12 +90,8 @@ An installation that never exports should not carry it, and — more to the poin
 
 ```bash
 pip install "media-ai[otel]"                                  # a pip install
+uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # the installer's route
 uv sync --extra otel                                          # a checkout
-
-# or from the installer, which adds the extra to the same install rather than
-# leaving a second step — a machine configured to export, without the SDK that
-# exports, writes a collector's address into its config and sends it nothing:
-curl -fsSL …/install.sh | bash -s -- --telemetry-endpoint http://collector.internal:4318
 ```
 
 So the SDK is imported **lazily, once, and only when telemetry is enabled**. The three

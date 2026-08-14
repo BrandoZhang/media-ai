@@ -739,6 +739,15 @@ def _ask_telemetry(args, prompter, answers: _Answers) -> None:
     is a debugging tool rather than a setup answer, and a wizard that asks about
     sampling before anyone has a single trace is asking someone to guess.
 
+    **A menu, not a yes/no**, which is the wizard's own vocabulary for a choice —
+    ``●``/``○`` for pick-one, ``◼``/``◻`` for pick-any, as ``README`` documents and as
+    "How should keys be stored?" renders two lines above this one. ``confirm`` does draw
+    a clack radio, but it draws ``Yes / No`` on one line with nowhere to put the
+    consequence, and *"what does yes actually do here"* is the whole question. A menu
+    row carries its own ``hint``, so both answers say what they mean. It is a ``select``
+    and not a checkbox for the same reason: telemetry is on or off, and pick-one is what
+    ``●``/``○`` means.
+
     **A "no" on a machine that was already not exporting records nothing at all.** It is
     not a change, and the ask-then-apply split means a recorded answer is a written
     file — so treating it as one would make a wizard run that altered nothing create a
@@ -761,20 +770,25 @@ def _ask_telemetry(args, prompter, answers: _Answers) -> None:
         return
     if args.non_interactive or not (_otel_installed() or current.enabled):
         return
-    title = "Export traces and metrics to an OpenTelemetry collector?"
+    title = "Export traces and metrics?"
     if not _otel_installed():
-        # Only reachable with telemetry already on and the extra since removed — which
-        # is exactly the machine that has been exporting nothing, and the one place this
-        # question has something urgent to say.
-        title += "\n  the extra is no longer installed, so nothing is being exported"
-    if not prompter.confirm(title, default=current.enabled):
+        # A second title line, the way `_ask_one_credential` hangs a provider's setup
+        # hint under its question. Only reachable with telemetry already on and the
+        # extra since removed — the machine that has been exporting nothing, and the one
+        # place this question has something urgent to say.
+        title += "\n  the OpenTelemetry extra is not installed, so nothing is being exported"
+    choices = [
+        # Hints kept short enough to survive an 80-column terminal: the renderer
+        # truncates a row that overflows, and the truncated half is the explanation.
+        Option("keep it to this machine", hint="nothing is exported"),
+        Option("send to an OpenTelemetry collector", hint="OTLP/HTTP to an endpoint you name"),
+    ]
+    if prompter.select(title, choices, default=1 if current.enabled else 0) == 0:
         answers.telemetry = replace(current, enabled=False) if current.enabled else None
         return
     endpoint = prompter.text(
         # "<subject> — <what is being asked>", the shape every other follow-up question
-        # here uses ("elevenlabs/eleven-v3 — Base URL"). An indented continuation line
-        # is what a question *within* one step looks like; this is its own step, drawn
-        # with its own marker on the rail, so the indent read as a stray one.
+        # here uses ("elevenlabs/eleven-v3 — Base URL").
         "Telemetry — OTLP/HTTP endpoint (the collector's base URL)",
         default=current.endpoint or DEFAULT_TELEMETRY_ENDPOINT,
     ).strip()
