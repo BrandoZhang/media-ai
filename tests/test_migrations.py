@@ -351,3 +351,72 @@ def test_a_migration_that_produces_an_unreadable_file_leaves_the_original(cfg, r
     with pytest.raises(MediaError):
         migrate_file()
     assert cfg.read_text(encoding="utf-8") == before
+
+
+# ------------------------------------------------- what must never reach stdout
+
+# `config migrate` is the first non-interactive command that writes the secret file, so
+# what it *says* about that file is worth pinning rather than inferring. The report is
+# built from a path, a presence flag, two schema numbers and the step summaries — none
+# of which is derived from the file's contents — but "none of which" is a property of
+# today's code, and the next person to write a migration writes a `summary`.
+
+SECRET = "sk-LIVE-SECRET-abcdef123456"
+ACCOUNT = "internal-gateway"
+
+
+def creds_with_a_key(path):
+    return write_creds(path, f'schema = 1\n\n[{ACCOUNT}]\napi_key = "{SECRET}"\n')
+
+
+def stdout_of(*argv, expect=0, capsys=None) -> str:
+    import sys
+
+    old, sys.argv = sys.argv, ["media-ai config", *argv]
+    try:
+        code = config_cli.main()
+    finally:
+        sys.argv = old
+    out = capsys.readouterr().out
+    assert code == expect, f"{argv} -> {code}: {out}"
+    return out
+
+
+def test_a_no_op_migration_names_no_account_and_no_key(cfg, creds, capsys):
+    cfg.write_text(f'schema = {SCHEMA}\n[bindings."mock/mock"]\n', encoding="utf-8")
+    creds_with_a_key(creds)
+    out = stdout_of("migrate", capsys=capsys)
+    assert SECRET not in out and ACCOUNT not in out
+
+
+def test_a_converting_migration_names_no_account_and_no_key(creds, registry, monkeypatch, capsys):
+    """The path where the file's contents actually flow through the code."""
+    monkeypatch.setattr("media_ai.credentials.stores.SCHEMA", 2)
+    step(registry, CREDENTIALS, 1, lossless=False, summary="rename the account key")
+    creds_with_a_key(creds)
+    out = stdout_of("migrate", capsys=capsys)
+    assert SECRET not in out and ACCOUNT not in out
+    # …and it really did convert, or the assertion above is vacuous.
+    assert tomllib.loads(creds.read_text(encoding="utf-8"))["schema"] == 2
+
+
+def test_a_parse_failure_reports_a_position_not_the_line(creds, capsys):
+    """A message quoting the offending text would put a key in the error contract."""
+    write_creds(creds, f'schema = 1\n[acme]\napi_key = {SECRET}\n')  # unquoted: invalid TOML
+    out = stdout_of("migrate", expect=4, capsys=capsys)
+    assert SECRET not in out
+    assert "line 3" in out
+
+
+def test_a_summary_that_leaks_is_masked_on_the_way_out(registry, creds, monkeypatch, capsys):
+    """The forward-looking half. Nothing stops a future migration from interpolating
+    data into its `summary`, and that string is printed. It goes through the same
+    redactor every other sink does, so a key-shaped token is masked even though it was
+    never registered as a live secret — this asserts the backstop covers this path.
+    """
+    monkeypatch.setattr("media_ai.credentials.stores.SCHEMA", 2)
+    step(registry, CREDENTIALS, 1, lossless=False, summary=f"moved {SECRET} to the new field")
+    creds_with_a_key(creds)
+    out = stdout_of("migrate", capsys=capsys)
+    assert SECRET not in out
+    assert "***" in out
