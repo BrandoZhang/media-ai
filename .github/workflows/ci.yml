@@ -9,20 +9,34 @@ on:
 # the version check and the installer's own tests do not — `ruff` reads its target from
 # `pyproject.toml`, `shellcheck` reads bash, and `check_version.py` compares strings —
 # so running them four times would only buy four identical answers and four minutes.
+#
+# The same question decides the operating system, and gives a different answer. What
+# can differ on macOS is not the interpreter but the platform underneath it: `termios`
+# and `/dev/tty` for the wizard, file modes, path handling, and which `ffmpeg` binary
+# `imageio-ffmpeg` unpacks. None of that varies with the Python version, so macOS gets
+# **one** job rather than a second column — a full cross-product would buy three more
+# answers to a question already answered.
 jobs:
   test:
-    name: test (py${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: test (py${{ matrix.python }} · ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       # Every version gets its answer. Stopping at the first failure hides whether the
       # break is "3.14 only" or "everything past 3.11", which is the first thing anyone
-      # would want to know.
+      # would want to know — and the same goes for "macOS only".
       fail-fast: false
       matrix:
         # `pyproject.toml` says `requires-python = ">=3.11"`, and until this matrix
         # existed only 3.11 had ever run — a promise about four interpreters, checked
         # on one. Adding a release here is the whole cost of admitting it.
         python: ["3.11", "3.12", "3.13", "3.14"]
+        os: [ubuntu-latest]
+        # One macOS job, on the floor `requires-python` names. It is here for the
+        # platform, not the interpreter: this is the only place `termios`, `/dev/tty`,
+        # the keychain path and a non-Linux `ffmpeg` are exercised at all.
+        include:
+          - python: "3.11"
+            os: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
