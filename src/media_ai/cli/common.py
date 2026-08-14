@@ -389,15 +389,24 @@ def parse_args(parser: argparse.ArgumentParser, argv=None):
 
 def run(build_and_call, args) -> int:
     """Configure logging, run the command, and turn any failure into the JSON
-    error contract + a category-specific exit code."""
+    error contract + a category-specific exit code.
+
+    The whole of it runs inside ``config.snapshot()``, so an invocation has one view of
+    the configuration — the command body and the notice sources that run on the way out
+    included. The emit is inside the block deliberately: the notices are computed there,
+    and one of them asks the config whether update checking is on.
+    """
+    from ..core.config import snapshot
+
     configure("debug" if getattr(args, "verbose", False) else getattr(args, "log_level", None))
-    try:
-        result = build_and_call(args)
-        return emit_result(result, args)
-    except MediaError as e:
-        return emit_error(e, args)
-    except KeyboardInterrupt:
-        return emit_error(MediaError("interrupted", category=ErrorCategory.TIMEOUT), args)
-    except Exception as e:  # noqa: BLE001 - last-resort: never leak a raw traceback to stdout
-        get_logger().exception("unexpected error")
-        return emit_error(MediaError(str(e) or e.__class__.__name__, category=ErrorCategory.UNKNOWN), args)
+    with snapshot():
+        try:
+            result = build_and_call(args)
+            return emit_result(result, args)
+        except MediaError as e:
+            return emit_error(e, args)
+        except KeyboardInterrupt:
+            return emit_error(MediaError("interrupted", category=ErrorCategory.TIMEOUT), args)
+        except Exception as e:  # noqa: BLE001 - last-resort: never leak a raw traceback to stdout
+            get_logger().exception("unexpected error")
+            return emit_error(MediaError(str(e) or e.__class__.__name__, category=ErrorCategory.UNKNOWN), args)
