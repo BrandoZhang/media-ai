@@ -581,6 +581,30 @@ def test_get_prompter_uses_tty_stdio_when_dev_tty_is_unavailable(monkeypatch):
 # ------------------------------------------------------- real terminal, via pty
 
 
+def _await_first_draw(fd: int, timeout: float = 10.0) -> None:
+    """Block until the child has drawn its prompt, so a key cannot arrive too early.
+
+    This used to be ``time.sleep(0.3)`` — a guess about how long an interpreter takes
+    to start and import this package, and a guess that was wrong on a slower runner.
+    Getting it wrong is not a slow test but a *misleading* one: ``tty.setraw`` flushes
+    with ``TCSAFLUSH``, so anything typed before it is discarded, and the prompt then
+    reads nothing. The failure looks like "the secret prompt returned an empty string",
+    which is a plausible product bug and was not one.
+
+    The prompt having drawn itself is the real signal, and it is one the child already
+    sends: the first byte on the master means the frame is up, which is downstream of
+    both the import and the raw-mode switch.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if os.read(fd, 65536):
+                return
+        except OSError:  # nothing yet (non-blocking) or the child is gone
+            pass
+        time.sleep(0.02)
+
+
 def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     """Run ``body`` in a child with a real controlling terminal, feeding ``keys``.
 
@@ -606,7 +630,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
             pass
 
     try:
-        time.sleep(0.3)
+        _await_first_draw(fd)
         for key in keys:
             os.write(fd, key)
             time.sleep(0.12)
@@ -799,10 +823,14 @@ def test_pty_ctrl_c_cancels_and_restores_terminal():
             print("RESULT=no-cancel")
         except Cancelled:
             after = termios.tcgetattr(fd)
-            print("RESULT=cancelled restored=%s" % (before == after))
+            names = ["iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc"]
+            diff = [n for n, a, b in zip(names, before, after) if a != b]
+            print("RESULT=cancelled restored=%s diff=%s" % (before == after, ",".join(diff)))
     """
     out = run_in_pty(body, [CTRL_C])
-    assert "RESULT=cancelled restored=True" in out
+    # The diff is in the message because "restored=False" on its own says a terminal was
+    # left broken without saying how, and the answer is one of seven fields.
+    assert "RESULT=cancelled restored=True" in out, out
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
