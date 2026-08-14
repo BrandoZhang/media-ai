@@ -48,6 +48,30 @@ jobs:
       - name: Test (offline — no creds, no network)
         run: uv run pytest -q -m "not live"
 
+  # The optional observability extra, on one interpreter. It is here for the *dependency*
+  # rather than for the interpreter, which is the same question the matrix above answers
+  # for Python and the macOS job answers for the platform: what differs is whether the
+  # OpenTelemetry SDK is installed, and that does not vary with the version running it.
+  #
+  # Both halves are checked, and the matrix job above is one of them: without the extra
+  # it proves the CLI works and degrades to a no-op, since `tests/test_telemetry.py`
+  # skips only the tests that need real spans. This job proves the signals are actually
+  # produced. A single job installing the extra would leave the more common
+  # configuration — nobody has it installed — untested.
+  telemetry:
+    name: test (otel extra)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - name: Sync (with the otel extra)
+        run: uv sync --extra otel
+      - name: Test (offline — no creds, no collector)
+        run: uv run pytest -q -m "not live"
+
   checks:
     runs-on: ubuntu-latest
     steps:

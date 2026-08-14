@@ -29,6 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _do(args):
+    from ..core import telemetry
     from ..core.registry import build_adapter
     from ..core.resolve import resolve
 
@@ -37,13 +38,26 @@ def _do(args):
     rb = resolve(binding=args.binding, provider=args.provider, model=args.model)
     adapter = build_adapter(rb)
     ref = JobRef(provider=rb.provider.name, id=args.id, model=rb.model_id)
-    if args.op == "cancel":
-        return adapter.cancel_job(ref)
-    out = Path(args.output) if getattr(args, "output", None) else None
-    status = adapter.get_job(ref, output=out)
-    if status.result is not None:
-        common.stamp(status.result, rb)  # no scene: the request that implied one is gone
-    return status
+    # The job id goes on the span and nowhere near a metric label. It is the one field
+    # that joins this process to the one that submitted the job — the trace of the
+    # submit is minutes old and in another process, and the id is what a reader has to
+    # search for to find it — and it is also unbounded, so as a metric label it would be
+    # a new series per generation.
+    with telemetry.span(f"job.{args.op}", binding=rb.id, provider=rb.provider.name,
+                        job_id=args.id, wire_id=rb.model_id) as sp:
+        if args.op == "cancel":
+            return adapter.cancel_job(ref)
+        out = Path(args.output) if getattr(args, "output", None) else None
+        status = adapter.get_job(ref, output=out)
+        sp.set(status=status.status)
+        # No scene, here or in the event: the request that implied one belonged to
+        # another process, and a guess in a cost report is worse than a missing field.
+        telemetry.event(telemetry.JOB_POLLED, binding=rb.id, provider=rb.provider.name,
+                        job_id=args.id, status=status.status,
+                        artifacts=len(status.result.artifacts) if status.result else None)
+        if status.result is not None:
+            common.stamp(status.result, rb)
+        return status
 
 
 def main() -> int:

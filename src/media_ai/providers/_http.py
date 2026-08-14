@@ -22,11 +22,13 @@ import random
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from ..core import telemetry
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 from ..credentials.redaction import redact, redact_obj
@@ -52,6 +54,23 @@ def _debug_body(data: bytes | None, headers: dict) -> str:
     if len(rendered) > _DEBUG_BODY_LIMIT:
         return f"{rendered[:_DEBUG_BODY_LIMIT]}… <truncated; {len(rendered)} chars total>"
     return rendered
+
+
+def _scrub(url: str) -> str:
+    """A URL fit to be a span attribute: everything but the query string.
+
+    A query string is where a key ends up when an API takes one there (``?key=…`` is
+    Google's documented alternative to the header), and a span attribute is a place
+    ``redact`` cannot save us from a value it has never seen — an unregistered key from
+    a broker, on the first call, before anything revealed it. Dropping the query costs
+    nothing worth having: the path is what identifies the endpoint, and the parameters
+    are in the request body for every provider here.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except ValueError:  # a malformed URL is about to fail anyway; say so without the query
+        return url.split("?", 1)[0]
 
 
 class HttpClient:
@@ -198,69 +217,113 @@ class HttpClient:
     def _send(self, method, url, *, data, headers, decode=True, timeout=None):
         idempotent = method in ("GET", "DELETE")
         timeout = timeout or self.timeout
-        for attempt in range(self.max_retries + 1):
-            req = urllib.request.Request(url, data=data, method=method)
-            for k, v in headers.items():
-                req.add_header(k, v)
-            # A Request normalizes header names and adds its own framing headers, so
-            # log it only after construction. ``redact_obj`` masks Authorization and
-            # every known secret-shaped field before it reaches stderr.
-            get_logger().debug(
-                "HTTP request: attempt=%d method=%s url=%s headers=%s body=%s",
-                attempt + 1, method, url,
-                json.dumps(redact_obj(dict(req.header_items())), ensure_ascii=False, sort_keys=True),
-                _debug_body(data, headers),
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-                    raw = resp.read()
-                    get_logger().debug(
-                        "HTTP response: method=%s url=%s status=%s bytes=%d",
-                        method, url, getattr(resp, "status", 200), len(raw),
-                    )
-                    return raw.decode("utf-8") if decode else raw
-            except urllib.error.HTTPError as e:
-                status = e.code
-                raw = ""
-                if hasattr(e, "read"):
-                    try:
-                        raw = e.read().decode("utf-8", "replace")[:2000]
-                    except Exception:  # noqa: BLE001
-                        raw = ""
-                # 429 is always safe to retry (rejected, not processed); transient
-                # 5xx/network only on idempotent methods. A classifier may then veto
-                # a retry it knows is pointless (e.g. quota exhausted).
-                retryable = status == 429 or (status in self.retry_statuses and idempotent)
-                delay = self._retry_delay(e, attempt) if retryable else None
-                if retryable and delay is not None and attempt < self.max_retries and self._retry_ok(status, raw):
-                    get_logger().debug(
-                        "HTTP response: method=%s url=%s status=%d retrying=true in=%.1fs",
-                        method, url, status, delay,
-                    )
-                    time.sleep(delay)
-                    continue
+        started = time.monotonic()
+        # One span per *request*, retries included, rather than one per attempt: a
+        # caller asking "how long did this take" means the whole thing, and the attempt
+        # count is an attribute of that answer. The retries are counted separately, so a
+        # provider that is quietly costing four round trips per call still shows up.
+        with telemetry.span(f"http.{method}", provider=self.provider,
+                            **{"http.request.method": method, "url.full": _scrub(url)}) as sp:
+            for attempt in range(self.max_retries + 1):
+                req = urllib.request.Request(url, data=data, method=method)
+                for k, v in headers.items():
+                    req.add_header(k, v)
+                # A Request normalizes header names and adds its own framing headers, so
+                # log it only after construction. ``redact_obj`` masks Authorization and
+                # every known secret-shaped field before it reaches stderr.
                 get_logger().debug(
-                    "HTTP response: method=%s url=%s status=%d retrying=false", method, url, status,
+                    "HTTP request: attempt=%d method=%s url=%s headers=%s body=%s",
+                    attempt + 1, method, url,
+                    json.dumps(redact_obj(dict(req.header_items())), ensure_ascii=False, sort_keys=True),
+                    _debug_body(data, headers),
                 )
-                raise self.error_mapper(status, redact(raw[:800])) from e
-            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
-                is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
-                    getattr(exc, "reason", None), (socket.timeout, TimeoutError)
-                )
-                if idempotent and attempt < self.max_retries:
+                try:
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                        raw = resp.read()
+                        status = getattr(resp, "status", 200)
+                        get_logger().debug(
+                            "HTTP response: method=%s url=%s status=%s bytes=%d",
+                            method, url, status, len(raw),
+                        )
+                        sp.set(**{"http.response.status_code": status, "http.response.body.size": len(raw),
+                                  "http.request.resend_count": attempt})
+                        self._measure(started, method, status, "ok")
+                        return raw.decode("utf-8") if decode else raw
+                except urllib.error.HTTPError as e:
+                    status = e.code
+                    raw = ""
+                    if hasattr(e, "read"):
+                        try:
+                            raw = e.read().decode("utf-8", "replace")[:2000]
+                        except Exception:  # noqa: BLE001
+                            raw = ""
+                    # 429 is always safe to retry (rejected, not processed); transient
+                    # 5xx/network only on idempotent methods. A classifier may then veto
+                    # a retry it knows is pointless (e.g. quota exhausted).
+                    retryable = status == 429 or (status in self.retry_statuses and idempotent)
+                    delay = self._retry_delay(e, attempt) if retryable else None
+                    if retryable and delay is not None and attempt < self.max_retries and self._retry_ok(status, raw):
+                        get_logger().debug(
+                            "HTTP response: method=%s url=%s status=%d retrying=true in=%.1fs",
+                            method, url, status, delay,
+                        )
+                        self._retried(status, "status", delay)
+                        time.sleep(delay)
+                        continue
                     get_logger().debug(
-                        "HTTP failure: method=%s url=%s retrying=true error=%s", method, url, redact(str(exc)),
+                        "HTTP response: method=%s url=%s status=%d retrying=false", method, url, status,
                     )
-                    time.sleep(self.retry_base * (2**attempt) + random.uniform(0, 0.5))
-                    continue
-                cat = ErrorCategory.TIMEOUT if is_timeout else ErrorCategory.PROVIDER
-                get_logger().debug(
-                    "HTTP failure: method=%s url=%s retrying=false error=%s", method, url, redact(str(exc)),
-                )
-                raise MediaError(
-                    f"{self.provider} request failed: {redact(str(exc))}", category=cat, provider=self.provider
-                ) from None
-        raise MediaError(f"{self.provider} request failed after retries", category=ErrorCategory.PROVIDER, provider=self.provider)
+                    sp.set(**{"http.response.status_code": status, "http.request.resend_count": attempt})
+                    self._measure(started, method, status, "error")
+                    raise self.error_mapper(status, redact(raw[:800])) from e
+                except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
+                    is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(
+                        getattr(exc, "reason", None), (socket.timeout, TimeoutError)
+                    )
+                    if idempotent and attempt < self.max_retries:
+                        get_logger().debug(
+                            "HTTP failure: method=%s url=%s retrying=true error=%s", method, url, redact(str(exc)),
+                        )
+                        self._retried(None, "network", None)
+                        time.sleep(self.retry_base * (2**attempt) + random.uniform(0, 0.5))
+                        continue
+                    cat = ErrorCategory.TIMEOUT if is_timeout else ErrorCategory.PROVIDER
+                    get_logger().debug(
+                        "HTTP failure: method=%s url=%s retrying=false error=%s", method, url, redact(str(exc)),
+                    )
+                    sp.set(**{"http.request.resend_count": attempt})
+                    self._measure(started, method, None, "timeout" if is_timeout else "error")
+                    raise MediaError(
+                        f"{self.provider} request failed: {redact(str(exc))}", category=cat, provider=self.provider
+                    ) from None
+            self._measure(started, method, None, "error")
+            raise MediaError(f"{self.provider} request failed after retries", category=ErrorCategory.PROVIDER,
+                             provider=self.provider)
+
+    def _measure(self, started: float, method: str, status: int | None, outcome: str) -> None:
+        """Count one finished request and how long it took, retries included.
+
+        At each exit of the loop rather than in a ``finally``, because ``outcome`` is
+        the label worth having and only the exit knows it — and because a ``finally``
+        would also fire on the paths that ``continue``, counting every retry as a
+        request and inflating exactly the number a rate-limit investigation reads.
+        """
+        elapsed_ms = (time.monotonic() - started) * 1000
+        telemetry.count("media_ai.http.requests", provider=self.provider, method=method,
+                        status=status, outcome=outcome)
+        telemetry.observe("media_ai.http.duration", elapsed_ms, provider=self.provider,
+                          method=method, outcome=outcome)
+
+    def _retried(self, status: int | None, reason: str, delay: float | None) -> None:
+        """Count an attempt that is about to be repeated.
+
+        Its own counter rather than a flag on the request one: retries are the thing a
+        provider's health is read off, and they are invisible from the outside — the
+        caller sees one slow success, and the ledger sees one call.
+        """
+        telemetry.count("media_ai.http.retries", provider=self.provider, status=status, reason=reason)
+        telemetry.current_span_event("http.retry", status=status, reason=reason,
+                                     delay_ms=round(delay * 1000) if delay else None)
 
     def _retry_ok(self, status: int, body: str) -> bool:
         """Let a provider veto a would-be retry (default: allow). A classifier

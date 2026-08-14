@@ -261,6 +261,7 @@ media-ai usage
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — credential resolution, redaction, broker
 - [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) — invocation contract for Agent Skills
 - [docs/EXTENDING.md](docs/EXTENDING.md) — add a model or a whole backend (no core changes)
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — structured logs, OpenTelemetry traces/metrics, key events
 - [docs/LIVE_TESTS.md](docs/LIVE_TESTS.md) — real-API validation log (all providers)
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — unresolved provider-specific items
 - [docs/history/](docs/history/) — design records for changes already shipped. Kept for the arguments, not as a description of the current system

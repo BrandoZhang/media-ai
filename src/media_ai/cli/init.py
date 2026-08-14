@@ -20,18 +20,25 @@ from __future__ import annotations
 import argparse
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .. import __version__
-from ..brand import cli_name, cmd
+from ..brand import cli_name, cmd, dist_name
 from ..core import update
 from ..core.binding import AuthKind
-from ..core.config import config_path, load_config, render_config
+from ..core.config import (
+    DEFAULT_TELEMETRY_ENDPOINT,
+    TelemetrySettings,
+    config_path,
+    load_config,
+    render_config,
+)
 from ..core.errors import ErrorCategory, MediaError
 from ..core.registry import catalog
 from ..core.result import SCHEMA_VERSION
 from ..core.scene import scenes_for_group
+from ..core.telemetry.runtime import EXTRA
 from ..credentials import stores
 from ..credentials.tomlwrite import backup as tomlwrite_backup
 from ..credentials.tomlwrite import write_private, write_public
@@ -517,6 +524,10 @@ class _Answers:
     endpoint_ids: dict[str, str] = field(default_factory=dict)   # binding id -> Ark endpoint id
     base_urls: dict[str, str] = field(default_factory=dict)      # binding id -> explicit setup URL
     defaults: dict[str, str] = field(default_factory=dict)       # scene -> binding id
+    #: ``[telemetry]`` as it should end up, or ``None`` for "leave it alone". The
+    #: distinction is load-bearing: a run that changes nothing must not bring a
+    #: ``config.toml`` into existence — see :func:`_ask_telemetry`.
+    telemetry: TelemetrySettings | None = None
     verify: dict[str, bool] = field(default_factory=dict)
 
 
@@ -551,6 +562,7 @@ def _wizard(args, prompter) -> dict:
             lambda: _ask_bindings(args, prompter, answers),
             lambda: _ask_binding_configuration(args, prompter, answers),
             lambda: _ask_defaults(args, prompter, answers),
+            lambda: _ask_telemetry(args, prompter, answers),
             lambda: _ask_verify(args, prompter, answers),
         ],
         prompter,
@@ -703,6 +715,100 @@ def _configuration_free_bindings() -> list[str]:
     ]
 
 
+def _ask_telemetry(args, prompter, answers: _Answers) -> None:
+    """Whether this machine exports traces and metrics, and to what.
+
+    One yes/no, defaulting to whatever is already configured — off on a fresh install,
+    which is the whole stance: a CLI that exports on first run ships the caller's
+    prompts to a collector nobody declared (``docs/OBSERVABILITY.md``). Setup is where
+    that decision is *offered*, not where it is made for them.
+
+    **Asked only where there is something to choose**, which is this project's rule for
+    every question here (see :func:`_ask_scene_defaults`, which skips the scenes with a
+    single candidate). Two things make the answer worth having: the ``otel`` extra is
+    installed — a deliberate act by somebody who wants this — or telemetry is already
+    on, in which case the question is how it gets turned back off. Without either, "yes"
+    would write a config that exports nothing and earns a warning on every later
+    command, and a wizard offering a choice whose yes-branch is broken until you go do
+    something else is worse than one that stays quiet. Discovery is covered where it
+    costs nobody a keystroke: ``doctor`` reports the state, ``config.toml.example``
+    documents the table, and ``--telemetry-endpoint`` turns it on unattended.
+
+    Two questions at most, and only the endpoint is asked after a yes. The exporter,
+    the sampling percentage and the flush budget stay config-file settings: ``console``
+    is a debugging tool rather than a setup answer, and a wizard that asks about
+    sampling before anyone has a single trace is asking someone to guess.
+
+    **A menu, not a yes/no**, which is the wizard's own vocabulary for a choice —
+    ``●``/``○`` for pick-one, ``◼``/``◻`` for pick-any, as ``README`` documents and as
+    "How should keys be stored?" renders two lines above this one. ``confirm`` does draw
+    a clack radio, but it draws ``Yes / No`` on one line with nowhere to put the
+    consequence, and *"what does yes actually do here"* is the whole question. A menu
+    row carries its own ``hint``, so both answers say what they mean. It is a ``select``
+    and not a checkbox for the same reason: telemetry is on or off, and pick-one is what
+    ``●``/``○`` means.
+
+    **A "no" on a machine that was already not exporting records nothing at all.** It is
+    not a change, and the ask-then-apply split means a recorded answer is a written
+    file — so treating it as one would make a wizard run that altered nothing create a
+    ``config.toml`` that had never existed. A "no" that *does* turn something off is a
+    change, and is recorded as one.
+
+    What is written merges into the existing table rather than replacing it, the same
+    rule every other writer here follows: a hand-set ``timeout`` or ``sample_percent``
+    survives someone answering this question again.
+    """
+    answers.telemetry = None
+    if args.skills_only:
+        return  # "without changing credentials or bindings" — this is config too
+    current = load_config().telemetry
+    if args.telemetry_endpoint is not None:
+        # The flag is the answer, so nothing is asked — which is also what lets an
+        # unattended run turn telemetry on, the way `--skills-dest` unblocks the
+        # destination question. `run_steps` skips back over a step that asked nothing.
+        answers.telemetry = replace(current, enabled=True, endpoint=args.telemetry_endpoint.rstrip("/"))
+        return
+    if args.non_interactive or not (_otel_installed() or current.enabled):
+        return
+    title = "Export traces and metrics?"
+    if not _otel_installed():
+        # A second title line, the way `_ask_one_credential` hangs a provider's setup
+        # hint under its question. Only reachable with telemetry already on and the
+        # extra since removed — the machine that has been exporting nothing, and the one
+        # place this question has something urgent to say.
+        title += "\n  the OpenTelemetry extra is not installed, so nothing is being exported"
+    choices = [
+        # Hints kept short enough to survive an 80-column terminal: the renderer
+        # truncates a row that overflows, and the truncated half is the explanation.
+        Option("keep it to this machine", hint="nothing is exported"),
+        Option("send to an OpenTelemetry collector", hint="OTLP/HTTP to an endpoint you name"),
+    ]
+    if prompter.select(title, choices, default=1 if current.enabled else 0) == 0:
+        answers.telemetry = replace(current, enabled=False) if current.enabled else None
+        return
+    endpoint = prompter.text(
+        # "<subject> — <what is being asked>", the shape every other follow-up question
+        # here uses ("elevenlabs/eleven-v3 — Base URL").
+        "Telemetry — OTLP/HTTP endpoint (the collector's base URL)",
+        default=current.endpoint or DEFAULT_TELEMETRY_ENDPOINT,
+    ).strip()
+    answers.telemetry = replace(current, enabled=True, endpoint=endpoint.rstrip("/"))
+
+
+def _otel_installed() -> bool:
+    """Whether the SDK is importable, without importing it.
+
+    ``find_spec`` on a submodule raises rather than returning ``None`` when the
+    *parent* is the missing one, which is the ordinary case here.
+    """
+    from importlib.util import find_spec
+
+    try:
+        return find_spec("opentelemetry.sdk") is not None
+    except ModuleNotFoundError:
+        return False
+
+
 def _ask_verify(args, prompter, answers: _Answers) -> None:
     """Decide *whether* to probe each key. The probing itself happens after the apply.
 
@@ -738,7 +844,7 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
         # at env:// keeps its key out of the filesystem entirely, which is the whole
         # reason that option exists.
         pending.append((credentials_path(), stores.render_accounts(raw_keys), write_private))
-    if answers.creds or answers.defaults:
+    if answers.creds or answers.defaults or answers.telemetry is not None:
         pending.append((config_path(), _render_config(answers), write_public))
 
     summary["skills"] = answers.plan
@@ -747,6 +853,14 @@ def _apply(args, answers: _Answers, summary: dict) -> None:
         _write_merged(path, text, writer, args, summary)
     summary["bindings"] = sorted(answers.creds)
     summary["defaults"] = dict(sorted(answers.defaults.items()))
+    # Reported as what it is — on or off, and where to — rather than as the whole
+    # table: the other fields were not asked about and saying them back would imply
+    # this run had an opinion about them.
+    summary["telemetry"] = (
+        {"enabled": answers.telemetry.enabled, "endpoint": answers.telemetry.endpoint or None}
+        if answers.telemetry is not None
+        else None
+    )
 
 
 def _render_config(answers: _Answers) -> str:
@@ -776,6 +890,9 @@ def _render_config(answers: _Answers) -> str:
     merged = existing.merged_with(
         bindings=bindings,
         defaults=dict(existing.defaults) | answers.defaults,
+        # ``None`` means the telemetry step had nothing to change, so the existing
+        # table rides along untouched — the same rule the bindings above follow.
+        telemetry=answers.telemetry if answers.telemetry is not None else existing.telemetry,
         path=config_path(), exists=True,
     )
     return render_config(merged, header=config_header())
@@ -826,6 +943,25 @@ def _probe_keys(wanted: dict[str, bool], prompter) -> dict:
     return out
 
 
+def _report_telemetry(summary: dict, prompter) -> None:
+    """Say what telemetry will do now, and name the one thing that would stop it.
+
+    The missing extra is repeated here on purpose. The question said so before the
+    answer; this says so after it, when there is something to run — and it is the same
+    fact ``notices[]`` would deliver, one command later, to whoever wondered why their
+    collector was empty.
+    """
+    telemetry = summary.get("telemetry")
+    if telemetry is None:
+        return
+    if not telemetry["enabled"]:
+        prompter.note("\nTelemetry is off; nothing is exported.")
+        return
+    prompter.note(f"\nTelemetry: traces and metrics to {telemetry['endpoint']}")
+    if not _otel_installed():
+        prompter.note(f"  install the SDK, or nothing is exported: pip install '{dist_name()}[{EXTRA}]'")
+
+
 def _report(summary: dict, prompter) -> None:
     dry = summary["dry_run"]
     verb = "would write" if dry else "wrote"
@@ -833,6 +969,7 @@ def _report(summary: dict, prompter) -> None:
         prompter.note(f"{verb} {path}")
     for path in summary["backed_up"]:
         prompter.note(f"backed up {path}")
+    _report_telemetry(summary, prompter)
     if summary["defaults"]:
         lines = "\n".join(f"  {scene:<24} {bid}" for scene, bid in summary["defaults"].items())
         prompter.note(f"\nCalls that name no binding will use:\n{lines}")
@@ -864,6 +1001,8 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--skills-only", action="store_true",
                     help="install or refresh Agent Skills without changing credentials or bindings")
     ap.add_argument("--skills-dest", default=None, help="Agent Skills destination directory; skip the destination prompt")
+    ap.add_argument("--telemetry-endpoint", dest="telemetry_endpoint", default=None,
+                    help="enable OpenTelemetry export to this OTLP/HTTP collector; skips the telemetry prompt")
     ap.add_argument("--dry-run", action="store_true", help="report what would be written without writing it")
     ap.add_argument("--non-interactive", action="store_true", help="never open a terminal UI")
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")

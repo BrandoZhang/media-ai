@@ -105,6 +105,7 @@ import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 
 from ..brand import cli_name, cmd, config_dir
@@ -113,7 +114,8 @@ from .errors import ErrorCategory, MediaError
 from .scene import Scene
 
 __all__ = [
-    "Config", "UserBinding", "config_path", "load_config", "render_config", "save_config", "snapshot",
+    "Config", "Exporter", "TelemetrySettings", "UserBinding", "config_path", "load_config",
+    "render_config", "save_config", "snapshot",
 ]
 
 SCHEMA = 2
@@ -178,6 +180,62 @@ class UpdateSettings:
     feed: str | None = None
 
 
+#: OTLP/HTTP on a collector's default port. A *base* URL: the per-signal paths
+#: (``/v1/traces``, ``/v1/metrics``, ``/v1/logs``) are appended by each exporter, so one
+#: setting configures all three the way OTel's own environment variables do.
+DEFAULT_TELEMETRY_ENDPOINT = "http://localhost:4318"
+
+#: Seconds allowed for the final flush at the end of a command.
+DEFAULT_TELEMETRY_TIMEOUT = 5
+
+
+class Exporter(str, Enum):
+    """Where the telemetry signals go."""
+
+    OTLP = "otlp"
+    #: Spans and metrics rendered to **stderr**. For CI, a bug report, or a machine with
+    #: no collector — never stdout, which carries the one JSON object.
+    CONSOLE = "console"
+    #: Record but export nothing. Spans still exist, so log lines still carry a trace id
+    #: that ties them together; nothing leaves the process.
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class TelemetrySettings:
+    """``[telemetry]`` — whether this machine exports traces/metrics/logs, and where.
+
+    Off by default, and the default is the whole argument: a CLI that exports on first
+    run ships the caller's prompts to a collector nobody declared. See
+    ``docs/OBSERVABILITY.md``.
+
+    Empty strings mean *unset* rather than *empty*, because two of these fields have a
+    resolution chain behind them (``endpoint`` falls back to
+    ``OTEL_EXPORTER_OTLP_ENDPOINT``, ``service`` to ``OTEL_SERVICE_NAME``) and a
+    distinction between "not configured" and "configured to nothing" is what lets the
+    chain run. :func:`media_ai.core.telemetry.settings.settings` is where that happens;
+    this dataclass is only what the file says.
+
+    ``timeout`` and ``sample_percent`` are integers, not floats or a ratio, because
+    :func:`save_config` cannot write a float (see :func:`render_config`) — a setting
+    this build reads but refuses to write back is one the next ``bindings add`` would
+    fail on, in a command about something else entirely.
+    """
+
+    enabled: bool = False
+    exporter: Exporter = Exporter.OTLP
+    endpoint: str = ""
+    service: str = ""
+    timeout: int = DEFAULT_TELEMETRY_TIMEOUT
+    sample_percent: int = 100
+    logs: bool = True
+
+    @property
+    def exports(self) -> bool:
+        """Whether anything actually leaves the process."""
+        return self.enabled and self.exporter is not Exporter.NONE
+
+
 @dataclass(frozen=True)
 class Config:
     bindings: dict[str, UserBinding] = field(default_factory=dict)
@@ -187,6 +245,7 @@ class Config:
     #: Top-level keys and tables this build does not model, kept verbatim so writing
     #: the config back does not delete them. See the module docstring.
     update: UpdateSettings = field(default_factory=UpdateSettings)
+    telemetry: TelemetrySettings = field(default_factory=TelemetrySettings)
     extra: dict = field(default_factory=dict)
 
     def default_for(self, scene: Scene) -> str | None:
@@ -215,7 +274,7 @@ def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
 _BINDING_KEYS = frozenset({"extends", "model_id", "endpoint_id", "base_url", "credential", "options"})
 
 #: The top-level keys this build models. Same rule, one level up.
-_TOP_KEYS = frozenset({"schema", "bindings", "defaults", "update"})
+_TOP_KEYS = frozenset({"schema", "bindings", "defaults", "update", "telemetry"})
 
 
 def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
@@ -281,6 +340,51 @@ def _parse_update(raw: object, path: Path) -> UpdateSettings:
     if feed is not None and (not isinstance(feed, str) or not feed):
         raise _fail(f"{path}: [update].feed must be a non-empty URL, got {feed!r}")
     return UpdateSettings(check=check, feed=feed)
+
+
+def _parse_telemetry(raw: object, path: Path) -> TelemetrySettings:
+    """Validate ``[telemetry]``, or return the defaults when it is absent.
+
+    Strict, like every other hand-editable table here, and for a sharper reason than
+    most: the failure this prevents is *silence*. ``exporter = "otel"`` (a plausible
+    typo for ``otlp``) read leniently would leave telemetry enabled, running, and
+    exporting nowhere — indistinguishable, from the outside, from a collector that is
+    down. The environment half of the same setting is deliberately lenient instead;
+    :func:`media_ai.core.telemetry.settings.settings` explains why the two differ.
+    """
+    if raw is None:
+        return TelemetrySettings()
+    if not isinstance(raw, dict):
+        raise _fail(f"{path}: [telemetry] must be a table")
+    values: dict = {}
+    for key, default in (("enabled", False), ("logs", True)):
+        value = raw.get(key, default)
+        if not isinstance(value, bool):
+            raise _fail(f"{path}: [telemetry].{key} must be true or false, got {value!r}")
+        values[key] = value
+    for key in ("endpoint", "service"):
+        value = raw.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise _fail(f"{path}: [telemetry].{key} must be a non-empty string, got {value!r}")
+        values[key] = value or ""
+    for key, default in (("timeout", DEFAULT_TELEMETRY_TIMEOUT), ("sample_percent", 100)):
+        value = raw.get(key, default)
+        # bool first: it is an int subclass, so `timeout = true` would otherwise be 1.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise _fail(f"{path}: [telemetry].{key} must be a non-negative integer, got {value!r}")
+        values[key] = value
+    if values["sample_percent"] > 100:
+        raise _fail(f"{path}: [telemetry].sample_percent must be 0-100, got {values['sample_percent']!r}")
+    exporter = raw.get("exporter")
+    if exporter is not None:
+        try:
+            values["exporter"] = Exporter(str(exporter).strip().lower())
+        except ValueError:
+            raise _fail(
+                f"{path}: [telemetry].exporter must be one of "
+                f"{', '.join(e.value for e in Exporter)}, got {exporter!r}"
+            ) from None
+    return TelemetrySettings(**values)
 
 
 def _reject_v1(data: dict, path: Path) -> None:
@@ -506,6 +610,7 @@ def _build_config(data: dict, path: Path) -> Config:
         path=path,
         exists=True,
         update=_parse_update(data.get("update"), path),
+        telemetry=_parse_telemetry(data.get("telemetry"), path),
         extra={k: v for k, v in data.items() if k not in _TOP_KEYS},
     )
 
@@ -615,6 +720,20 @@ def render_config(config: Config, *, header: str | None = None) -> str:
         data["update"] = {
             k: v for k, v in (("check", update.check), ("feed", update.feed))
             if v != getattr(UpdateSettings(), k)
+        }
+    # Same rule as `[update]`: written only when it differs from the defaults, and then
+    # only the fields that do. `exporter` goes out as its string value — the enum is how
+    # this build models it, not what the file format says.
+    if (telemetry := config.telemetry) != TelemetrySettings():
+        data["telemetry"] = {
+            k: (v.value if isinstance(v, Exporter) else v)
+            for k, v in (
+                ("enabled", telemetry.enabled), ("exporter", telemetry.exporter),
+                ("endpoint", telemetry.endpoint), ("service", telemetry.service),
+                ("timeout", telemetry.timeout), ("sample_percent", telemetry.sample_percent),
+                ("logs", telemetry.logs),
+            )
+            if v != getattr(TelemetrySettings(), k)
         }
     for key, value in config.extra.items():
         data.setdefault(key, value)

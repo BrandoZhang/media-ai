@@ -113,7 +113,14 @@ def _ledger(tmp_path, monkeypatch, request):
         return tmp_path / "usage.jsonl"
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
                 "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL",
-                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_CONFIG_FILE"):
+                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_CONFIG_FILE",
+                # Telemetry is off unless a test says otherwise. Left set, a developer's
+                # own `MEDIA_TELEMETRY=1` would make the suite boot an SDK and try to
+                # reach their collector — and `OTEL_EXPORTER_OTLP_ENDPOINT` is exactly
+                # the variable a machine with one already exports globally.
+                "MEDIA_TELEMETRY", "MEDIA_TELEMETRY_EXPORTER", "MEDIA_TELEMETRY_ENDPOINT",
+                "MEDIA_TELEMETRY_TIMEOUT", "MEDIA_LOG_FORMAT", "MEDIA_LOG_LEVEL",
+                "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME"):
         monkeypatch.delenv(var, raising=False)
     # A test that never writes a config still gets an empty one, so nothing reads the
     # developer's real ~/.config/media-ai while the suite runs. Both files, not just the
@@ -132,6 +139,24 @@ def _ledger(tmp_path, monkeypatch, request):
     monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "no-such-feed.json").as_uri())
     registry.reset_catalog()
     return tmp_path / "usage.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _telemetry_is_not_left_running():
+    """No test hands the next one a booted SDK.
+
+    The runtime is a module global — one per process, as a CLI wants — so a test that
+    enables telemetry and fails before its own teardown would otherwise leave every
+    later test exporting into its exporter. Shutting down after each is cheap (a no-op
+    when nothing booted) and makes the state per-test rather than per-session.
+    """
+    from media_ai.core import telemetry
+
+    telemetry.shutdown()
+    try:
+        yield
+    finally:
+        telemetry.shutdown()
 
 
 @pytest.fixture(autouse=True)

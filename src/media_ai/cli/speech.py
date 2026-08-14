@@ -14,9 +14,7 @@ from pathlib import Path
 
 from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
-from ..core.logging import get_logger
 from ..core.types import DialogueRequest, DialogueTurn, SpeechRequest
-from ..core.validate import validate_request
 from . import common
 
 
@@ -68,9 +66,8 @@ def _do_generate(args) -> object:
         timestamps=args.timestamps, options=common.parse_options(args.option),
     )
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
-        get_logger().warning("unsupported (proceeding): %s", w)
-    return common.stamp(adapter.generate_speech(req), rb, scene)
+    common.check(req, args, rb, scene)
+    return common.produce(adapter.generate_speech, req, rb, scene)
 
 
 def _do_dialogue(args) -> object:
@@ -91,9 +88,8 @@ def _do_dialogue(args) -> object:
     # No "resolve the provider but keep the model" dance any more: dialogue is its own
     # scene, so its default binding is a different entry from plain speech.
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
-        get_logger().warning("unsupported (proceeding): %s", w)
-    return common.stamp(adapter.generate_dialogue(req), rb, scene)
+    common.check(req, args, rb, scene)
+    return common.produce(adapter.generate_dialogue, req, rb, scene)
 
 
 def _parse_dialogue(args) -> tuple[dict, list[DialogueTurn], str | None]:

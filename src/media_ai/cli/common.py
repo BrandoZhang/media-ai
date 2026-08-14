@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 
 from .. import __version__
 from ..brand import cli_name, cmd
-from ..core import notices
+from ..core import notices, telemetry
 from ..core.errors import ErrorCategory, MediaError
-from ..core.logging import configure, get_logger
+from ..core.logging import FORMATS, configure, get_logger
 from ..core.result import error_payload
 from ..core.types import GeometrySpec, MediaRef
 from ..core.validate import UnsupportedPolicy
@@ -120,6 +121,8 @@ def add_global_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--model", default=None, help="model name; used alone only when one binding serves it")
     ap.add_argument("--pretty", action="store_true", help="pretty-print the JSON result")
     ap.add_argument("--log-level", default=None, help="debug|info|warning|error")
+    ap.add_argument("--log-format", dest="log_format", default=None, choices=list(FORMATS),
+                    help="stderr log rendering (default: text); stdout is one JSON object either way")
     ap.add_argument("--verbose", action="store_true",
                     help="print redacted binding and HTTP request diagnostics to stderr")
     ap.add_argument("--metadata-out", default=None, help="also write the result JSON to this path (secret-free)")
@@ -147,26 +150,53 @@ def bind(args, req):
     from ..core.scene import derive_scene
 
     scene = derive_scene(req)
-    cat, config = catalog(), load_config()
-    available = available_bindings(cat, config)
-    rb = resolve(
-        binding=getattr(args, "binding", None),
-        provider=getattr(args, "provider", None),
-        model=getattr(args, "model", None),
-        scene=scene, catalog=cat, config=config,
-    )
-    rb.check_scene(scene, available)
-    # Two sources say a binding is on its way out, and only one of them speaks per
-    # call: the feed knows about withdrawals that happened after this build shipped, so
-    # when it has an opinion the manifest's older one adds nothing but a second line.
-    if not _enforce_published_policy(args, rb, available):
-        _note_declared_deprecation(rb, available)
-    req.model = rb.model_id
-    get_logger().debug(
-        "binding resolved: binding=%s scene=%s provider=%s base_url=%s wire_id=%s",
-        rb.id, scene.value, rb.provider.name, rb.base_url, rb.model_id,
-    )
-    return build_adapter(rb), rb, scene
+    with telemetry.span("binding.resolve", scene=scene.value, chosen_by=_addressed_by(args)) as sp:
+        cat, config = catalog(), load_config()
+        available = available_bindings(cat, config)
+        rb = resolve(
+            binding=getattr(args, "binding", None),
+            provider=getattr(args, "provider", None),
+            model=getattr(args, "model", None),
+            scene=scene, catalog=cat, config=config,
+        )
+        rb.check_scene(scene, available)
+        sp.set(binding=rb.id, provider=rb.provider.name, wire_id=rb.model_id)
+        telemetry.event(telemetry.BINDING_RESOLVED, binding=rb.id, scene=scene.value,
+                        provider=rb.provider.name,
+                        # Which of the three addressing routes was used, because the
+                        # interesting case is the fourth: nobody named anything and the
+                        # scene default chose. That is the call whose binding is a
+                        # surprise when the result looks different from last week.
+                        chosen_by=_addressed_by(args))
+        # Two sources say a binding is on its way out, and only one of them speaks per
+        # call: the feed knows about withdrawals that happened after this build shipped,
+        # so when it has an opinion the manifest's older one adds nothing but a second
+        # line.
+        if not _enforce_published_policy(args, rb, available):
+            _note_declared_deprecation(rb, available)
+        req.model = rb.model_id
+        get_logger().debug(
+            "binding resolved: binding=%s scene=%s provider=%s base_url=%s wire_id=%s",
+            rb.id, scene.value, rb.provider.name, rb.base_url, rb.model_id,
+        )
+        return build_adapter(rb), rb, scene
+
+
+def _addressed_by(args) -> str:
+    """How this call named its binding: ``binding``, ``provider+model``, or ``default``.
+
+    A bounded set of four values, so it can label a metric — and the one worth counting
+    is ``default``, where the CLI chose from ``[defaults]`` and no argv names the model
+    that ran.
+    """
+    if getattr(args, "binding", None):
+        return "binding"
+    provider, model = getattr(args, "provider", None), getattr(args, "model", None)
+    if provider and model:
+        return "provider+model"
+    if provider or model:
+        return "partial"
+    return "default"
 
 
 def _enforce_published_policy(args, rb, available) -> bool:
@@ -272,6 +302,98 @@ def _how_to_switch(alternatives: list[str], available) -> str:
     if configured:
         return cmd("capabilities", "--binding", configured[0])
     return cmd("bindings", "available")
+
+
+def check(req, args, rb, scene):
+    """Validate a request against its binding's manifest, before any network call.
+
+    One copy of what every generation command used to spell out for itself: run
+    :func:`~media_ai.core.validate.validate_request`, log whatever it lets through, and
+    say so as an event. Consolidated when the event was added, because eight copies of
+    a three-line loop are eight places for the ninth command to be instrumented
+    differently — and the count of tolerated-but-unsupported options is the number that
+    explains an odd-looking result later.
+    """
+    from ..core.validate import validate_request
+
+    unsupported = policy(args)
+    warnings = list(validate_request(req, rb.spec.constraints, unsupported, binding=rb.id, scene=scene))
+    for w in warnings:
+        get_logger().warning("unsupported (proceeding): %s", w)
+    telemetry.event(telemetry.REQUEST_VALIDATED, binding=rb.id, scene=scene.value,
+                    policy=unsupported.value, unsupported=len(warnings))
+    return warnings
+
+
+def produce(operation, req, rb, scene, *, name: str | None = None):
+    """Run one adapter operation, stamp its result, and count what it made.
+
+    Every generation command ends in this call, which is why the provider span, the
+    latency histogram and the artifact counters live here rather than in each of the
+    eight command modules. ``operation`` is the bound method
+    (``adapter.generate_image``) — its ``__name__`` becomes the span's, so nothing has
+    to restate it.
+
+    ``req`` may be ``None``, for the one operation that does not take a request object:
+    ``video concat`` passes its inputs as several arguments, so it hands over a bound
+    callable and a ``name``. Worth the extra parameter rather than a second
+    instrumentation site — concat is the scene most likely to be run in a batch, and a
+    dashboard missing it would be missing exactly the calls somebody ran a hundred of.
+
+    The failure path is deliberately *not* handled: a :class:`MediaError` propagates to
+    ``run``, which owns the JSON contract and the exit code. This only records that the
+    call happened and how it went.
+    """
+    # An explicit name wins: a lambda has a ``__name__`` too, and it is ``<lambda>``.
+    name = name or getattr(operation, "__name__", None) or "call"
+    started = time.monotonic()
+    labels = {"binding": rb.id, "provider": rb.provider.name, "scene": scene.value if scene else None}
+    with telemetry.span(f"provider.{name}", **labels, wire_id=rb.model_id) as sp:
+        try:
+            result = operation(req) if req is not None else operation()
+        except BaseException as exc:
+            _record_call(name, labels, started, outcome="error", error=exc)
+            raise
+        _record_call(name, labels, started, outcome="ok")
+        sp.set(**_artifact_totals(result))
+        _record_artifacts(result, labels)
+        return stamp(result, rb, scene)
+
+
+def _record_call(name: str, labels: dict, started: float, *, outcome: str, error: BaseException | None = None) -> None:
+    elapsed_ms = (time.monotonic() - started) * 1000
+    category = getattr(getattr(error, "category", None), "value", None)
+    telemetry.event(telemetry.PROVIDER_CALL, operation=name, outcome=outcome,
+                    duration_ms=round(elapsed_ms, 1), **{"error.category": category}, **labels)
+    telemetry.count("media_ai.provider.calls", outcome=outcome, **labels, **{"error.category": category})
+    telemetry.observe("media_ai.provider.duration", elapsed_ms, outcome=outcome, **labels)
+
+
+def _artifact_totals(result) -> dict:
+    artifacts = list(getattr(result, "artifacts", None) or [])
+    return {"artifacts": len(artifacts), "artifact_bytes": sum(int(a.bytes or 0) for a in artifacts)}
+
+
+def _record_artifacts(result, labels: dict) -> None:
+    """Count the files a call produced, grouped by kind.
+
+    From ``artifacts[]`` and nowhere else — the machine contract says every produced
+    file is an entry there, so a count taken from it cannot disagree with what the
+    caller was told. A submit that returns a :class:`~media_ai.core.result.JobHandle`
+    has no artifacts yet and is reported as the job it is instead.
+    """
+    if getattr(result, "id", None) and not getattr(result, "artifacts", None):
+        telemetry.event(telemetry.JOB_SUBMITTED, job_id=result.id, status=getattr(result, "status", None), **labels)
+        return
+    by_kind: dict[str, list[int]] = {}
+    for artifact in getattr(result, "artifacts", None) or []:
+        by_kind.setdefault(artifact.kind, []).append(int(artifact.bytes or 0))
+    for kind, sizes in by_kind.items():
+        telemetry.count("media_ai.artifacts", len(sizes), kind=kind, **labels)
+        telemetry.count("media_ai.artifact.bytes", sum(sizes), kind=kind, **labels)
+    if by_kind:
+        telemetry.event(telemetry.ARTIFACT_WRITTEN, count=sum(len(s) for s in by_kind.values()),
+                        kinds=sorted(by_kind), **labels)
 
 
 def stamp(result, rb, scene=None):
@@ -431,7 +553,14 @@ def parse_args(parser: argparse.ArgumentParser, argv=None):
     rather than an empty stream. Human-readable detail stays on stderr.
     """
     try:
-        return parser.parse_args(argv)
+        args = parser.parse_args(argv)
+        # The command, from the parser rather than from ``sys.argv``: the umbrella
+        # dispatcher rewrites argv[0], a direct ``python -m media_ai.cli.image`` does
+        # not, and telemetry needs the same answer either way. Bounded by construction —
+        # it is a group and a subcommand, never a prompt or a path — which is what makes
+        # it usable as a span name and a metric label.
+        args._command = _command_of(parser, args)
+        return args
     except SystemExit as e:
         if e.code in (0, None):  # --help / --version: leave stdout behavior as-is
             raise
@@ -440,26 +569,45 @@ def parse_args(parser: argparse.ArgumentParser, argv=None):
         raise SystemExit(err.exit_code) from None
 
 
+def _command_of(parser: argparse.ArgumentParser, args) -> str:
+    """``image.generate`` — the group from the parser's ``prog``, the op from the args."""
+    group = (parser.prog or "").split()[-1] if parser.prog else ""
+    op = getattr(args, "op", None)
+    return f"{group}.{op}" if group and op else (group or "?")
+
+
 def run(build_and_call, args) -> int:
-    """Configure logging, run the command, and turn any failure into the JSON
-    error contract + a category-specific exit code.
+    """Configure logging and telemetry, run the command, and turn any failure into the
+    JSON error contract + a category-specific exit code.
 
     The whole of it runs inside ``config.snapshot()``, so an invocation has one view of
     the configuration — the command body and the notice sources that run on the way out
     included. The emit is inside the block deliberately: the notices are computed there,
     and one of them asks the config whether update checking is on.
+
+    ``telemetry.invocation`` is *inside* the snapshot for the same reason: whether
+    telemetry is on is a config question, and it must be the same answer the rest of the
+    command reads. It is outside the ``try`` because it owns the flush — a command that
+    fails is exactly the one whose spans have to survive, and a ``finally`` around the
+    whole block is the only place that is true of every path out of here.
     """
     from ..core.config import snapshot
 
-    configure("debug" if getattr(args, "verbose", False) else getattr(args, "log_level", None))
-    with snapshot():
+    configure("debug" if getattr(args, "verbose", False) else getattr(args, "log_level", None),
+              fmt=getattr(args, "log_format", None))
+    with snapshot(), telemetry.invocation(getattr(args, "_command", "?")) as inv:
         try:
             result = build_and_call(args)
-            return emit_result(result, args)
+            return inv.finish(emit_result(result, args))
         except MediaError as e:
-            return emit_error(e, args)
+            inv.failed(e)
+            return inv.finish(emit_error(e, args))
         except KeyboardInterrupt:
-            return emit_error(MediaError("interrupted", category=ErrorCategory.TIMEOUT), args)
+            err = MediaError("interrupted", category=ErrorCategory.TIMEOUT)
+            inv.failed(err)
+            return inv.finish(emit_error(err, args))
         except Exception as e:  # noqa: BLE001 - last-resort: never leak a raw traceback to stdout
             get_logger().exception("unexpected error")
-            return emit_error(MediaError(str(e) or e.__class__.__name__, category=ErrorCategory.UNKNOWN), args)
+            err = MediaError(str(e) or e.__class__.__name__, category=ErrorCategory.UNKNOWN)
+            inv.failed(err)
+            return inv.finish(emit_error(err, args))

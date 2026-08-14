@@ -35,6 +35,16 @@ media-ai = "media_ai.__main__:main"
 [project.optional-dependencies]
 test = ["pytest>=7"]
 keychain = ["keyring>=24"]
+# Observability (docs/OBSERVABILITY.md). An extra, not a dependency: this CLI depends
+# on Pillow and a bundled ffmpeg and nothing else, an install that never exports should
+# not carry a tree several times its own size, and an install that cannot reach an index
+# should still generate images. With telemetry off the SDK is never imported; with it on
+# and the SDK absent the CLI degrades to a no-op and says so in `notices[]`.
+# The floor is 1.20 for the stable OTLP/HTTP exporter entry points this uses.
+otel = [
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-http>=1.20",
+]
 
 # Dev tooling for the uv workflow (installed by default by `uv sync`).
 # The `test` extra above is kept for the pip / CI path.

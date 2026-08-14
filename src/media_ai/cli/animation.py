@@ -24,9 +24,7 @@ from pathlib import Path
 
 from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
-from ..core.logging import get_logger
 from ..core.types import AnimationRequest, MediaRef
-from ..core.validate import validate_request
 from ..media.animation import CONTAINER_NAMES, KEY_MODES, SCALE_FILTERS
 from . import common
 
@@ -122,9 +120,8 @@ def _do(args) -> object:
         options=common.parse_options(args.option),
     )
     adapter, rb, scene = common.bind(args, req)
-    for w in validate_request(req, rb.spec.constraints, common.policy(args), binding=rb.id, scene=scene):
-        get_logger().warning("unsupported (proceeding): %s", w)
-    return common.stamp(adapter.generate_animation(req), rb, scene)
+    common.check(req, args, rb, scene)
+    return common.produce(adapter.generate_animation, req, rb, scene)
 
 
 def main() -> int:

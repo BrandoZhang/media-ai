@@ -54,6 +54,35 @@ def record_usage(entry: dict) -> None:
             f.write(line)
     except Exception:  # noqa: BLE001 - accounting must never break generation
         pass
+    _mirror(entry)
+
+
+def _mirror(entry: dict) -> None:
+    """Report the same line as telemetry, after the ledger has it.
+
+    The ledger stays the source of truth for cost: it is written by a process that may
+    never have had a collector, and ``<cli> usage`` reads it back with no infrastructure
+    at all. Telemetry mirrors it rather than replacing it — and mirrors it *here*,
+    because this is already the single funnel every adapter reaches through
+    ``Adapter.record``, so the counter cannot come to disagree with the file.
+
+    After the write, and outside its ``try``, so the order of the two is not in
+    question: a ledger line is never lost to a telemetry failure, and neither can raise.
+    """
+    from . import telemetry
+
+    tokens = int(entry.get("total_tokens", 0) or 0)
+    binding, scene = entry.get("binding"), entry.get("scene")
+    if tokens:
+        telemetry.count("media_ai.usage.tokens", tokens, binding=binding, scene=scene)
+    telemetry.event(
+        telemetry.USAGE_RECORDED, binding=binding, scene=scene, model=entry.get("model"),
+        total_tokens=tokens or None,
+        # The three units this project actually bills in, alongside tokens. Absent keys
+        # stay absent: a `0` here would be a claim that a call generated no images,
+        # which is not the same as a call that was never about images.
+        **{k: entry.get(k) for k in ("generated_images", "seconds", "characters") if entry.get(k)},
+    )
 
 
 def summarize_usage(path: Path | None = None) -> dict:

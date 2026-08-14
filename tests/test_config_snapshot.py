@@ -139,12 +139,20 @@ def test_a_whole_command_reads_the_config_once(cfg, reads, capsys):
 
 
 def test_run_leaves_no_snapshot_behind(cfg, reads, capsys):
-    """``run()`` is called in-process by tests and by embedders, not only by a shell."""
+    """``run()`` is called in-process by tests and by embedders, not only by a shell.
+
+    Counted as a delta rather than a total: ``run()`` itself now reads the config once,
+    for ``[telemetry]``, even when the command body reads nothing. That read is inside
+    the snapshot — ``test_a_whole_command_reads_the_config_once`` is what holds it there
+    — and what this test is about is the two reads *after* the block, which have to be
+    two reads and not a cached one.
+    """
     common.run(lambda args: {"ok": True}, _args())
     capsys.readouterr()
+    during = len(reads)
     load_config()
     load_config()
-    assert len(reads) == 2
+    assert len(reads) - during == 2
 
 
 def _args():
