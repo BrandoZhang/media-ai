@@ -66,6 +66,24 @@ def test_an_unknown_top_level_table_survives_a_write(cfg):
     assert roundtrip(cfg)["telemetry"] == {"enabled": False, "sample_rate": 10}
 
 
+def test_a_provenance_table_a_distribution_wrote_survives(cfg):
+    """The shape `docs/EXTENDING.md` tells a provisioner to use, in the shape it uses it.
+
+    A distribution that writes this file from its own service may want to record which
+    entries are *its* — so a later push can tell them from what a user typed. This
+    project deliberately models no such table: the rules are the distribution's, and a
+    schema here would only constrain them. Preservation is what makes that answer
+    correct, and lists of names are the part of it worth pinning, because that is the
+    shape an ownership record actually takes and the writer's subset is narrow.
+    """
+    write(cfg, f'schema = {SCHEMA}\n\n[acme]\nsource = "https://config.internal/x"\n'
+               'owns = ["acme/fast", "acme/pro"]\n')
+    assert roundtrip(cfg)["acme"] == {
+        "source": "https://config.internal/x",
+        "owns": ["acme/fast", "acme/pro"],
+    }
+
+
 def test_an_unknown_top_level_scalar_survives_a_write(cfg):
     write(cfg, f'schema = {SCHEMA}\nprofile = "team"\n')
     assert roundtrip(cfg)["profile"] == "team"

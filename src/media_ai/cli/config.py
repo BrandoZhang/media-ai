@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _show(args) -> dict:
     config = load_config()
-    out = {
+    return {
         "ok": True, "schema_version": SCHEMA_VERSION,
         "config": str(config_path()),
         "exists": config.exists,
@@ -52,12 +52,6 @@ def _show(args) -> dict:
         },
         "defaults": dict(sorted(config.defaults.items())),
     }
-    # Absent unless an organisation wrote part of this file, which is the only state
-    # most installations are ever in. Reported because "why is this binding here — I
-    # never added it?" is otherwise a question the file can answer and no command does.
-    if config.managed is not None:
-        out["managed"] = config.managed.to_dict()
-    return out
 
 
 def _scenes_named(raw: str) -> list[Scene]:
