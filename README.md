@@ -263,6 +263,7 @@ media-ai usage
 - [docs/EXTENDING.md](docs/EXTENDING.md) — add a model or a whole backend (no core changes)
 - [docs/LIVE_TESTS.md](docs/LIVE_TESTS.md) — real-API validation log (all providers)
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — unresolved provider-specific items
+- [docs/history/](docs/history/) — design records for changes already shipped. Kept for the arguments, not as a description of the current system
 
 ## Adding a model, or a whole backend
 
