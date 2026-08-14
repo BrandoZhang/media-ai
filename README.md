@@ -155,7 +155,7 @@ media-ai animation export --input clip.mp4 --output demo.webp --max-width 640 --
 media-ai animation export --frames matted/ --output sticker.gif --transparent
 media-ai job    query   --binding <id> --id <op> --output clip.mp4
 media-ai bindings       list | available | add <id> --credential env://VAR
-media-ai config         show | set-default <scene|group> <binding> | migrate [--dry-run]
+media-ai config         show | set-default <scene|group> <binding> | migrate [--dry-run]   # migrate covers credentials.toml too
 media-ai capabilities   [--binding ID] [--scene S] [--configured]
 media-ai usage
 media-ai init           [--skills-only] [--advanced] [--verify]

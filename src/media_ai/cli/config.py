@@ -6,7 +6,9 @@ this CLI makes on anyone's behalf, and it is made here, once, in writing.
 
 ``migrate`` is the other half of the schema door: an ordinary read converts what it can
 without touching the file, and anything it cannot is sent here, where the rewrite has a
-name and a ``--dry-run``.
+name and a ``--dry-run``. It covers ``credentials.toml`` as well — "my configuration"
+is both files from outside, and the secret one deliberately has no command group of its
+own to put the other half in.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from ..core.registry import catalog
 from ..core.resolve import available_bindings
 from ..core.result import SCHEMA_VERSION
 from ..core.scene import Scene
+from ..credentials.stores import SCHEMA as CREDENTIALS_SCHEMA
 from . import common
 from .bindings import config_header
 
@@ -32,7 +35,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sd.add_argument("scene", help="e.g. video.text_to_video, or a group like 'video' for all its scenes")
     sd.add_argument("binding", help="the binding id to use")
     common.add_global_args(sd)
-    mig = sub.add_parser("migrate", help=f"bring config.toml up to the schema this build reads ({SCHEMA})")
+    mig = sub.add_parser(
+        "migrate",
+        help=f"bring config.toml (schema {SCHEMA}) and credentials.toml "
+             f"(schema {CREDENTIALS_SCHEMA}) up to the shapes this build reads",
+    )
     mig.add_argument("--dry-run", action="store_true", help="report what would change, and write nothing")
     common.add_global_args(mig)
     return ap
@@ -116,21 +123,48 @@ def _set_default(args) -> dict:
 
 
 def _migrate(args) -> dict:
-    """Convert the config file, or say that there is nothing to convert.
+    """Convert both files this tool owns, or say there is nothing to convert.
 
-    Exits 0 when the file is already current. "Nothing to do" is the success case of a
+    Both, because "my configuration" is `config.toml` *and* `credentials.toml` from
+    outside, and two commands for two files is an implementation detail leaking into
+    the surface. There is deliberately no `credentials` command group to put the other
+    half in — the secret file is kept off the CLI on purpose, and migration is the only
+    thing it needs from out here.
+
+    Nothing is written unless *both* can be, which is the rule `init` follows for the
+    same two files: a dry pass first, so a document that cannot be converted fails with
+    neither file touched rather than with one of them half-way.
+
+    Exits 0 when they are already current. "Nothing to do" is the success case of a
     command whose whole job is to make a thing true, and a script that runs this before
     every start would otherwise have to special-case the ordinary answer.
     """
-    report = migrate_file(dry_run=args.dry_run)
+    from ..credentials import stores
+
+    runs = ((migrate_file, "config.toml"), (stores.migrate_file, "credentials.toml"))
+    planned = [run(dry_run=True) for run, _ in runs]
+    if not any(report.present for report in planned):
+        raise MediaError(
+            f"neither {config_path()} nor {stores.credentials_path()} exists; nothing to migrate",
+            category=ErrorCategory.CLI, code="config_absent",
+        )
+    reports = planned if args.dry_run else [run(dry_run=False) for run, _ in runs]
     return {
         "ok": True, "schema_version": SCHEMA_VERSION,
-        "config": str(report.path),
-        "from_schema": report.frm,
-        "to_schema": report.to,
-        "migrated": report.applied,
-        "steps": list(report.steps),
-        "backup": str(report.backup) if report.backup else None,
+        "migrated": any(report.applied for report in reports),
+        "files": [
+            {
+                "document": name,
+                "path": str(report.path),
+                "present": report.present,
+                "from_schema": report.frm,
+                "to_schema": report.to,
+                "migrated": report.applied,
+                "steps": list(report.steps),
+                "backup": str(report.backup) if report.backup else None,
+            }
+            for (_, name), report in zip(runs, reports, strict=True)
+        ],
     }
 
 

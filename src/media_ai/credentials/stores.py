@@ -29,6 +29,25 @@ has to be rewritten on read, and a file this tool wrote in 2026 keeps working. T
 appears the next time something legitimately writes the file. Reading never writes it
 — see :func:`check_schema`.
 
+Converting one
+--------------
+
+The promise above — *convertible rather than replaced* — had nowhere to land until
+there was a registry to land in. :mod:`media_ai.core.migrations` is now that registry,
+shared with ``config.toml`` because the question is identical, and the stakes are not:
+a config can be re-derived by re-running setup, while a refusal here is a refusal to
+read keys that may have been issued once.
+
+Reading applies the **lossless** steps in memory and never writes, exactly as the
+config path does. A step that needs a decision refuses and points at ``config
+migrate``, which converts both files.
+
+There is deliberately **no ``media-ai credentials`` command group**. The keys are kept
+out of the CLI surface on purpose — an agent driving this tool can run any command it
+likes, and a group whose whole subject is the secret file is the one thing worth not
+handing it. Migration is the only operation this file needs from outside, and it
+belongs to the command that already converts the other one.
+
 Writing it
 ----------
 
@@ -52,9 +71,10 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
-from ..brand import cli_name, config_dir
+from ..brand import cli_name, cmd, config_dir
 from ..core.errors import ErrorCategory, MediaError
 
 __all__ = [
@@ -62,6 +82,7 @@ __all__ = [
     "check_schema",
     "credentials_header",
     "credentials_path",
+    "migrate_file",
     "named_account",
     "register_secret_backend",
     "registered_schemes",
@@ -104,8 +125,7 @@ def _read() -> dict:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
         raise MediaError(f"could not parse {path}: {exc}", category=ErrorCategory.AUTH) from exc
-    check_schema(data, path)
-    return data
+    return _migrate(data, path)
 
 
 def check_schema(data: dict, path: Path) -> int:
@@ -119,6 +139,11 @@ def check_schema(data: dict, path: Path) -> int:
     A newer file gets its own answer. "Upgrade" and "re-run setup" are opposite
     instructions, and giving the second one to somebody whose file is *ahead* of their
     CLI talks them into overwriting the good copy.
+
+    An *older* file is not this function's business: it validates the number and hands
+    it back, and :func:`_migrate` decides whether it can be converted. Two questions,
+    two places — "is this an integer from a build I can read" and "can I get from there
+    to here" have different answers and different remedies.
     """
     declared = data.get(_RESERVED, SCHEMA)
     # bool before int: it is an int subclass, so `schema = true` would read as 1.
@@ -134,13 +159,38 @@ def check_schema(data: dict, path: Path) -> int:
             f"Upgrade {cli_name()} rather than re-running setup, which would rewrite it in the older shape.",
             category=ErrorCategory.AUTH, code="credentials_from_newer_build",
         )
-    if declared < SCHEMA:
-        raise MediaError(
-            f"{path} is written in {_RESERVED} {declared}; this build reads {SCHEMA} and has no "
-            f"conversion for it.",
-            category=ErrorCategory.AUTH, code="credentials_schema_outdated",
-        )
     return declared
+
+
+def _migrate(data: dict, path: Path) -> dict:
+    """Bring a parsed credentials file up to :data:`SCHEMA`, in memory only.
+
+    The same door as ``config.toml``'s, with one asymmetry that matters: the answer to
+    a refusal there is "re-run setup", and here there is no such answer — the keys came
+    from somewhere else. So the message never suggests starting over, and a document
+    with no conversion says only what is true, which is that this build cannot read it.
+    """
+    from ..core.migrations import CREDENTIALS, UNMIGRATABLE, plan
+
+    frm = check_schema(data, path)
+    if frm == SCHEMA:
+        return data
+    steps = plan(CREDENTIALS, frm, SCHEMA)
+    if steps and all(s.lossless for s in steps):
+        for step in steps:
+            data = step.apply(data)
+        return data
+
+    head = f"{path} is written in {_RESERVED} {frm}; this build reads {SCHEMA}"
+    if steps:
+        detail = (f". Converting it needs a decision that cannot be made for you — "
+                  f"run `{cmd('config', 'migrate')}` to see it.")
+    elif why := UNMIGRATABLE[CREDENTIALS].get(frm):
+        detail = f" ({why}). The keys in it have to be re-entered by hand."
+    else:
+        detail = (f" and has no conversion for it. Upgrade {cli_name()} if a later build has one — "
+                  "do not delete the file, its keys may not be reissuable.")
+    raise MediaError(head + detail, category=ErrorCategory.AUTH, code="credentials_schema_outdated")
 
 
 def named_account(name: str, *, _seen: frozenset[str] = frozenset()) -> str | None:
@@ -286,11 +336,12 @@ def render_accounts(accounts: Mapping[str, object], *, replace: bool = False,
     fresh = _accounts(accounts)
     existing = {} if replace else _existing_for_write(path)
     if not replace:
-        # Checked before the merge and stamped after. Before, because merging into a
+        # Converted before the merge and stamped after. Before, because merging into a
         # file this build cannot read correctly would rewrite it in the older shape and
         # take the keys with it — the one thing here a user cannot reconstruct. After,
         # because what comes out was written by *this* build, whatever went in claimed.
-        check_schema(existing, path)
+        # A file the conversion cannot handle raises here, with the original untouched.
+        existing = _migrate(existing, path)
     data = {**existing, **fresh, _RESERVED: SCHEMA}
     try:
         return dumps(data, header=credentials_header() if header is None else header)
@@ -332,3 +383,60 @@ def save_accounts(accounts: Mapping[str, object], *, replace: bool = False,
         saved = backup(path, mode_ceiling=0o600)
     write_private(path, text)
     return saved
+
+
+@dataclass(frozen=True)
+class MigrationReport:
+    """What converting this file found, and what it did about it."""
+
+    path: Path
+    present: bool
+    frm: int
+    to: int
+    steps: tuple[str, ...]
+    applied: bool
+    backup: Path | None = None
+
+
+def migrate_file(*, dry_run: bool = False) -> MigrationReport:
+    """Convert ``credentials.toml`` to :data:`SCHEMA`, in place. Driven by ``config migrate``.
+
+    An absent file is reported, not raised: this runs beside the config's own
+    conversion, and a machine that keeps every key in the environment legitimately has
+    no such file. Failing the whole command over it would make ``config migrate``
+    unusable exactly where nothing is wrong.
+
+    The converted document goes back out through :func:`save_accounts` rather than
+    straight to disk. That is the one writer, so this inherits its rules by
+    construction instead of by remembering them: the accounts are validated before
+    anything is written (a bad step fails with the original still there), the file
+    lands 0600, and the backup is capped at 0600 rather than inheriting a mode the
+    rewrite may be repairing.
+    """
+    path = credentials_path()
+    if not path.is_file():
+        return MigrationReport(path=path, present=False, frm=SCHEMA, to=SCHEMA, steps=(), applied=False)
+
+    data = _existing_for_write(path)
+    frm = check_schema(data, path)
+    if frm == SCHEMA:
+        return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA, steps=(), applied=False)
+
+    from ..core.migrations import CREDENTIALS, plan
+
+    steps = plan(CREDENTIALS, frm, SCHEMA)
+    if steps is None:
+        # Same message the read path gives, from the one function that composes it.
+        _migrate(data, path)
+        raise AssertionError("unreachable: _migrate raises for a chain it cannot complete")
+
+    for step in steps:
+        data = step.apply(data)
+    accounts = {name: value for name, value in data.items() if name != _RESERVED}
+    summaries = tuple(s.summary for s in steps)
+    if dry_run:
+        render_accounts(accounts, replace=True)  # validate only; nothing is written
+        return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA, steps=summaries, applied=False)
+    saved = save_accounts(accounts, replace=True)
+    return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA,
+                           steps=summaries, applied=True, backup=saved)

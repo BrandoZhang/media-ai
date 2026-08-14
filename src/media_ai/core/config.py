@@ -332,11 +332,11 @@ def _migrate(data: dict, *, frm: int, path: Path) -> dict:
     :mod:`media_ai.core.migrations`; when it is empty this is exactly the old
     behaviour — accept the current schema, refuse anything older with a runnable answer.
     """
-    from .migrations import plan
+    from .migrations import CONFIG, plan
 
     if frm == SCHEMA:
         return data
-    steps = plan(frm, SCHEMA)
+    steps = plan(CONFIG, frm, SCHEMA)
     if steps and all(s.lossless for s in steps):
         for step in steps:
             data = step.apply(data)
@@ -355,7 +355,7 @@ def _outdated_message(frm: int, path: Path, *, steps: list | None) -> str:
     nothing can convert is told to start over. Offering the migrate command for a
     layout with no migration would be sending someone to a command that can only fail.
     """
-    from .migrations import UNMIGRATABLE
+    from .migrations import CONFIG, UNMIGRATABLE
 
     head = f"{path} is written in schema {frm}; this build reads schema {SCHEMA}"
     if steps:
@@ -363,7 +363,7 @@ def _outdated_message(frm: int, path: Path, *, steps: list | None) -> str:
             f"{head}. Converting it needs a decision that cannot be made for you — "
             f"run `{cmd('config', 'migrate')}` to see it."
         )
-    why = UNMIGRATABLE.get(frm)
+    why = UNMIGRATABLE[CONFIG].get(frm)
     reason = f" ({why})" if why else " and has no migration for it"
     return (
         f"{head}{reason}. Run `{cmd('init')}` to write it again, or delete the file to start over."
@@ -637,6 +637,7 @@ class MigrationReport:
     """What ``config migrate`` found, and what it did about it."""
 
     path: Path
+    present: bool
     frm: int
     to: int
     steps: tuple[str, ...]
@@ -657,17 +658,21 @@ def migrate_file(*, dry_run: bool = False) -> MigrationReport:
     automatic rewrite is discovering afterwards that the older build on the other
     machine can no longer read it. Here the rewrite is a command with a name.
     """
-    from .migrations import plan
+    from .migrations import CONFIG, plan
 
     path = config_path()
     if not path.is_file():
-        raise _fail(f"{path} does not exist; nothing to migrate", code="config_absent")
+        # Reported, not raised. This runs beside the credentials file's own conversion,
+        # and a machine can legitimately have one and not the other — every binding on
+        # `env://` needs no credentials file, and a fresh checkout has no config. The
+        # command refuses only when *neither* is there.
+        return MigrationReport(path=path, present=False, frm=SCHEMA, to=SCHEMA, steps=(), applied=False)
     data = _document(path)
     frm = _declared_schema(data, path)
     if frm == SCHEMA:
-        return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=(), applied=False)
+        return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA, steps=(), applied=False)
 
-    steps = plan(frm, SCHEMA)
+    steps = plan(CONFIG, frm, SCHEMA)
     if steps is None:
         raise _fail(_outdated_message(frm, path, steps=None), code="config_schema_outdated")
 
@@ -680,6 +685,7 @@ def migrate_file(*, dry_run: bool = False) -> MigrationReport:
     config = _build_config(data, path)
     summaries = tuple(s.summary for s in steps)
     if dry_run:
-        return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=summaries, applied=False)
+        return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA, steps=summaries, applied=False)
     saved = save_config(config)
-    return MigrationReport(path=path, frm=frm, to=SCHEMA, steps=summaries, applied=True, backup=saved)
+    return MigrationReport(path=path, present=True, frm=frm, to=SCHEMA,
+                           steps=summaries, applied=True, backup=saved)
