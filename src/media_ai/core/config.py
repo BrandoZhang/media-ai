@@ -66,11 +66,16 @@ parsed object, so anything not modelled here is *deleted* by the next ``bindings
 — and that is precisely how a field added in a later release would disappear on a
 machine that still has an older build, silently, in a command about something else.
 
-This is what makes it safe for a later version to add an optional table (an update
-preference, a marker naming where a managed entry came from) without bumping
-``schema``: an old build ignores it, but no longer eats it. The bump then buys the
-thing it is actually for — refusing a file whose *meaning* has changed — instead of
-being the only defence against field loss.
+This is what makes it safe for a later version to add an optional table without
+bumping ``schema``: an old build ignores it, but no longer eats it. The bump then buys
+the thing it is actually for — refusing a file whose *meaning* has changed — instead
+of being the only defence against field loss.
+
+It is also the answer for a table this project should *not* model. A distribution that
+provisions machines from its own service may want to record which entries it wrote, so
+a later push can tell them from what a user typed. Preservation means it can, in
+whatever shape its own rules need, with nothing here to agree with — and a schema here
+would only constrain it. See ``docs/EXTENDING.md``.
 
 Preservation only reaches as far as the writer does. ``tomlwrite.dumps`` takes
 strings, integers, booleans, lists of strings and nested tables; a value outside that
@@ -172,65 +177,6 @@ class UpdateSettings:
 
 
 @dataclass(frozen=True)
-class Managed:
-    """``[managed]`` — which entries in this file were written by an organisation, not here.
-
-    An internal distribution wants a machine configured without the wizard: fetch a
-    document, write the bindings and the scene defaults it names, done. The moment a
-    *second* such fetch happens, one question decides whether that is safe — **which
-    entries does the push own?** Without an answer it has two ways to be wrong, and
-    both are silent: overwrite what the user typed, or leave behind an entry the push
-    itself wrote and has since dropped.
-
-    So the ownership is written down at the same time the entries are, as a set::
-
-        [managed]
-        source   = "https://internal.example/media-ai/setup.json"
-        revision = "2026-08-14T02:00:00Z"
-        bindings = ["acme/fast", "acme/pro"]
-        defaults = ["image.text_to_image"]
-
-    A set in one table rather than a marker on each entry, for two reasons. The
-    question that gets asked is "what did the push write?", which a set answers in one
-    read and per-entry markers answer by scanning. And ``[defaults]`` is a flat
-    scene-to-id map with nowhere to hang a marker, so per-entry would need this table
-    for half the answer anyway — two mechanisms for one question is worse than one.
-
-    It is also why a binding table still says only what the binding *is*. Provenance is
-    not part of what a binding does; it is about who may rewrite it.
-
-    ``revision`` is opaque: a timestamp, an ETag, a build number — whatever the source
-    calls its own version. Nothing here compares two of them, because nothing here knows
-    what one means. It is carried so a push can recognise its own last answer, and so a
-    human can be told which one they are looking at.
-
-    Nothing writes this table yet. It is modelled now because the alternative is
-    modelling it *after* the first fleet has org-written entries in files that do not
-    say so — at which point no build can tell them from what a user typed, and the
-    honest answer becomes "leave everything alone forever".
-    """
-
-    source: str
-    revision: str | None = None
-    bindings: frozenset[str] = frozenset()
-    defaults: frozenset[str] = frozenset()
-
-    def owns_binding(self, bid: str) -> bool:
-        return bid in self.bindings
-
-    def owns_default(self, scene: str) -> bool:
-        return scene in self.defaults
-
-    def to_dict(self) -> dict:
-        return {
-            "source": self.source,
-            "revision": self.revision,
-            "bindings": sorted(self.bindings),
-            "defaults": sorted(self.defaults),
-        }
-
-
-@dataclass(frozen=True)
 class Config:
     bindings: dict[str, UserBinding] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)  # scene value -> binding id
@@ -239,8 +185,6 @@ class Config:
     #: Top-level keys and tables this build does not model, kept verbatim so writing
     #: the config back does not delete them. See the module docstring.
     update: UpdateSettings = field(default_factory=UpdateSettings)
-    #: Absent unless an organisation wrote part of this file. See :class:`Managed`.
-    managed: Managed | None = None
     extra: dict = field(default_factory=dict)
 
     def default_for(self, scene: Scene) -> str | None:
@@ -269,7 +213,7 @@ def _fail(msg: str, *, code: str = "config_invalid") -> MediaError:
 _BINDING_KEYS = frozenset({"extends", "model_id", "endpoint_id", "base_url", "credential", "options"})
 
 #: The top-level keys this build models. Same rule, one level up.
-_TOP_KEYS = frozenset({"schema", "bindings", "defaults", "update", "managed"})
+_TOP_KEYS = frozenset({"schema", "bindings", "defaults", "update"})
 
 
 def _parse_binding(bid: str, raw: object, path: Path) -> UserBinding:
@@ -335,42 +279,6 @@ def _parse_update(raw: object, path: Path) -> UpdateSettings:
     if feed is not None and (not isinstance(feed, str) or not feed):
         raise _fail(f"{path}: [update].feed must be a non-empty URL, got {feed!r}")
     return UpdateSettings(check=check, feed=feed)
-
-
-def _parse_managed(raw: object, path: Path) -> Managed | None:
-    """Validate ``[managed]``, or return ``None`` when it is absent.
-
-    ``source`` is required because the table exists to say *who* wrote those entries,
-    and an ownership claim with no owner cannot be acted on: a later push could neither
-    recognise the entries as its own nor safely disown them. An empty ``[managed]``
-    is therefore a malformed file, not a permissive one.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise _fail(f"{path}: [managed] must be a table")
-    source = raw.get("source")
-    if not isinstance(source, str) or not source:
-        raise _fail(
-            f"{path}: [managed].source must name where these entries came from",
-            code="managed_source_missing",
-        )
-    revision = raw.get("revision")
-    if revision is not None and (not isinstance(revision, str) or not revision):
-        raise _fail(f"{path}: [managed].revision must be a non-empty string, got {revision!r}")
-
-    def names(key: str) -> frozenset[str]:
-        value = raw.get(key, [])
-        if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
-            raise _fail(f"{path}: [managed].{key} must be a list of names, got {value!r}")
-        return frozenset(value)
-
-    # The listed names are deliberately not checked against the catalog or against
-    # `Scene`. This is a record of what was written, not a second declaration of it:
-    # `[bindings]` and `[defaults]` are already validated, and a push that named
-    # something this build has never heard of should fail there, once, with the field
-    # that actually carries it — not here, in the table describing it.
-    return Managed(source=source, revision=revision, bindings=names("bindings"), defaults=names("defaults"))
 
 
 def _reject_v1(data: dict, path: Path) -> None:
@@ -596,7 +504,6 @@ def _build_config(data: dict, path: Path) -> Config:
         path=path,
         exists=True,
         update=_parse_update(data.get("update"), path),
-        managed=_parse_managed(data.get("managed"), path),
         extra={k: v for k, v in data.items() if k not in _TOP_KEYS},
     )
 
@@ -665,19 +572,6 @@ def render_config(config: Config, *, header: str | None = None) -> str:
         data["update"] = {
             k: v for k, v in (("check", update.check), ("feed", update.feed))
             if v != getattr(UpdateSettings(), k)
-        }
-    # Written back whenever it is there, including by a command that has nothing to do
-    # with it. `bindings add` rewrites the whole file, and dropping the ownership record
-    # would leave the org-written entries behind with nothing claiming them — which
-    # reads, to the next push, exactly like entries the user typed.
-    if (managed := config.managed) is not None:
-        data["managed"] = {
-            k: v for k, v in (
-                ("source", managed.source),
-                ("revision", managed.revision),
-                ("bindings", sorted(managed.bindings)),
-                ("defaults", sorted(managed.defaults)),
-            ) if v
         }
     for key, value in config.extra.items():
         data.setdefault(key, value)
