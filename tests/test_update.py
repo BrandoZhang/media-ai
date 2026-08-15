@@ -238,10 +238,19 @@ def test_a_notice_with_nothing_to_show_is_dropped():
     assert update.notices_for(feed, "0.6.0") == [NOTICE]
 
 
+@pytest.mark.parametrize("key", ["min_version", "max_version"])
 @pytest.mark.parametrize("bound", ["", 1, [], {"version": "0.7.0"}, True])
-def test_a_notice_with_a_non_string_bound_is_dropped(bound):
-    """Remote notices are display-only, so malformed bounds cannot break a command."""
-    feed = {**FEED, "notices": [{**NOTICE, "min_version": bound}]}
+def test_a_notice_with_an_unreadable_bound_is_dropped_either_end(key, bound):
+    """Both ends, because the guard is two lines and a revert of one would still pass.
+
+    A bound that is not a string is the sharp case: `precedence` answers it with a
+    TypeError rather than the ValueError this loop catches, so a feed carrying
+    `min_version = 1` used to take `version` and the setup banner down — on the
+    strength of a document nobody authenticates. Dropping rather than ignoring is the
+    same rule an unparseable string already followed: an unreadable bound is not
+    "no bound", and a notice shown to everybody is the failure being avoided.
+    """
+    feed = {**FEED, "notices": [{**NOTICE, key: bound}]}
     assert update.notices_for(feed, "0.6.0") == []
 
 

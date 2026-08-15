@@ -255,12 +255,20 @@ def notices_for(feed: dict | None, version: str) -> list[dict]:
     for entry in (feed or {}).get("notices", []) or []:
         if not isinstance(entry, dict) or not entry.get("title") or not entry.get("body"):
             continue
+        low, high = entry.get("min_version"), entry.get("max_version")
+        # Checked before comparing, and separately from the parse below, because a bound
+        # that is not a string makes `precedence` raise TypeError — which `except
+        # ValueError` does not catch. So a feed carrying `min_version = 1` did not
+        # mis-target a notice, it crashed `version` and the setup banner outright, on
+        # the strength of a field nobody authenticates.
+        if any(bound is not None and not isinstance(bound, str) for bound in (low, high)):
+            continue
         try:
-            low = entry.get("min_version")
-            if low is not None and (not isinstance(low, str) or precedence(version) < precedence(low)):
+            # `is not None`, not truthiness: `min_version = ""` is a bound that cannot be
+            # read, not an absent one, and falls to the same `continue` as `"latest"`.
+            if low is not None and precedence(version) < precedence(low):
                 continue
-            high = entry.get("max_version")
-            if high is not None and (not isinstance(high, str) or precedence(version) > precedence(high)):
+            if high is not None and precedence(version) > precedence(high):
                 continue
         except ValueError:
             continue

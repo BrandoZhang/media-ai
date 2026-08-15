@@ -80,6 +80,12 @@ class Span:
         try:
             from opentelemetry.trace import Status, StatusCode
 
+            # Both attributes are passed rather than left to the SDK, which fills them
+            # in from `str(exception)` and a formatted traceback *unredacted* — the one
+            # sink in this module that `set()` and `add_event()` do not cover, since the
+            # exception event is built inside the SDK. Caller attributes win the
+            # `_attributes.update(attributes)` inside `record_exception`, so naming them
+            # replaces the raw pair rather than adding a second one.
             message = redact(str(exc))
             self._span.record_exception(
                 exc,
