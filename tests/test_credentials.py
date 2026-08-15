@@ -205,11 +205,13 @@ def test_a_schema_that_is_not_an_integer_says_the_key_is_reserved(tmp_path, monk
 
 
 def test_an_account_cannot_be_called_schema(tmp_path, monkeypatch):
-    """Reserved at the top level, and the error says so rather than reading it as 0."""
-    _creds_file(tmp_path, monkeypatch, '[schema]\napi_key = "sk-x-123456"\n')
+    """Reserved at the top level, and its table must not leak through the error."""
+    secret = "sk-account-named-schema-123456"
+    _creds_file(tmp_path, monkeypatch, f'[schema]\napi_key = "{secret}"\n')
     with pytest.raises(MediaError) as ei:
         resolve_reference("cred://schema")
     assert "reserved" in ei.value.message
+    assert secret not in str(ei.value.to_dict())
 
 
 def test_the_secret_in_a_rejected_file_is_not_in_the_message(tmp_path, monkeypatch):

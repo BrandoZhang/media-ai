@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
+from traceback import format_exception
 from typing import Any
 
 from ...credentials.redaction import redact
@@ -79,8 +80,21 @@ class Span:
         try:
             from opentelemetry.trace import Status, StatusCode
 
-            self._span.record_exception(exc)
-            self._span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
+            # Both attributes are passed rather than left to the SDK, which fills them
+            # in from `str(exception)` and a formatted traceback *unredacted* — the one
+            # sink in this module that `set()` and `add_event()` do not cover, since the
+            # exception event is built inside the SDK. Caller attributes win the
+            # `_attributes.update(attributes)` inside `record_exception`, so naming them
+            # replaces the raw pair rather than adding a second one.
+            message = redact(str(exc))
+            self._span.record_exception(
+                exc,
+                {
+                    "exception.message": message,
+                    "exception.stacktrace": redact("".join(format_exception(type(exc), exc, exc.__traceback__))),
+                },
+            )
+            self._span.set_status(Status(StatusCode.ERROR, message[:200]))
         except Exception as err:  # noqa: BLE001
             runtime.degrade("could not record an exception on a span", err)
         self.set(**error_attributes(exc))

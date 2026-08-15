@@ -152,8 +152,13 @@ def check_schema(data: dict, path: Path) -> int:
     # bool before int: it is an int subclass, so `schema = true` would read as 1.
     if isinstance(declared, bool) or not isinstance(declared, int):
         raise MediaError(
+            # The type, never the value: writing `[schema]` as a table makes `declared`
+            # that table, and this is the file holding the keys — so a repr here puts
+            # `{'api_key': '…'}` in a message bound for stdout. `redact()` at the sink
+            # catches only what it can recognise by shape, which is the three patterns
+            # in redaction.py and nothing that looks like anyone else's key format.
             f"{path}: {_RESERVED} must be an integer — it is reserved at the top level "
-            f"and cannot be an account name, got {declared!r}",
+            f"and cannot be an account name, got {type(declared).__name__}",
             category=ErrorCategory.AUTH, code="credentials_schema_invalid",
         )
     if declared > SCHEMA:
