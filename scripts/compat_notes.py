@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Compatibility section of a release's notes, from the numbers that actually moved.
 
-    python scripts/compat_notes.py             # this tree vs the highest released tag
+    python scripts/compat_notes.py             # this tree vs the last release below it
     python scripts/compat_notes.py v0.2.0      # …vs a specific one
 
 Five separately-versioned things ship in one wheel, and only the first is semver:
@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+INIT = ROOT / "src" / "media_ai" / "__init__.py"
 
 # Same reason as check_version.py: the version *shape* and the ordering come from the
 # package, so this ranks tags by the rule the CLI uses rather than a second copy of it.
@@ -134,15 +135,47 @@ def value(text: str | None, pattern: str) -> str | None:
     return found.group(1) if found else None
 
 
-def previous_tag() -> str | None:
-    """The highest released tag by semver precedence, not by date.
+def declared_version() -> str:
+    """``__version__`` as written in the tree — the version being released.
 
-    By precedence because tags are created by a workflow and a re-run, a hotfix or a
-    hand-made tag can land out of order; "the newest thing that exists" is a question
-    about versions, and dates only usually agree with it.
+    Read rather than imported, for the reason ``check_version.py`` reads it the same
+    way: this runs under a bare interpreter in the release workflow, and importing the
+    package would pull in everything it imports. A missing line is fatal rather than
+    ``None``, because the caller's fallback would be the bug below.
+    """
+    match = re.search(r'^__version__ = "(.*)"$', INIT.read_text(encoding="utf-8"), re.M)
+    if not match:
+        raise SystemExit(f"{INIT}: no __version__ line — has the declaration moved?")
+    return match.group(1)
+
+
+def previous_tag(current: str | None = None) -> str | None:
+    """The highest released tag *below* ``current``, by semver precedence.
+
+    Below, and not simply the highest that exists, because by the time this runs the
+    tag for ``current`` usually does. The release workflow pushes the tag before it
+    generates these notes, and two of its documented paths — starting a release by
+    creating the tag, and re-running a half-finished job — arrive here with the tag
+    already in place however the steps are ordered. "The highest tag" then answers
+    ``v0.7.0`` while releasing 0.7.0, and every comparison is the tree against itself.
+
+    That failure is silent by construction: printing nothing is how this script says
+    "nothing moved", so a base of *itself* looks exactly like a release that changed no
+    formats. v0.7.0 shipped that way — its notes should have opened by announcing two
+    schema numbers this project had never published before, and instead opened with the
+    changelog, with nothing anywhere reporting the section had gone missing.
+
+    By precedence rather than by date, because tags are created by a workflow and a
+    re-run, a hotfix or a hand-made tag can land out of order; "the newest thing that
+    exists" is a question about versions, and dates only usually agree with it.
     """
     tags = [t.strip() for t in git("tag", "--list", "v*").splitlines() if t.strip()]
     versions = [t for t in tags if VERSION.match(t[1:])]
+    if current is not None:
+        # Strictly below, so a tag *ahead* of this tree is no more a base than its own
+        # is — the question is what this release changed, not what the newest one did.
+        ceiling = precedence(current)
+        versions = [t for t in versions if precedence(t[1:]) < ceiling]
     if not versions:
         return None
     return max(versions, key=lambda t: precedence(t[1:]))
@@ -211,7 +244,9 @@ def main() -> int:
                     help="the tag to compare against (default: the highest released one)")
     args = ap.parse_args()
 
-    base = args.base or previous_tag()
+    # An explicit base is honoured as given — including one equal to this version, which
+    # is a legitimate thing to ask for when re-checking a release already cut.
+    base = args.base or previous_tag(declared_version())
     if base is None:
         # A first release has nothing to be compatible with, and saying so on stderr
         # keeps stdout to "the section, or nothing" — which is what the caller redirects.

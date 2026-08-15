@@ -156,3 +156,50 @@ def test_no_tags_at_all_is_not_a_failure(compat, monkeypatch):
     """A first release has nothing to be compatible with."""
     monkeypatch.setattr(compat, "git", lambda *a: "\n")
     assert compat.previous_tag() is None
+
+
+def test_the_version_being_released_is_not_its_own_base(compat, monkeypatch):
+    """The regression that cost v0.7.0 its Compatibility section.
+
+    The workflow pushes the tag before it generates the notes, so by the time this runs
+    the highest tag *is* the release being described. Comparing the tree against itself
+    finds nothing moved, and "nothing moved" is spelled as an empty document — so the
+    section vanished from a release that introduced two schema numbers, and every
+    later release would have gone the same way.
+    """
+    monkeypatch.setattr(compat, "git", lambda *a: "v0.6.0\nv0.7.0\n")
+    assert compat.previous_tag("0.7.0") == "v0.6.0"
+
+
+def test_a_tag_ahead_of_this_tree_is_not_a_base_either(compat, monkeypatch):
+    """Strictly below, not merely "not equal".
+
+    Releases only ever go forwards, so a higher tag means a checkout that is behind —
+    and the honest answer for what *this* version changed is still the release under it,
+    not a diff against work it does not contain.
+    """
+    monkeypatch.setattr(compat, "git", lambda *a: "v0.6.0\nv0.7.0\nv0.8.0\n")
+    assert compat.previous_tag("0.7.0") == "v0.6.0"
+
+
+def test_this_version_being_the_only_tag_leaves_nothing_to_compare(compat, monkeypatch):
+    """Not a crash, and not a base of itself: there is genuinely no earlier release."""
+    monkeypatch.setattr(compat, "git", lambda *a: "v0.7.0\n")
+    assert compat.previous_tag("0.7.0") is None
+
+
+def test_a_pre_release_still_compares_against_the_release_below_it(compat, monkeypatch):
+    """`0.8.0-rc1` sorts under `0.8.0` and over `0.7.0`, which is the point of §11."""
+    monkeypatch.setattr(compat, "git", lambda *a: "v0.7.0\nv0.8.0-rc1\n")
+    assert compat.previous_tag("0.8.0-rc1") == "v0.7.0"
+    assert compat.previous_tag("0.8.0") == "v0.8.0-rc1"
+
+
+def test_the_declared_version_is_the_one_the_package_reports(compat):
+    """Same failure shape as the watched patterns: this locates `__version__` with a
+    regex, so moving or reformatting the declaration would send `previous_tag` back to
+    "the highest tag that exists" — silently, and only visible in a shipped release.
+    """
+    from media_ai import __version__
+
+    assert compat.declared_version() == __version__

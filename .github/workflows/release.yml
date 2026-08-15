@@ -207,6 +207,12 @@ jobs:
 
       # Written whether or not the release is published, so a dry run shows it too —
       # this is the part of the notes a human is meant to read before merging.
+      #
+      # This runs *after* the tag exists, which is fine and is not something to fix by
+      # moving the step: compat_notes.py compares against the highest tag below the
+      # version in the tree, precisely because the two recovery paths in this file's
+      # header (start a release by creating the tag; re-run a half-finished job) reach
+      # it with the tag already pushed whatever the order here.
       - name: Compatibility notes
         id: compat
         if: steps.plan.outputs.release == 'true'
