@@ -153,7 +153,7 @@ def check_schema(data: dict, path: Path) -> int:
     if isinstance(declared, bool) or not isinstance(declared, int):
         raise MediaError(
             f"{path}: {_RESERVED} must be an integer — it is reserved at the top level "
-            f"and cannot be an account name, got {declared!r}",
+            f"and cannot be an account name, got {type(declared).__name__}",
             category=ErrorCategory.AUTH, code="credentials_schema_invalid",
         )
     if declared > SCHEMA:

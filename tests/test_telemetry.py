@@ -347,6 +347,24 @@ def test_a_secret_in_a_span_attribute_is_masked(recording):
     assert "***" in span.attributes["note"]
 
 
+@needs_sdk
+def test_a_secret_in_a_recorded_exception_is_masked(recording):
+    """OTel's default exception event carries both the message and the stack trace."""
+    from media_ai.credentials.redaction import register_secret
+
+    secret = "sk-not-in-an-exception-event-000000"
+    register_secret(secret)
+    with telemetry.invocation("image.generate"):
+        with telemetry.span("provider.generate_image") as sp:
+            sp.record_error(RuntimeError(f"provider rejected {secret}"))
+    span = recording.span("provider.generate_image")
+    assert span is not None
+    exception = next(event for event in span.events if event.name == "exception")
+    rendered = f"{span.status.description}\n{exception.attributes}"
+    assert secret not in rendered
+    assert "***" in rendered
+
+
 def test_a_url_attribute_drops_its_query_string():
     """Where a key ends up when an API takes one there (``?key=…``)."""
     from media_ai.providers._http import _scrub

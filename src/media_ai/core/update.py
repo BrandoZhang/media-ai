@@ -256,9 +256,11 @@ def notices_for(feed: dict | None, version: str) -> list[dict]:
         if not isinstance(entry, dict) or not entry.get("title") or not entry.get("body"):
             continue
         try:
-            if (low := entry.get("min_version")) and precedence(version) < precedence(low):
+            low = entry.get("min_version")
+            if low is not None and (not isinstance(low, str) or precedence(version) < precedence(low)):
                 continue
-            if (high := entry.get("max_version")) and precedence(version) > precedence(high):
+            high = entry.get("max_version")
+            if high is not None and (not isinstance(high, str) or precedence(version) > precedence(high)):
                 continue
         except ValueError:
             continue

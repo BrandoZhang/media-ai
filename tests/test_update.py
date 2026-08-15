@@ -238,6 +238,13 @@ def test_a_notice_with_nothing_to_show_is_dropped():
     assert update.notices_for(feed, "0.6.0") == [NOTICE]
 
 
+@pytest.mark.parametrize("bound", ["", 1, [], {"version": "0.7.0"}, True])
+def test_a_notice_with_a_non_string_bound_is_dropped(bound):
+    """Remote notices are display-only, so malformed bounds cannot break a command."""
+    feed = {**FEED, "notices": [{**NOTICE, "min_version": bound}]}
+    assert update.notices_for(feed, "0.6.0") == []
+
+
 def test_setup_shows_what_the_feed_has_to_say(tmp_path, monkeypatch):
     """`_announce` sketched this interface before there was anything behind it."""
     from media_ai.cli._announce import announcements

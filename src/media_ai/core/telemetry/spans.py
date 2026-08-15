@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
+from traceback import format_exception
 from typing import Any
 
 from ...credentials.redaction import redact
@@ -79,8 +80,15 @@ class Span:
         try:
             from opentelemetry.trace import Status, StatusCode
 
-            self._span.record_exception(exc)
-            self._span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
+            message = redact(str(exc))
+            self._span.record_exception(
+                exc,
+                {
+                    "exception.message": message,
+                    "exception.stacktrace": redact("".join(format_exception(type(exc), exc, exc.__traceback__))),
+                },
+            )
+            self._span.set_status(Status(StatusCode.ERROR, message[:200]))
         except Exception as err:  # noqa: BLE001
             runtime.degrade("could not record an exception on a span", err)
         self.set(**error_attributes(exc))
