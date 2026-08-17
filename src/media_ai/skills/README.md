@@ -70,7 +70,7 @@ that must be asked for by name, never a fallback.
 
 ## Prerequisites
 
-- The `media-ai` CLI on `PATH` (`uv sync` / `pip install -e .` from the repo root).
+- The `media-ai` CLI on `PATH` (`install/install.sh` for a machine, `uv sync` for a checkout).
   Each skill declares `metadata.requires.bins: ["media-ai"]`.
 - A configured binding. Each names exactly one credential source (`env://`, `cred://`,
   `keychain://`, …); keys never travel in argv and there is no `--api-key` flag — see

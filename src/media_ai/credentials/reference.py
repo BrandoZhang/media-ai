@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import os
 
-from ..brand import cli_name, dist_name
+from ..brand import cli_name
 from ..core.errors import ErrorCategory, MediaError
+from ..core.packaging import extra_hint
 from .secret import BrokeredHandle, Credential, Secret
 from .stores import BUILTIN_SCHEMES, ENTRY_POINT_GROUP, named_account, register_secret_backend, secret_backend
 
@@ -116,8 +117,7 @@ def _from_keychain(rest: str, ref: str, provider: str) -> str:
         import keyring  # type: ignore
     except ModuleNotFoundError:
         raise MediaError(
-            f"credential {ref!r} needs the OS keychain; install the extra: "
-            f"pip install '{dist_name()}[keychain]'",
+            f"credential {ref!r} needs the OS keychain; install the extra: {extra_hint('keychain')}",
             category=ErrorCategory.AUTH, code="credential_backend_missing", provider=provider,
         ) from None
     service, _, account = rest.rpartition("/")

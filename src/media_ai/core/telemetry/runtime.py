@@ -202,15 +202,15 @@ def degrade(what: str, exc: BaseException | None = None) -> None:
 
 def _unavailable(exc: BaseException) -> None:
     """Say that telemetry was asked for and the SDK is not installed."""
-    from ...brand import dist_name
     from .. import notices
+    from ..packaging import extra_hint
 
     get_logger().debug("telemetry requested but the SDK is not installed: %s", exc)
     notices.add(notices.Notice(
         kind="telemetry_unavailable",
         severity="warn",
         message=f"telemetry is enabled but the OpenTelemetry SDK is not installed; nothing is being exported ({exc})",
-        action=f"pip install '{dist_name()}[{EXTRA}]'",
+        action=extra_hint(EXTRA),
     ))
 
 

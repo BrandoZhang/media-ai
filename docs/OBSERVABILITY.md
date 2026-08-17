@@ -90,9 +90,28 @@ An installation that never exports should not carry it, and — more to the poin
 
 ```bash
 pip install "media-ai[otel]"                                  # a pip install
-uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # the installer's route
+uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # a source install
 uv sync --extra otel                                          # a checkout
 ```
+
+**The standalone bundle ships with it.** That looks like a contradiction and is not:
+the argument above is about an installation that *could* add the SDK later and should
+not be made to carry it — and a frozen bundle has no later. There is no environment to
+`pip install` into, so the choice is ship it or make it permanently unavailable, and
+"telemetry is not available on the default install" is the wrong answer for the tree it
+saves (+2 MB compressed). Off is still off: the SDK is imported lazily and only when
+telemetry is enabled, so a bundle that never exports pays the download and nothing else.
+
+`packaging/build.sh` names it in `BUNDLE_EXTRAS`, and the build's own smoke test turns
+telemetry on with the console exporter and fails unless a span reaches stderr — because
+this is the one thing that fails *politely*: a bundle that quietly stopped collecting
+OpenTelemetry would pass every other check and go on passing until an operator turned
+telemetry on and got silence.
+
+`keychain` is the extra that is still not in a bundle, and there the notice's `action`
+matters: a `pip install` line would install the package into some unrelated Python and
+change nothing, so what a bundle prints instead is `install.sh --from-source`
+([`core/packaging.py`](../src/media_ai/core/packaging.py)).
 
 So the SDK is imported **lazily, once, and only when telemetry is enabled**. The three
 states and what each does:
@@ -105,7 +124,7 @@ states and what each does:
 The notice is the load-bearing half of the last cell. Asking for telemetry and getting
 silence is indistinguishable from asking for telemetry and getting a collector that
 drops everything, and the party who can fix it is the agent or operator reading
-stdout — so it rides in `notices[]` with the `pip install` command as its `action`,
+stdout — so it rides in `notices[]` with the install command for *this* build as its `action`,
 the same shape `skills_stale` and `update_available` already use. Nothing *fails*: a
 missing exporter is not a reason to refuse a generation.
 
