@@ -75,6 +75,24 @@ media_ai = ["skills/**/*.md", "bindings/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Dump every thread's traceback when one test has been running for two minutes.
+#
+# This exists because a macOS job hung twice in the `pty.fork()` tests and both times
+# said nothing at all: pytest stops emitting, the runner kills the job at its
+# `timeout-minutes`, and the log ends mid-progress-bar. Two occurrences bought two
+# different progress percentages and no name — the first cost six hours of a runner and
+# a speculative fix that turned out not to be the cause, which is the expensive way to
+# learn that "somewhere in this block" is not a diagnosis.
+#
+# `faulthandler` is stdlib and the plugin is built into pytest, so this costs nothing to
+# carry. Two minutes is ~24x the slowest test here (the pty ones, ~5s) against a suite
+# that finishes in 70 seconds, so a loaded runner cannot trip it by being slow.
+#
+# It deliberately does **not** set `faulthandler_exit_on_timeout`: dumping is the part
+# that diagnoses, and aborting the process is a way to turn a slow runner into a red
+# build. The job timeout already bounds the damage — this only makes the next one
+# legible.
+faulthandler_timeout = 120
 markers = [
     "live: hits real provider APIs; skipped unless MEDIA_LIVE_TESTS=1 and the provider's key is set",
 ]
