@@ -86,6 +86,7 @@ it lands instead of the day someone remembers to extend a path list.
 | Run the CLI offline | `uv run media-ai image generate --binding mock/mock --prompt "a red bike" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
 | Installer unit tests (offline) | `bash install/test_installer.sh` |
+| Lint the shell scripts | `uv run shellcheck install/*.sh packaging/build.sh` |
 | Build the standalone bundle for this machine | `bash packaging/build.sh` |
 
 `uv run` re-syncs the env if `pyproject.toml`/`uv.lock` changed, so after `git pull`
@@ -194,10 +195,19 @@ so forks never fail. (To run it on merge to `main` later, uncomment the `push:` 
 uv run ruff check .
 uv run pytest -q
 uv run actionlint          # only if you touched .github/workflows/
+uv run shellcheck install/*.sh packaging/build.sh   # only if you touched a shell script
+bash install/test_installer.sh                      # …and these, which run it for real
 ```
 
 All must be green. The suite is fully **offline** — no credentials, no network —
 and CI runs the same checks.
+
+`shellcheck` comes from the dev group rather than from your system, and that is worth
+one line of explanation: its diagnostic codes and their severities move between
+releases — an overridden function is `SC2317` in 0.10 and `SC2329` in 0.11 — so a
+system binary and CI's disagreeing is a build that fails only on the runner. Pinning it
+through the same lockfile as everything else is what makes `uv run shellcheck` the same
+command in both places.
 
 `actionlint` is worth the extra command when you edit a workflow: a file GitHub
 rejects does not fail a *step*, it fails as a run with **no jobs**, named after the

@@ -239,7 +239,7 @@ jobs:
         run: uv run actionlint
 
       - name: Lint the installer
-        run: shellcheck install/install.sh install/test_installer.sh packaging/build.sh
+        run: uv run shellcheck install/install.sh install/test_installer.sh packaging/build.sh
 
       - name: Installer unit tests
         run: bash install/test_installer.sh

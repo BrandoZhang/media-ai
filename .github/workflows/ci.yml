@@ -98,7 +98,7 @@ jobs:
         run: uv run actionlint
 
       - name: Lint the installer
-        run: shellcheck install/install.sh install/test_installer.sh packaging/build.sh
+        run: uv run shellcheck install/install.sh install/test_installer.sh packaging/build.sh
       - name: Installer unit tests
         run: bash install/test_installer.sh
       - name: Installer smoke test (no network, no install)
@@ -152,9 +152,9 @@ jobs:
         run: |
           set -euo pipefail
           cli="$(sed -n 's/^name = "\(.*\)"$/\1/p' pyproject.toml | head -n1)"
-          # Before the install: it ends by checking that the command it just linked is
-          # reachable, and says so loudly (exit 1) when it is not. That is the right
-          # answer for a person and a false alarm here.
+          # So the installer's closing PATH check finds the command it just linked. The
+          # check only warns now, so this is about the `"$cli" --version` below rather
+          # than about the install succeeding.
           export PATH="$HOME/.local/bin:$PATH"
           bash install/install.sh --from-file dist/*.tar.gz --no-init --bin-dir "$HOME/.local/bin"
           "$cli" --version

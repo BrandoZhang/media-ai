@@ -48,8 +48,15 @@ otel = [
 
 # Dev tooling for the uv workflow (installed by default by `uv sync`).
 # The `test` extra above is kept for the pip / CI path.
+#
+# `shellcheck-py` is here for the same reason `actionlint-py` is: the alternative is the
+# runner's system binary, which drifts. Two CI failures on this repo have been a
+# shellcheck version disagreeing with the one on a laptop — the codes move between
+# releases (an overridden function is SC2317 in 0.10 and SC2329 in 0.11) and so does the
+# severity. Pinning it through the same lockfile everything else uses is what makes
+# `uv run shellcheck …` locally and in CI the same command.
 [dependency-groups]
-dev = ["pytest>=7", "ruff>=0.6", "actionlint-py>=1.7"]
+dev = ["pytest>=7", "ruff>=0.6", "actionlint-py>=1.7", "shellcheck-py>=0.10"]
 
 [tool.setuptools.dynamic]
 version = { attr = "media_ai.__version__" }

@@ -64,7 +64,11 @@ esac
 BUNDLE_HOME=""
 RUNNING_BUNDLE=""
 if [ -n "$SELF" ]; then
-  _maybe_home="$(cd "$(dirname "$SELF")/../../.." 2>/dev/null && pwd || true)"
+  # `|| _maybe_home=""` rather than `… || true` inside the substitution: `A && B || C`
+  # is not if-then-else (C also runs when A succeeds and B fails), and shellcheck says
+  # so — at different severities in different versions, which is its own reason not to
+  # write it.
+  _maybe_home="$(cd "$(dirname "$SELF")/../../.." 2>/dev/null && pwd)" || _maybe_home=""
   if [ -n "$_maybe_home" ] && [ -d "$_maybe_home/versions" ]; then
     BUNDLE_HOME="$_maybe_home"
     RUNNING_BUNDLE="$(cd "$(dirname "$SELF")/.." && pwd)"

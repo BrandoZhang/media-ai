@@ -16,7 +16,8 @@ uv run ruff check . --fix               # autofix
 uv run actionlint                       # lint .github/workflows (a file GitHub rejects fails with *no jobs*)
 uv run media-ai image generate --prompt "x" --output /tmp/x.png   # run the CLI (mock by default)
 uv run media-ai doctor                  # offline health check of this install
-bash install/test_installer.sh          # installer unit tests, offline (CI also shellchecks install/*.sh + packaging/build.sh)
+bash install/test_installer.sh          # installer unit tests, offline
+uv run shellcheck install/*.sh packaging/build.sh   # pinned via the dev group, so CI runs the same version
 bash packaging/build.sh                 # build the standalone bundle for this machine -> dist/<cli>-<version>-<os>-<arch>.tar.gz
 # pip fallback: pip install -e ".[test]" ruff  →  run ruff/pytest/`python -m media_ai` directly
 ```
