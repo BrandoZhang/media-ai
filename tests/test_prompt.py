@@ -629,21 +629,44 @@ def _exec_child(body: str) -> None:
         os._exit(127)
 
 
-def _reap(pid: int) -> None:
-    """Wait briefly for the child, then make sure of it.
+def _reap(pid: int, fd: int | None = None) -> None:
+    """Wait briefly for the child, then make sure of it. Never blocks indefinitely.
 
-    Bounded, and then ``SIGKILL``: a child left in raw mode on a pty is a process
-    nothing will ever collect, and a test helper that can leave one behind turns a
-    failed interaction into a run that never finishes. The blocking ``waitpid`` after
-    the kill is what stops it becoming a zombie instead.
+    Two things here are deliberate, and both are about a hang this file has produced
+    twice on macOS and never on Linux — pytest stopping mid-progress-bar somewhere in
+    the ``test_pty_*`` block, with one orphaned Python process left at cleanup.
+
+    **The master is closed first.** A child that is mid-redraw when its window closes is
+    blocked in ``write(2)`` to a pty whose buffer is full and whose master nobody is
+    draining any more. Closing this end is what turns that write into an error the child
+    dies of; leaving it open until after the wait — which is what the ``finally`` in the
+    caller used to do — means the reap and the thing it is waiting for are in a standoff.
+
+    **The wait after ``SIGKILL`` is bounded.** It was a plain ``os.waitpid(pid, 0)``,
+    and that is the only call in this file with no deadline of any kind: every loop
+    around it is bounded, so if anything here can hang forever it is this. A child stuck
+    in a tty operation in the BSD driver is not reliably reaped the instant the signal
+    lands, and a test helper is the wrong place to insist. Two seconds, then give up —
+    a zombie is the runner's problem at cleanup, an unfinished suite is ours.
+
+    This is a *mechanism* that fits the evidence, not a proven cause: nothing here
+    reproduces on Linux, and the previous attempt at this hang fixed a real defect that
+    turned out not to be it. `faulthandler_timeout` in `pyproject.toml` is what will
+    actually name the culprit next time.
     """
+    if fd is not None:
+        os.close(fd)
     for _ in range(10):
         reaped, _status = os.waitpid(pid, os.WNOHANG)
         if reaped:
             return
         time.sleep(0.05)
     os.kill(pid, signal.SIGKILL)
-    os.waitpid(pid, 0)
+    for _ in range(40):  # 2s, not forever
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            return
+        time.sleep(0.05)
 
 
 def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
@@ -700,12 +723,13 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
         # The capture loop above is deliberately bounded. Honour that bound when
         # reaping the pty child too: otherwise a broken interaction turns one failed
         # assertion into a permanently hung test run.
-        _reap(pid)
-        return captured.decode("utf-8", "replace")
+        result = captured.decode("utf-8", "replace")
     finally:
         # One master fd per call, and this helper runs once per prompt test — leaking
-        # them exhausts the process limit partway through a full run.
-        os.close(fd)
+        # them exhausts the process limit partway through a full run. `_reap` closes it,
+        # *before* waiting, for the reason written there.
+        _reap(pid, fd)
+    return result
 
 
 SELECT_BODY = """
@@ -1030,8 +1054,7 @@ def run_in_pty_watching_the_terminal(body: str, keys: list[bytes]) -> str:
             time.sleep(0.05)
         return captured.decode("utf-8", "replace")
     finally:
-        _reap(pid)
-        os.close(fd)
+        _reap(pid, fd)
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
