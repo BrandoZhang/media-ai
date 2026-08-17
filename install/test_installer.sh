@@ -146,10 +146,15 @@ make_fixture() {
 
 # Replace the only two functions that touch the network. Everything downstream —
 # checksum verification, tar, the symlink flip, the prune — runs for real.
-# They are called by install_release, which shellcheck cannot see from here.
-# shellcheck disable=SC2329
+#
+# Both codes, because which one gets reported depends on the linter's version: 0.10 and
+# earlier call an overridden definition unreachable (SC2317), 0.11 calls it never
+# invoked (SC2329). It is neither — `install_release` calls them, from the other file.
+# (Take care with the wrapping here: a comment line whose first word is the linter's
+# own name is read as a directive, and an unparseable one is an error, not a warning.)
+# shellcheck disable=SC2317,SC2329
 fetch() { cp "$SCRATCH/releases/$(basename "$1")" "$2" 2>/dev/null; }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 fetch_text() { cat "$SCRATCH/releases/$(basename "$1")" 2>/dev/null; }
 
 INSTALL_HOME="$SCRATCH/share/$CLI_NAME"

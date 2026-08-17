@@ -81,7 +81,13 @@ main() {
   fix_permissions "$bundle"
   smoke_test "$bundle/$cli" "$cli" "$version" "$work/scratch"
 
+  # Resolved to an absolute path before anything uses it. `tar` runs from inside the
+  # build directory (it packs `<cli>/`, not a path with `$work` in it), so a relative
+  # `--output dist` would otherwise be written relative to *that* — which is how CI
+  # first failed here, with `tar: dist/…: No such file or directory` from a script that
+  # had just created `dist/` a line earlier.
   mkdir -p "$output"
+  output="$(cd "$output" && pwd)"
   local asset
   asset="$output/$(asset_name "$cli" "$version" "$triple")"
   say "packing $asset…"
