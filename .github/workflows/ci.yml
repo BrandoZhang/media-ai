@@ -114,16 +114,38 @@ jobs:
   # those produces a bundle that starts, answers `--version`, and then fails on the
   # first real command — which is a bad thing to discover from a published tag.
   #
-  # One platform, not four. What varies across the release matrix is the runner, not the
-  # spec file, and it is the spec file that pull requests change; the other three are
-  # built (and smoke-tested, by `packaging/build.sh` itself) before any tag is pushed.
+  # **Two operating systems, because the shell is not the same one.** This job used to
+  # run on Linux alone, on the reasoning that what varies across the release matrix is
+  # the runner rather than the spec file. That was wrong in a way that cost a release:
+  # macOS ships bash 3.2, which parses `$var…` differently from bash 5, so
+  # `packaging/build.sh` died on both macOS runners at a line every Linux job had run
+  # happily for days — and the first thing to execute it under macOS bash was a release.
+  # `tests/test_packaging.py` now catches that exact shape statically, but the general
+  # lesson does not fit in a regex: `build.sh` and `install.sh` are shell, and BSD
+  # userland is a different platform however carefully they are written.
   #
-  # ubuntu-22.04 rather than -latest, for the same reason the release builds on it: a
-  # bundle links the glibc it was built against, so building on the newest runner would
-  # produce something that refuses to start on any slightly older distribution.
+  # Both architectures are *not* built here. What is arch-specific — the bootloader, the
+  # ad-hoc signature arm64 insists on, which ffmpeg `imageio-ffmpeg` unpacks — is covered
+  # by the release matrix, and a failure there refuses to publish rather than publishing
+  # something broken. What is *OS*-specific is the shell and the BSD tools, and one macOS
+  # runner exercises those as well as two. arm64 is the one chosen because signature
+  # enforcement there is the stricter of the two.
+  #
+  # The Linux row is ubuntu-22.04 rather than -latest, for the reason the release builds
+  # on it: a bundle links the glibc it was built against, so building on the newest
+  # runner would produce something that refuses to start on any slightly older
+  # distribution.
   standalone:
-    name: standalone bundle (linux-x86_64)
-    runs-on: ubuntu-22.04
+    name: standalone bundle (${{ matrix.triple }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # "Linux only" and "both" are different diagnoses, and stopping at the first
+      # failure hides which one it is.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, triple: linux-x86_64 }
+          - { os: macos-14,     triple: macos-arm64 }
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -132,9 +154,10 @@ jobs:
           python-version: "3.12"
 
       # `--python 3.12` because ubuntu-22.04's own python3 is 3.10, below the floor
-      # `requires-python` sets; uv fetches a matching interpreter. The step ends with a
-      # smoke test of the bundle it just produced — an image through Pillow, a clip and
-      # an animation through the bundled ffmpeg, and `doctor`.
+      # `requires-python` sets; uv fetches a matching interpreter on either platform. The
+      # step ends with a smoke test of the bundle it just produced — an image through
+      # Pillow, a clip and an animation through the bundled ffmpeg, `doctor`, and a span
+      # exported through the frozen OpenTelemetry SDK.
       - name: Build
         run: bash packaging/build.sh --output dist --python 3.12
 
@@ -142,7 +165,8 @@ jobs:
       # build directory. This is the only thing that covers the unpack, the symlink flip
       # and the bundled installer `upgrade` will later run — and the only place the
       # bundle is asked what kind of installation it thinks it is, which is the question
-      # `upgrade` and `uninstall` both branch on.
+      # `upgrade` and `uninstall` both branch on. On the macOS row it is also the only
+      # place `install.sh` itself is executed by bash 3.2 rather than merely linted.
       #
       # The command's name is read out of pyproject rather than spelled out, the way
       # release.yml reads it, so a rebranded fork does not fail here on an assertion
