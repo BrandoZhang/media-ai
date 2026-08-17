@@ -133,11 +133,17 @@ main() {
 
   check_platform
 
+  # Called plainly, *not* as `install_file … || return $?`. Bash turns `errexit` off for
+  # the whole call chain of a command on the left of `||`, so that shape silently
+  # disarmed `set -e` inside every one of these functions and each unchecked command in
+  # them — the failed `tar` that still reported a successful install being the one that
+  # got noticed. A plain call keeps `errexit` armed and still stops the script with the
+  # function's own status, which is all the `|| return $?` was ever buying.
   if [ -n "$from_file" ]; then
     # A named file settles both questions this script otherwise asks the network —
     # which version, and where to get it — so neither is asked.
     [ "$from_source" -eq 0 ] || { err "--from-file and --from-source ask for different things"; return 2; }
-    install_file "$from_file" "$dry_run" || return $?
+    install_file "$from_file" "$dry_run"
   else
     [ -n "$version" ] || version="$(resolve_version)"
     # A git ref that is not a release has no published bundle, and never will — a branch
@@ -148,9 +154,9 @@ main() {
       from_source=1
     fi
     if [ "$from_source" -eq 1 ]; then
-      install_from_source "$version" "$dry_run" || return $?
+      install_from_source "$version" "$dry_run"
     else
-      install_release "$version" "$dry_run" || return $?
+      install_release "$version" "$dry_run"
     fi
   fi
   [ "$dry_run" -eq 0 ] || return 0
@@ -458,7 +464,36 @@ unpack_and_link() {
   # finds a version already present and does nothing about it.
   say "unpacking…"
   mkdir -p "$work" "$INSTALL_HOME/versions"
-  tar -xzf "$tarball" -C "$work"
+
+  # `|| return` on the tar, and it is not decoration: a failed extraction used to be
+  # *ignored*, and the install went on to report success and exit 0 over a bundle that
+  # never came out of the archive.
+  #
+  # The reason is worth writing down because it is a whole class of bug in this file:
+  # `main` calls these functions as `install_file … || return $?`, and bash disables
+  # `errexit` for the entire call chain of a command on the left of `||`. Every
+  # unchecked command in here therefore ran with `set -e` switched off. The calls in
+  # `main` are plain now, which restores it — this check stays anyway, because "the
+  # archive did not extract" deserves its own sentence rather than a silent abort.
+  #
+  # What tar refuses on its own is *already* enough against a hostile archive: both GNU
+  # tar and bsdtar drop a leading `/`, skip any member whose name contains `..`, and
+  # decline to write through a symlink member — and each of those exits non-zero, which
+  # is precisely the signal that was being thrown away. Verified against a crafted
+  # tarball; nothing reached the filesystem outside `$work`.
+  tar -xzf "$tarball" -C "$work" || {
+    err "that archive did not extract cleanly; refusing to install from it."
+    err "  a bundle is a tarball of one directory named $CLI_NAME and nothing else."
+    return 1
+  }
+  # A real directory, not a symlink to one. tar will not write *through* a symlink
+  # member, but it will happily create it — and a payload root that is a link somewhere
+  # else would then be moved into place as the installed version, leaving the command on
+  # PATH resolving to a directory the archive chose.
+  if [ ! -d "$work/$CLI_NAME" ] || [ -L "$work/$CLI_NAME" ]; then
+    err "that bundle has no $CLI_NAME directory in it"
+    return 1
+  fi
   [ -x "$work/$CLI_NAME/$CLI_NAME" ] || { err "that bundle has no $CLI_NAME executable in it"; return 1; }
   rm -rf "$dest"
   mv "$work/$CLI_NAME" "$dest"

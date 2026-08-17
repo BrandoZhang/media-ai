@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 from ..brand import dist_name
+from .update import SOURCE_REPO
 
 __all__ = ["BUNDLED_INSTALLER", "bundle_root", "bundled_installer", "extra_hint", "is_standalone"]
 
@@ -87,12 +88,35 @@ def extra_hint(extra: str) -> str:
     Callers reach this on the path where the extra turned out to be *missing*, so an
     extra that is in the bundle simply never asks.
 
+    Two details in the pip line are the difference between a hint and a runnable one,
+    and both were wrong here before:
+
+    ``sys.executable -m pip``, never a bare ``pip``
+        Which environment gets the extra is exactly the question a ``pip`` on ``PATH``
+        answers wrongly, and on a machine with several interpreters it answers it
+        wrongly *silently* — the install succeeds, somewhere else, and the reference
+        that raised goes on raising. :mod:`media_ai.cli._install` states this rule for
+        the upgrade steps; this is the same rule for the same reason.
+
+    the git source
+        This distribution is deliberately not on PyPI, so ``pip install '<dist>[otel]'``
+        resolves to nothing at all. The requirement names where the code actually comes
+        from, which is what the ``pip`` branch of ``upgrade_steps`` already does.
+
     The command is returned bare, with no explanation attached: every caller already
     says what the extra is for, and a ``#`` comment inside an ``error.hint`` is one more
     thing for a consumer to strip.
+
+    One case it does not distinguish: an **editable** checkout, where the right answer
+    is ``uv sync --extra <name>`` and the line below would replace somebody's work tree
+    with a release. Telling the two apart needs the install detector, which lives above
+    this module and cannot be imported from it; a developer reading this hint is also
+    the reader most likely to notice. Deliberate, and written down rather than left to
+    be discovered.
     """
     if not is_standalone():
-        return f"pip install '{dist_name()}[{extra}]'"
+        source = f"git+https://github.com/{SOURCE_REPO}"
+        return f"{shlex.quote(sys.executable)} -m pip install '{dist_name()}[{extra}] @ {source}'"
     script = bundled_installer()
     if script is None:
         # No installer to name, so no command to give. Saying what has to happen beats
