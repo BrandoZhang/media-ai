@@ -239,8 +239,12 @@ def test_an_unfrozen_run_is_unaffected():
 
 @needs_checkout
 def test_the_bundle_ships_the_telemetry_sdk():
-    assert re.search(r'^BUNDLE_EXTRAS="\$\{MEDIA_AI_BUNDLE_EXTRAS:-([^}]*)\}"', BUILDER.read_text(), re.M).group(1) \
-        .split() == ["otel"], "packaging/build.sh no longer freezes exactly the otel extra"
+    declared = re.search(r'^BUNDLE_EXTRAS="\$\{MEDIA_AI_BUNDLE_EXTRAS:-([^}]*)\}"', BUILDER.read_text(), re.M)
+    assert declared, "packaging/build.sh no longer declares BUNDLE_EXTRAS the way this test reads it"
+    # Comma-separated, the syntax a requirement takes extras in. The gate on the
+    # telemetry check matches commas too; splitting the two ways apart is how that check
+    # would silently stop running the day a second extra is added.
+    assert declared.group(1).split(",") == ["otel"], "the bundle no longer freezes exactly the otel extra"
 
 
 @needs_checkout
@@ -261,6 +265,7 @@ def test_the_build_proves_telemetry_actually_exports():
     text = BUILDER.read_text()
     assert "telemetry_test" in text and "MEDIA_TELEMETRY=1" in text
     assert "telemetry_unavailable" in text, "the build does not check for the degraded-to-no-op notice"
+    assert '*,otel,*' in text, "the gate must match BUNDLE_EXTRAS' comma separator, not spaces"
 
 
 # The hint is about the extras a bundle does *not* have — `keychain` today. Its wording

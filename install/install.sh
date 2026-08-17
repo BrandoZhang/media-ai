@@ -46,15 +46,50 @@ DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.7.1}"
 CLI_NAME="media-ai"
 DIST_NAME="$CLI_NAME"
 
+# This script's own path, when it has one. Under the documented `curl … | bash` it does
+# not: `$0` is the string "bash", and printing "$0 --from-source" in a hint gives the
+# reader `bash --from-source`, which starts an interactive shell. Hints in this project
+# are contractual — usually runnable — so the two cases are distinguished here once, and
+# `from_source_hint` below picks the right sentence.
+SELF=""
+case "$0" in
+  */*|*.sh) [ -f "$0" ] && SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" ;;
+esac
+
+# The installation this script was *shipped inside*, if any. A bundled copy lives at
+# `<home>/versions/<version>/_internal/install.sh`, which is how `<cli> upgrade` runs it —
+# so it can work out which installation it belongs to instead of assuming the default
+# one. Without this an upgrade of an install made with `--bin-dir` or `MEDIA_AI_HOME`
+# quietly installs a *second* copy in the default place and leaves a stray symlink.
+BUNDLE_HOME=""
+RUNNING_BUNDLE=""
+if [ -n "$SELF" ]; then
+  _maybe_home="$(cd "$(dirname "$SELF")/../../.." 2>/dev/null && pwd || true)"
+  if [ -n "$_maybe_home" ] && [ -d "$_maybe_home/versions" ]; then
+    BUNDLE_HOME="$_maybe_home"
+    RUNNING_BUNDLE="$(cd "$(dirname "$SELF")/.." && pwd)"
+  fi
+  unset _maybe_home
+fi
+
 # Where the bundle is unpacked and what goes on PATH. Branded, so two builds coexist
 # rather than replace each other — the same reason `brand.config_dir()` is. The
 # override variables are not branded, matching MEDIA_AI_REPO above: they are knobs for
 # one invocation of this script, not a namespace anything else reads.
-INSTALL_HOME="${MEDIA_AI_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/$CLI_NAME}"
-BIN_DIR="${MEDIA_AI_BIN_DIR:-$HOME/.local/bin}"
+#
+# Filled in by `resolve_layout`, which needs the flags parsed first. Declared here
+# because every function below reads them, and because `install/test_installer.sh` sets
+# them directly to drive an install into a scratch directory.
+INSTALL_HOME=""
+BIN_DIR=""
+
+#: Written beside the versions so a later run — an upgrade especially — puts the command
+#: back where the first install put it, rather than in the default place.
+BIN_DIR_RECEIPT="bin-dir"
 
 main() {
   local version="" skills_dest="" do_init=1 dry_run=0 do_uninstall=0 assume_yes=0 from_source=0 from_file=""
+  local bin_dir_flag=""
   local keep_flags=()
 
   while [ $# -gt 0 ]; do
@@ -66,8 +101,8 @@ main() {
       --version=*)    version="${1#*=}"; shift ;;
       --skills-dest)  need_value "$@"; skills_dest="$2"; shift 2 ;;
       --skills-dest=*) skills_dest="${1#*=}"; shift ;;
-      --bin-dir)      need_value "$@"; BIN_DIR="$2"; shift 2 ;;
-      --bin-dir=*)    BIN_DIR="${1#*=}"; shift ;;
+      --bin-dir)      need_value "$@"; bin_dir_flag="$2"; shift 2 ;;
+      --bin-dir=*)    bin_dir_flag="${1#*=}"; shift ;;
       --from-source)  from_source=1; shift ;;
       --from-file)    need_value "$@"; from_file="$2"; shift 2 ;;
       --from-file=*)  from_file="${1#*=}"; shift ;;
@@ -82,6 +117,8 @@ main() {
       *) err "unknown option: $1"; usage; return 2 ;;
     esac
   done
+
+  resolve_layout "$bin_dir_flag"
 
   # Before anything that installs: fetching a package manager in order to uninstall
   # would be absurd, and the CLI may well have been installed some other way.
@@ -123,7 +160,7 @@ main() {
   [ -x "$BIN_DIR/$CLI_NAME" ] && exe="$BIN_DIR/$CLI_NAME"
   self_test "$exe"
   check_path
-  if [ "$do_init" -eq 1 ]; then run_init "$skills_dest"; fi
+  if [ "$do_init" -eq 1 ]; then run_init "$exe" "$skills_dest"; fi
   return 0
 }
 
@@ -157,6 +194,46 @@ USAGE
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*" >&2; }
 err() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
+
+# Where this install lives and what goes on PATH. Three sources each, most explicit
+# first, and the interesting one is the middle: a *bundled* copy of this script belongs
+# to the installation it shipped inside and upgrades that one, whatever the defaults
+# say. The recorded bin directory does the same job for the symlink — `--bin-dir /opt/bin`
+# on the first install has to still mean `/opt/bin` when the upgrade runs a year later,
+# or the upgrade succeeds and leaves the command the user actually types pointing at the
+# old version.
+resolve_layout() {
+  local bin_dir_flag="${1:-}"
+  if [ -n "${MEDIA_AI_HOME:-}" ]; then
+    INSTALL_HOME="$MEDIA_AI_HOME"
+  elif [ -n "$BUNDLE_HOME" ]; then
+    INSTALL_HOME="$BUNDLE_HOME"
+  else
+    INSTALL_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/$CLI_NAME"
+  fi
+
+  if [ -n "$bin_dir_flag" ]; then
+    BIN_DIR="$bin_dir_flag"
+  elif [ -n "${MEDIA_AI_BIN_DIR:-}" ]; then
+    BIN_DIR="$MEDIA_AI_BIN_DIR"
+  elif [ -s "$INSTALL_HOME/$BIN_DIR_RECEIPT" ]; then
+    BIN_DIR="$(head -n1 "$INSTALL_HOME/$BIN_DIR_RECEIPT")"
+  else
+    BIN_DIR="$HOME/.local/bin"
+  fi
+}
+
+# How to reach the source path from wherever this script is being read from. Not
+# "$0 --from-source": under `curl … | bash` that renders as `bash --from-source`, and
+# every refusal in this file ends by naming it — including the one every install hits
+# today, since the newest release predates bundles and has no asset to download.
+from_source_hint() {
+  if [ -n "$SELF" ]; then
+    printf 'bash %s --from-source' "$SELF"
+  else
+    printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/install/install.sh | bash -s -- --from-source' "$REPO"
+  fi
+}
 
 # Refuse a flag whose value is missing, with a message. Called as `need_value "$@"`,
 # so $1 is the flag and $2 is the value that has to be there. A value starting with
@@ -222,7 +299,7 @@ refuse_musl() {
   [ "$(uname -s)" = "Linux" ] || return 0
   if ldd --version 2>&1 | head -n1 | grep -qi musl; then
     err "this looks like a musl system (Alpine); the published bundles are built against glibc."
-    err "  install from source instead: $0 --from-source"
+    err "  install from source instead: $(from_source_hint)"
     exit 1
   fi
 }
@@ -276,7 +353,7 @@ install_release() {
   refuse_musl
   triple="$(platform_triple)" || {
     err "no published bundle for $(uname -s)/$(uname -m)."
-    err "  install from source instead: $0 --from-source"
+    err "  install from source instead: $(from_source_hint)"
     return 1
   }
   url="$(asset_url "$version" "$triple")"
@@ -288,6 +365,11 @@ install_release() {
     return 0
   fi
 
+  # One scratch directory per install, cleaned by one trap, and the trap lives *here*
+  # rather than in `unpack_and_link`. Bash RETURN traps are not stacked per frame: a
+  # trap set in the callee replaces the caller's, fires on the callee's return, and
+  # leaves the caller's directory behind — which for this function is the ~47 MB tarball
+  # it just downloaded, left in /tmp on every single install.
   local tmp
   tmp="$(mktemp -d)"
   # Expanded now, deliberately: $tmp is a local and is out of scope by the time the
@@ -300,11 +382,11 @@ install_release() {
   say "downloading ${DIST_NAME} ${version} for ${triple}…"
   if ! fetch "$url" "$tarball"; then
     err "could not download $url"
-    err "  the release may not publish a bundle for this platform; try: $0 --from-source"
+    err "  the release may not publish a bundle for this platform; try: $(from_source_hint)"
     return 1
   fi
   verify_checksum "$tarball" "$url.sha256" || return 1
-  unpack_and_link "$tarball" "${version#v}"
+  unpack_and_link "$tarball" "${version#v}" "$tmp/unpack"
 }
 
 # Install a tarball already on disk — one built by `packaging/build.sh`, or downloaded
@@ -328,7 +410,11 @@ install_file() {
     say "would link:   $BIN_DIR/$CLI_NAME -> $INSTALL_HOME/current/$CLI_NAME"
     return 0
   fi
-  unpack_and_link "$path" "$version"
+  local tmp
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+  unpack_and_link "$path" "$version" "$tmp/unpack"
 }
 
 # `<cli>-1.2.3-linux-x86_64.tar.gz` -> `1.2.3`. Refuses anything else.
@@ -343,24 +429,35 @@ version_from_asset() {
   printf '%s' "$rest"
 }
 
+# Unpack a tarball into `versions/<version>` and point `current` and the command at it.
+# `work` is a scratch directory owned by the **caller**, which also owns the trap that
+# removes it — see the note in `install_release`.
 unpack_and_link() {
-  local tarball="$1" version="$2" dest="$INSTALL_HOME/versions/$2"
-  local tmp
-  tmp="$(mktemp -d)"
-  # Expanded now, deliberately: $tmp is a local and is out of scope by the time the
-  # trap fires.
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmp'" RETURN
+  local tarball="$1" version="$2" work="$3" dest="$INSTALL_HOME/versions/$2"
+
+  # Never the directory this script is being read out of. `<cli> upgrade --version
+  # <the version already installed>` lands here — an explicit `--version` bypasses the
+  # "already current" short-circuit in `cli/upgrade.py` — and the `rm -rf` below would
+  # delete the running executable, its `_internal/`, and this file, which bash reads
+  # incrementally as it executes. The versioned layout makes replacing a running build
+  # safe precisely because the new one goes somewhere else; asking for the same version
+  # is the one request that defeats that, so it is refused rather than made to work.
+  if [ -n "$RUNNING_BUNDLE" ] && [ "$dest" = "$RUNNING_BUNDLE" ]; then
+    err "refusing to replace $dest: this installer is running from inside it."
+    err "  that installation is already $version. Name a different version, or run"
+    err "  the installer from outside the bundle."
+    return 1
+  fi
 
   # Unpack beside the destination and move into place, rather than into it. A tar that
   # dies halfway otherwise leaves a directory that looks installed, and the next run
   # finds a version already present and does nothing about it.
   say "unpacking…"
-  mkdir -p "$tmp/x" "$INSTALL_HOME/versions"
-  tar -xzf "$tarball" -C "$tmp/x"
-  [ -x "$tmp/x/$CLI_NAME/$CLI_NAME" ] || { err "that bundle has no $CLI_NAME executable in it"; return 1; }
+  mkdir -p "$work" "$INSTALL_HOME/versions"
+  tar -xzf "$tarball" -C "$work"
+  [ -x "$work/$CLI_NAME/$CLI_NAME" ] || { err "that bundle has no $CLI_NAME executable in it"; return 1; }
   rm -rf "$dest"
-  mv "$tmp/x/$CLI_NAME" "$dest"
+  mv "$work/$CLI_NAME" "$dest"
 
   # What `current` pointed at before the flip. Kept — see prune_versions.
   local previous=""
@@ -381,6 +478,9 @@ unpack_and_link() {
 
   mkdir -p "$BIN_DIR"
   ln -sfn "$INSTALL_HOME/current/$CLI_NAME" "$BIN_DIR/$CLI_NAME"
+  # So the next run — an upgrade a year later, run by the CLI itself — puts the command
+  # back here rather than in the default place. See `resolve_layout`.
+  printf '%s\n' "$BIN_DIR" > "$INSTALL_HOME/$BIN_DIR_RECEIPT"
 
   prune_versions "$version" "$previous"
   say "installed to $dest"
@@ -493,15 +593,25 @@ ensure_uv() {
 
 # --------------------------------------------------------------- after either path
 
+# Loud, and deliberately **not** fatal.
+#
+# The install succeeded — the self-test above ran the installed executable and it
+# worked. What is left is the user's shell configuration, which is not this script's to
+# get wrong, and exiting non-zero here made a successful install report failure. That
+# mattered in one place in particular: `<cli> upgrade` runs this script as a child whose
+# PATH need not contain the bin directory, turning every such upgrade into
+# `upgrade_failed` over a working installation.
+#
+# The message stays exactly as loud as it was; only the exit code changed.
 check_path() {
   command -v "$CLI_NAME" >/dev/null 2>&1 && return 0
-  err "${CLI_NAME} installed but is not on PATH."
+  err "${CLI_NAME} is installed at $BIN_DIR/$CLI_NAME but that is not on your PATH."
   case "${SHELL:-}" in
     */zsh) err "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
     */fish) err "  fish_add_path $BIN_DIR" ;;
     *)     err "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.bashrc && exec bash" ;;
   esac
-  exit 1
+  return 0
 }
 
 self_test() {
@@ -529,7 +639,9 @@ self_test() {
 }
 
 run_init() {
-  local skills_dest="${1:-}"
+  # By path, not through PATH: `check_path` is a warning now, so the wizard has to be
+  # reachable even on the install that just triggered it.
+  local exe="$1" skills_dest="${2:-}"
   # When this script is itself being piped from curl, the pipe owns stdin, so the
   # wizard has to read the terminal directly. With no terminal at all (CI, a
   # non-interactive shell) it must not block waiting for input that will never come.
@@ -548,9 +660,9 @@ run_init() {
   # printing its machine-contract JSON object, which after a wizard the user just
   # finished reading is noise landing under the closing line.
   if [ -n "$skills_dest" ]; then
-    "$CLI_NAME" init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
+    "$exe" init --skills-dest "$skills_dest" < /dev/tty >/dev/null || true
   else
-    "$CLI_NAME" init < /dev/tty >/dev/null || true
+    "$exe" init < /dev/tty >/dev/null || true
   fi
 }
 
@@ -576,12 +688,20 @@ run_uninstall() {
   : 2>/dev/null < /dev/tty || have_tty=0
   if [ "$assume_yes" -eq 1 ] || [ "$have_tty" -eq 0 ]; then flags+=(--yes); fi
 
-  if command -v "$CLI_NAME" >/dev/null 2>&1; then
+  # The bin directory first, since `resolve_layout` recovered the one this installation
+  # actually used — an install made with `--bin-dir` need not be on PATH at all, and
+  # skipping the skill removal for that reason would leave files behind while reporting
+  # a clean uninstall.
+  local exe=""
+  if [ -x "$BIN_DIR/$CLI_NAME" ]; then exe="$BIN_DIR/$CLI_NAME"
+  elif command -v "$CLI_NAME" >/dev/null 2>&1; then exe="$CLI_NAME"
+  fi
+  if [ -n "$exe" ]; then
     say "removing installed Agent Skills and configuration…"
     if [ "$have_tty" -eq 1 ]; then
-      "$CLI_NAME" uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
+      "$exe" uninstall "${flags[@]+"${flags[@]}"}" < /dev/tty >/dev/null || true
     else
-      "$CLI_NAME" uninstall "${flags[@]+"${flags[@]}"}" >/dev/null || true
+      "$exe" uninstall "${flags[@]+"${flags[@]}"}" >/dev/null || true
     fi
   else
     err "${CLI_NAME} is not on PATH; skipping skill removal (run '${CLI_NAME} uninstall' yourself if it is installed elsewhere)"

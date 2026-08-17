@@ -84,6 +84,25 @@ check_tag "empty response" "" ""
 # ------------------------------------------------------------------- asset naming
 
 echo
+echo "hints:"
+
+# Under the documented `curl … | bash`, `$0` is the string "bash" — so a hint built from
+# it reads `bash --from-source`, which starts an interactive shell instead of installing
+# anything. Every refusal in the installer ends by naming this, including the one every
+# install hits while the newest release still predates bundles.
+# SELF and RUNNING_BUNDLE below are read by the sourced installer, not by this file.
+# shellcheck disable=SC2034
+SELF="" # as when piped from curl
+case "$(from_source_hint)" in
+  curl*--from-source) pass "piped from curl: the hint is the documented one-liner" ;;
+  *) bad "piped from curl" "got $(from_source_hint)" ;;
+esac
+# shellcheck disable=SC2034
+SELF="$HERE/install.sh"
+equal "run as a file: the hint names the file" \
+  "$(from_source_hint)" "bash $HERE/install.sh --from-source"
+
+echo
 echo "asset naming:"
 
 # The name the builder writes and the name the installer asks for are one decision made
@@ -227,6 +246,45 @@ if install_file "$SCRATCH/releases/nope.tar.gz" 0 >/dev/null 2>&1; then
 else
   pass "--from-file refuses a missing file"
 fi
+
+# The scratch directory each install downloads into has to go. Bash RETURN traps are
+# global rather than per-frame, so a trap in `unpack_and_link` used to replace the one in
+# `install_release` and leave the ~47 MB tarball in /tmp on every install — an accumulation
+# per run, which is the thing the re-runnable-installer rule exists to prevent.
+before="$(find "${TMPDIR:-/tmp}" -maxdepth 2 -name "$CLI_NAME-*.tar.gz" 2>/dev/null | grep -vc "^$SCRATCH" || true)"
+make_fixture 4.0.0 "$TRIPLE"
+install_release v4.0.0 0 >/dev/null 2>&1
+after="$(find "${TMPDIR:-/tmp}" -maxdepth 2 -name "$CLI_NAME-*.tar.gz" 2>/dev/null | grep -vc "^$SCRATCH" || true)"
+equal "an install leaves no scratch tarball behind" "$after" "$before"
+
+# `<cli> upgrade --version <the version already installed>` reaches install_release with
+# a destination that *is* the bundle this script is being read out of. The rm -rf that
+# makes way for the new copy would take the running executable, its _internal/ and this
+# file with it — so it is refused. The guard reads RUNNING_BUNDLE, which the real script
+# derives from its own path; set it by hand here, since this file is not inside a bundle.
+# shellcheck disable=SC2034
+RUNNING_BUNDLE="$INSTALL_HOME/versions/4.0.0"
+if install_release v4.0.0 0 >/dev/null 2>&1; then
+  bad "refuses to overwrite the bundle it is running from" "went ahead"
+else
+  pass "refuses to overwrite the bundle it is running from"
+fi
+equal "and the running bundle is still there" \
+  "$([ -x "$INSTALL_HOME/versions/4.0.0/$CLI_NAME" ] && echo yes)" "yes"
+# shellcheck disable=SC2034
+RUNNING_BUNDLE=""
+
+# Where the command went is remembered, so an upgrade a year later — run by the CLI
+# itself, with no --bin-dir to pass on — puts it back in the same place rather than in
+# the default one.
+equal "the bin directory is recorded" "$(cat "$INSTALL_HOME/$BIN_DIR_RECEIPT")" "$BIN_DIR"
+recovered="$(
+  export MEDIA_AI_HOME="$INSTALL_HOME"
+  unset MEDIA_AI_BIN_DIR
+  resolve_layout ""
+  printf '%s' "$BIN_DIR"
+)"
+equal "…and read back by resolve_layout" "$recovered" "$SCRATCH/bin"
 
 # A dry run says what it would do and writes nothing.
 rm -rf "$SCRATCH/dryrun"

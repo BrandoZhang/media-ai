@@ -91,6 +91,15 @@ class Install:
         an oversight — the bundled installer names the repository it came from, and a
         build that fetched its releases from somewhere other than where its installer
         points would be the more surprising of the two.
+
+        Nothing here passes ``--bin-dir`` or a home directory either, and that is the
+        same kind of deliberate. A bundled installer sits at
+        ``<home>/versions/<version>/_internal/install.sh``, so it works out which
+        installation it belongs to from its own path and reads the bin directory back
+        from the receipt the first install wrote. Passing them from here would be a
+        second opinion about a layout this side does not own — and the fields it would
+        have to guess from (``prefix``) are exactly the ones a non-default
+        ``--bin-dir`` or ``MEDIA_AI_HOME`` makes wrong.
         """
         source = f"git+https://github.com/{repo}{f'@v{version}' if version else ''}"
         if self.method == "uv-tool":

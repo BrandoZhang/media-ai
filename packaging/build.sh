@@ -23,7 +23,9 @@ set -euo pipefail
 # dependency bump: change the line, run this, run the smoke test it ends with.
 PYINSTALLER_VERSION="${MEDIA_AI_PYINSTALLER_VERSION:-6.22.1}"
 
-#: The optional extras frozen into the bundle, as a `pyproject.toml` extras list.
+#: The optional extras frozen into the bundle, **comma-separated** — the syntax a
+#: requirement takes them in (`media-ai[a,b]`), so there is one spelling rather than one
+#: for declaring and another for installing.
 #:
 #: This is the one decision a bundle cannot leave to the user, so it is made here and
 #: written down. An extra exists because not every installation should carry it — but
@@ -105,7 +107,7 @@ main() {
   local bundle="$work/dist/$cli"
   [ -x "$bundle/$cli" ] || { err "the build produced no executable at $bundle/$cli"; return 1; }
   fix_permissions "$bundle"
-  smoke_test "$bundle/$cli" "$cli" "$version" "$work/scratch"
+  smoke_test "$bundle/$cli" "$cli" "$version" "$work/scratch" "$venv/bin/python"
 
   # Resolved to an absolute path before anything uses it. `tar` runs from inside the
   # build directory (it packs `<cli>/`, not a path with `$work` in it), so a relative
@@ -209,7 +211,7 @@ smoke_test() {
   # is present *and* executable, and `doctor` walks the packaged skills and the
   # credential machinery. Between them they cover everything the spec file has to get
   # right, which is why this is not optional and not a separate script.
-  local exe="$1" cli="$2" version="$3" scratch="$4"
+  local exe="$1" cli="$2" version="$3" scratch="$4" python="$5"
   mkdir -p "$scratch"
   # A scratch HOME so the build cannot read — or write — the builder's own config,
   # and the usage ledger goes with it rather than into the current directory.
@@ -224,7 +226,10 @@ smoke_test() {
   step "$exe" animation export --binding local/ffmpeg --input "$scratch/probe.mp4" \
        --output "$scratch/probe.webp" --max-width 160
   step "$exe" doctor
-  case " $BUNDLE_EXTRAS " in *" otel "*) telemetry_test "$exe" "$scratch" ;; esac
+  # Commas, matching the format BUNDLE_EXTRAS is declared in. Matching on spaces here
+  # while installing a comma-separated list is how this check silently stops running the
+  # day a second extra is added.
+  case ",$BUNDLE_EXTRAS," in *,otel,*) telemetry_test "$exe" "$scratch" "$python" ;; esac
   say "smoke test passed (offline, no key needed)"
 }
 
@@ -241,7 +246,7 @@ telemetry_test() {
   # is also the path that would break first, since OpenTelemetry resolves its context
   # runtime and its exporters through entry points, and entry points need distribution
   # metadata that a freeze does not carry unless it is told to.
-  local exe="$1" scratch="$2" out
+  local exe="$1" scratch="$2" python="$3" out
   out="$(MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_EXPORTER=console \
          "$exe" image generate --binding mock/mock --prompt "telemetry check" \
          --output "$scratch/otel.png" 2>&1 >"$scratch/otel.json")" || {
@@ -258,7 +263,10 @@ telemetry_test() {
   # required to be — the console exporters are constructed with `out=sys.stderr` for
   # exactly this reason, and a freeze is a fine place for that to silently regress.
   grep -q '"name":' <<<"$out" || { err "telemetry is on but no span was exported"; return 1; }
-  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$scratch/otel.json" \
+  # The build environment's interpreter, not the host's `python3`: this script exists to
+  # build on a machine that need not have a usable Python of its own, and failing at the
+  # last step of a five-minute freeze for want of one would be a poor joke.
+  "$python" -c 'import json,sys; json.load(open(sys.argv[1]))' "$scratch/otel.json" \
     || { err "telemetry on stdout: the result is no longer one JSON object"; return 1; }
   say "telemetry check passed (spans on stderr, stdout still one JSON object)"
 }
