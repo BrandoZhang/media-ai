@@ -59,6 +59,8 @@ media-ai/
 │       ├── media/          # local ffmpeg / Pillow helpers
 │       ├── providers/      # per-provider adapters — the wire, and nothing else
 │       └── skills/         # agent skills (shipped as package data)
+├── install/                # install.sh (curl | bash) + its offline unit tests
+├── packaging/              # the standalone bundle: PyInstaller spec + build.sh
 ├── tests/                  # offline test suite
 └── docs/                   # this guide + architecture/credentials/…
 ```
@@ -83,6 +85,8 @@ it lands instead of the day someone remembers to extend a path list.
 | Autofix lint | `uv run ruff check . --fix` |
 | Run the CLI offline | `uv run media-ai image generate --binding mock/mock --prompt "a red bike" --output /tmp/x.png` |
 | Python REPL in the env | `uv run python` |
+| Installer unit tests (offline) | `bash install/test_installer.sh` |
+| Build the standalone bundle for this machine | `bash packaging/build.sh` |
 
 `uv run` re-syncs the env if `pyproject.toml`/`uv.lock` changed, so after `git pull`
 you can go straight to `uv run pytest`.
@@ -202,6 +206,45 @@ file is still valid YAML. The usual cause is a literal `$`+`{{` appearing anywhe
 the file, comments included: GitHub evaluates its own expressions on the raw text
 before the runner ever sees it.
 
+## The standalone bundle
+
+The way most people get this CLI is a tarball that needs no Python:
+
+```bash
+bash packaging/build.sh                    # -> dist/media-ai-<version>-<os>-<arch>.tar.gz (+ .sha256)
+bash packaging/build.sh --python 3.12      # pick the interpreter that goes inside it
+bash install/install.sh --from-file dist/media-ai-*.tar.gz --no-init   # install what you just built
+```
+
+`build.sh` makes a throwaway virtualenv, installs the project plus a pinned PyInstaller
+into it, freezes it with [`packaging/standalone.spec`](../packaging/standalone.spec),
+then **runs the result** — an image through Pillow, a clip and an animation through the
+bundled ffmpeg, and `doctor` — before it packs anything. It builds for `uname` and takes
+no target: a bundle carries a compiled interpreter, Pillow's extension modules and an
+ffmpeg binary, and none of those cross-compile. CI builds one on Linux for every pull
+request; the release workflow builds all four (linux/macOS × x86_64/arm64) and attaches
+them to the release before it is published.
+
+Three things are worth knowing before touching the spec:
+
+- **Nothing about the bundle is discovered.** Binding manifests and skills are data
+  files, and adapters are imported from strings in those manifests, so both are named
+  explicitly (`collect_data_files`, `collect_submodules`). Get either wrong and you get
+  a bundle that starts, answers `--version`, and fails on the first real command.
+- **The installer ships inside it.** A standalone install has no package manager, so
+  `upgrade` and `uninstall` run `bash <bundle>/_internal/install.sh`
+  ([`cli/_install.py`](../src/media_ai/cli/_install.py)). That is also why an upgrade
+  writes a new `versions/<version>` directory and moves a symlink instead of overwriting
+  anything: the installer is running from inside the bundle it is replacing.
+- **The asset name is a contract.** `packaging/build.sh` and `install/install.sh` each
+  carry a byte-identical copy of the `asset naming` block, because one is fetched alone
+  by curl and the other runs from a checkout — there is no third file to share.
+  `tests/test_packaging.py` compares them; edit both.
+
+What a bundle deliberately cannot do — the optional extras, third-party binding plugins,
+musl — is in [LIMITATIONS.md](LIMITATIONS.md#the-standalone-bundle), and `--from-source`
+is the answer to all of it.
+
 ## Releasing
 
 **Bump the version in a pull request. Merging it releases.**
@@ -212,10 +255,17 @@ python scripts/bump_version.py 0.3.0     # no leading v
 
 That is the whole procedure. On every push to the default branch,
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) reads
-`__version__`, and if no tag matches it yet, runs the full suite, `shellcheck` and the
-installer's own tests, then tags `v0.3.0`, builds the sdist + wheel, and publishes a
-GitHub Release with generated notes and the distributions attached. Merge anything that
-does *not* change the version and the workflow exits green having done nothing.
+`__version__`, and if no tag matches it yet, builds the four standalone bundles, runs
+the full suite, `shellcheck` and the installer's own tests, then tags `v0.3.0`, builds
+the sdist + wheel, and publishes a GitHub Release with generated notes, the
+distributions **and the bundles** attached. Merge anything that does *not* change the
+version and the workflow exits green having done nothing.
+
+The bundles are built before the release exists rather than attached to it afterwards,
+which is why the workflow is three jobs (`plan` → `bundle` → `release`) rather than one.
+A release that appeared while four runners were still building would answer 404 to
+everybody whose `install.sh` reached it in that window — and the release feed would
+already be naming it as the latest version.
 
 The trigger is “this version has no tag yet”, not “the version line changed in this
 push”. That is idempotent — a re-run, a failed run, a squash merge and a force-push all

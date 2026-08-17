@@ -32,9 +32,27 @@ metadata, or model-visible output), and a **token-cost ledger**.
 curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash
 ```
 
-Installs [uv](https://docs.astral.sh/uv/) if it is missing, installs the CLI, runs an
-offline self-test, then hands over to the setup wizard. Options: `--version REF`,
-`--skills-dest PATH`, `--no-init`, `--dry-run`.
+**No Python needed.** That downloads a standalone bundle for your machine — the CLI,
+Pillow and ffmpeg with an interpreter inside it — checks its published SHA-256, unpacks
+it to `~/.local/share/media-ai/versions/<version>`, links `~/.local/bin/media-ai` at it,
+runs an offline self-test, then hands over to the setup wizard. macOS and Linux, x86_64
+and arm64. Options: `--version REF`, `--bin-dir PATH`, `--skills-dest PATH`,
+`--no-init`, `--dry-run`.
+
+Upgrades write a new directory and move the symlink, so `media-ai upgrade` can replace
+the build it is running from.
+
+Two other ways in, for the cases a bundle cannot serve — musl (Alpine), an architecture
+with no published asset, the optional extras, or third-party binding plugins
+([docs/LIMITATIONS.md](docs/LIMITATIONS.md#the-standalone-bundle)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash -s -- --from-source
+bash install/install.sh --from-file media-ai-0.7.1-macos-arm64.tar.gz   # a bundle you already have
+```
+
+`--from-source` installs [uv](https://docs.astral.sh/uv/) if it is missing and builds
+from git, which is what this installer used to do by default.
 
 Already installed, or configuring a second machine:
 
@@ -118,6 +136,11 @@ prints the one command that removes it; to do the whole lot in one step:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BrandoZhang/media-ai/main/install/install.sh | bash -s -- --uninstall
 ```
+
+That removes the bundle directory and the symlink, and also runs `uv tool uninstall` if
+a source install is on the machine too — it tries both rather than guessing which one
+you have, since leaving the other behind would leave a working `media-ai` on `PATH`
+after an uninstall that said it succeeded.
 
 ### From a clone
 

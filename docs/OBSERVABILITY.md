@@ -90,9 +90,19 @@ An installation that never exports should not carry it, and — more to the poin
 
 ```bash
 pip install "media-ai[otel]"                                  # a pip install
-uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # the installer's route
+uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/media-ai"   # a source install
 uv sync --extra otel                                          # a checkout
 ```
+
+**The standalone bundle cannot have it.** That is the same argument one step further
+on: freezing the SDK into the default install would hand the tree to everybody
+permanently, and a bundle has no environment to add a package to afterwards. So an
+installation from `install.sh`'s default path exports nothing, whatever `[telemetry]`
+says, and gets the notice below saying so. `install.sh --from-source` is the way to an
+installation the extra can be added to — which is exactly what the notice's `action`
+says when it is a bundle asking, because a `pip install` line there would install the
+package into some unrelated Python and change nothing
+([`core/packaging.py`](../src/media_ai/core/packaging.py)).
 
 So the SDK is imported **lazily, once, and only when telemetry is enabled**. The three
 states and what each does:
@@ -105,7 +115,7 @@ states and what each does:
 The notice is the load-bearing half of the last cell. Asking for telemetry and getting
 silence is indistinguishable from asking for telemetry and getting a collector that
 drops everything, and the party who can fix it is the agent or operator reading
-stdout — so it rides in `notices[]` with the `pip install` command as its `action`,
+stdout — so it rides in `notices[]` with the install command for *this* build as its `action`,
 the same shape `skills_stale` and `update_available` already use. Nothing *fails*: a
 missing exporter is not a reason to refuse a generation.
 

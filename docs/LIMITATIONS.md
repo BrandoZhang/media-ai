@@ -72,6 +72,44 @@ before relying on them in production; the adapters are written to fail safely
 - **Vertex AI** (OAuth/service-account, different host) is a separate auth path and
   is out of scope for this build (Developer API-key path only).
 
+## The standalone bundle
+
+The default install is a **standalone bundle** — the CLI, Pillow, ffmpeg and a Python
+interpreter in one tarball, so a machine needs no Python at all (`install/install.sh`,
+built by `packaging/build.sh`). What a bundle cannot do, it cannot be made to do
+afterwards: there is no environment to add a package to. Each of these is a reason to
+install with `--from-source` instead, which gives an ordinary `uv tool` installation.
+
+- **The optional extras are not in it.** `otel` (OpenTelemetry) and `keychain`
+  (`keyring://` credential references) are extras for the reason `pyproject.toml`
+  gives — an install that never exports should not carry a tree several times its own
+  size — and freezing them in would make that choice for everyone, permanently. Both
+  degrade the way they do anywhere else: telemetry becomes a no-op plus a
+  `telemetry_unavailable` notice, and a `keychain://` reference raises with an install
+  hint. On a bundle that hint is only actionable via a source install.
+- **Third-party binding plugins are not discoverable.** A plugin registers through the
+  `media_ai.bindings` / `media_ai.credentials` entry-point groups, which are read out
+  of installed distribution metadata — and a bundle has no site-packages for a plugin
+  to be installed into. Built-in bindings are unaffected; a deployment that ships its
+  own adapter or credential scheme wants the source install.
+- **glibc, and the version it was built against.** The Linux bundles are built on the
+  oldest runner image CI still offers and will not start on anything older, nor on musl
+  (Alpine). The installer detects musl and says so rather than letting the dynamic
+  loader report a bare "not found".
+- **Four platforms.** linux/macOS × x86_64/arm64. Anything else — including Windows
+  outside WSL — has no bundle; the installer refuses and names `--from-source`.
+- **The binaries are unsigned and unnotarized on macOS.** They carry the ad-hoc
+  signature arm64 requires to execute, which is enough for a `curl`-installed tarball
+  (nothing sets a quarantine attribute on it) but not for one downloaded through a
+  browser, where Gatekeeper will ask.
+- **Startup costs about 30 ms more** — ~120 ms against ~90 ms for the same command from
+  a virtualenv (measured on Linux/x86_64, `--version`, warm cache). The bootloader has
+  to locate and map the archive before the interpreter starts. It is a constant, not a
+  factor: a generation spends its time on the network or in ffmpeg either way.
+- **A bundle is ~120 MB unpacked, ~45 MB downloaded**, and ffmpeg is 78 MB of it. Two
+  versions are kept on disk during an upgrade (the installer prunes anything older),
+  because `upgrade` runs from inside the bundle being replaced.
+
 ## Cross-cutting
 
 - **Model IDs drift.** Volc IDs are account-specific; OpenAI/Gemini snapshot names

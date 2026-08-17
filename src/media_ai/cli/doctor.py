@@ -28,14 +28,16 @@ import tomllib
 from pathlib import Path
 
 from .. import __version__
-from ..brand import cli_name, cmd, dist_name
+from ..brand import cli_name, cmd
 from ..core.config import config_path
 from ..core.errors import MediaError
 from ..core.logging import FORMATS
+from ..core.packaging import extra_hint
 from ..core.result import SCHEMA_VERSION
 from ..credentials.stores import credentials_path
 from . import common
 from ._discovery import available_skills
+from ._install import detect
 from ._prompt import UNICODE, glyphs_for
 from ._skillstore import install_roots, installed_skills, skill_is_current
 
@@ -52,13 +54,24 @@ def _check(name: str, status: str, detail: str) -> dict:
 
 
 def _check_cli() -> list[dict]:
+    """Version, how it was installed, and whether the shell can find it.
+
+    The install method is here because it is the first thing that makes the rest of a
+    diagnosis legible: a standalone bundle carries its own interpreter and its own
+    ffmpeg, so "which python is this" and "is uv on PATH" are questions about a
+    different installation than the one the user has. It also decides the ``PATH``
+    advice below — ``uv run`` is a real fallback for a package and a dead end for a
+    bundle, which has no environment to run inside.
+    """
     cli = cli_name()
-    out = [_check("version", "ok", f"{cli} {__version__} (python {sys.version.split()[0]})")]
+    install = detect()
+    out = [_check("version", "ok", f"{cli} {__version__} ({install.method}, python {sys.version.split()[0]})")]
     on_path = shutil.which(cli)
+    fallback = "" if install.method == "standalone" else ", or call it via `uv run`"
     out.append(
         _check("path", "ok", on_path)
         if on_path
-        else _check("path", "warn", f"{cli} is not on PATH; add ~/.local/bin to it, or call it via `uv run`")
+        else _check("path", "warn", f"{cli} is not on PATH; add ~/.local/bin to it{fallback}")
     )
     return out
 
@@ -111,7 +124,7 @@ def _check_telemetry() -> list[dict]:
     except ImportError:
         return [_check("telemetry", "warn",
                        f"enabled, but the OpenTelemetry SDK is not installed — nothing is exported; "
-                       f"run: pip install '{dist_name()}[{EXTRA}]'")]
+                       f"run: {extra_hint(EXTRA)}")]
     where = {
         "otlp": f"otlp -> {cfg.endpoint}",
         "console": "console -> stderr",

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .. import __version__
-from ..brand import cli_name, cmd, dist_name
+from ..brand import cli_name, cmd
 from ..core import update
 from ..core.binding import AuthKind
 from ..core.config import (
@@ -35,6 +35,7 @@ from ..core.config import (
     render_config,
 )
 from ..core.errors import ErrorCategory, MediaError
+from ..core.packaging import extra_hint
 from ..core.registry import catalog
 from ..core.result import SCHEMA_VERSION
 from ..core.scene import scenes_for_group
@@ -959,7 +960,7 @@ def _report_telemetry(summary: dict, prompter) -> None:
         return
     prompter.note(f"\nTelemetry: traces and metrics to {telemetry['endpoint']}")
     if not _otel_installed():
-        prompter.note(f"  install the SDK, or nothing is exported: pip install '{dist_name()}[{EXTRA}]'")
+        prompter.note(f"  install the SDK, or nothing is exported: {extra_hint(EXTRA)}")
 
 
 def _report(summary: dict, prompter) -> None:
