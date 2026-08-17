@@ -96,6 +96,40 @@ def test_both_scripts_use_the_shared_block_rather_than_repeating_it():
         assert not outside, f"{path.name} builds an asset name outside the shared block: {outside}"
 
 
+#: A bare ``$name`` immediately followed by a byte outside ASCII. This is the shape of
+#: the bug that broke the first real release: ``say "… for $triple…"`` works everywhere
+#: it was tested and fails on macOS, where ``/bin/bash`` is 3.2 and scans a bare
+#: ``$name`` byte by byte — taking the ellipsis's high bytes to be part of the
+#: identifier, expanding an unset variable, and dying under ``set -u``.
+_UNBRACED_BEFORE_NON_ASCII = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]")
+
+SHELL_SCRIPTS = ("install/install.sh", "install/test_installer.sh", "packaging/build.sh")
+
+
+@needs_checkout
+def test_no_shell_variable_runs_into_a_non_ascii_character():
+    """Brace it: ``${name}…``, never ``$name…``.
+
+    Read as bytes and not as text, because the hazard *is* the bytes: what bash 3.2
+    does with them is invisible in a decoded string. Comment lines are exempt — they do
+    not execute, and the note explaining this rule quotes the broken form on purpose.
+
+    This is not a style rule. It is the one class of defect in these files that every
+    check the repo has will pass: shellcheck (any version) is happy, the offline suite
+    never runs a shell script under macOS bash, and CI's own bundle job builds on Linux.
+    The first thing that would have noticed was a release runner — which is exactly what
+    did, after the tag it was meant to guard had already been merged toward.
+    """
+    offenders = []
+    for name in SHELL_SCRIPTS:
+        for number, line in enumerate((ROOT / name).read_bytes().splitlines(), 1):
+            if line.lstrip().startswith(b"#"):
+                continue
+            if _UNBRACED_BEFORE_NON_ASCII.search(line):
+                offenders.append(f"{name}:{number}: {line.decode('utf-8', 'replace').strip()}")
+    assert not offenders, "brace these — macOS bash 3.2 reads the following bytes as part of the name:\n" + "\n".join(offenders)
+
+
 @needs_checkout
 def test_the_installer_still_offers_the_source_path():
     """The bundle cannot serve musl, an unlisted architecture, an extra it was not

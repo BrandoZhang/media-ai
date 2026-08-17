@@ -100,7 +100,14 @@ main() {
   cli="$("$venv/bin/python" -c 'import media_ai.brand as b; print(b.CLI_NAME)')"
   version="$("$venv/bin/python" -c 'import media_ai; print(media_ai.__version__)')"
 
-  say "building $cli $version for $triple…"
+  # Braced, and it is not decoration: an unbraced `$triple…` is a *macOS-only* failure.
+  # `/bin/bash` there is 3.2, which scans a bare `$name` byte by byte and takes the
+  # ellipsis's high bytes to be part of the identifier — so the expansion becomes an
+  # unset variable and `set -u` kills the build. bash 5 on Linux gets it right, which
+  # is why this passed every Linux job, every local run and CI, and then failed both
+  # macOS runners on the first real release. `tests/test_packaging.py` now refuses any
+  # bare `$name` followed by a non-ASCII character.
+  say "building $cli $version for ${triple}…"
   ( cd "$work" && "$venv/bin/pyinstaller" --noconfirm --clean --log-level WARN \
       --distpath "$work/dist" --workpath "$work/build" "$ROOT/packaging/standalone.spec" >&2 )
 
@@ -118,7 +125,7 @@ main() {
   output="$(cd "$output" && pwd)"
   local asset
   asset="$output/$(asset_name "$cli" "$version" "$triple")"
-  say "packing $asset…"
+  say "packing ${asset}…"
   # COPYFILE_DISABLE stops BSD tar from writing an AppleDouble `._file` beside every
   # entry that carries an extended attribute, which is most of them on macOS.
   ( cd "$work/dist" && COPYFILE_DISABLE=1 tar -czf "$asset" "$cli" )
