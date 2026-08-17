@@ -94,14 +94,23 @@ uv tool install --force "media-ai[otel] @ git+https://github.com/BrandoZhang/med
 uv sync --extra otel                                          # a checkout
 ```
 
-**The standalone bundle cannot have it.** That is the same argument one step further
-on: freezing the SDK into the default install would hand the tree to everybody
-permanently, and a bundle has no environment to add a package to afterwards. So an
-installation from `install.sh`'s default path exports nothing, whatever `[telemetry]`
-says, and gets the notice below saying so. `install.sh --from-source` is the way to an
-installation the extra can be added to — which is exactly what the notice's `action`
-says when it is a bundle asking, because a `pip install` line there would install the
-package into some unrelated Python and change nothing
+**The standalone bundle ships with it.** That looks like a contradiction and is not:
+the argument above is about an installation that *could* add the SDK later and should
+not be made to carry it — and a frozen bundle has no later. There is no environment to
+`pip install` into, so the choice is ship it or make it permanently unavailable, and
+"telemetry is not available on the default install" is the wrong answer for the tree it
+saves (+2 MB compressed). Off is still off: the SDK is imported lazily and only when
+telemetry is enabled, so a bundle that never exports pays the download and nothing else.
+
+`packaging/build.sh` names it in `BUNDLE_EXTRAS`, and the build's own smoke test turns
+telemetry on with the console exporter and fails unless a span reaches stderr — because
+this is the one thing that fails *politely*: a bundle that quietly stopped collecting
+OpenTelemetry would pass every other check and go on passing until an operator turned
+telemetry on and got silence.
+
+`keychain` is the extra that is still not in a bundle, and there the notice's `action`
+matters: a `pip install` line would install the package into some unrelated Python and
+change nothing, so what a bundle prints instead is `install.sh --from-source`
 ([`core/packaging.py`](../src/media_ai/core/packaging.py)).
 
 So the SDK is imported **lazily, once, and only when telemetry is enabled**. The three

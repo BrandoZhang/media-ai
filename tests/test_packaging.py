@@ -98,9 +98,10 @@ def test_both_scripts_use_the_shared_block_rather_than_repeating_it():
 
 @needs_checkout
 def test_the_installer_still_offers_the_source_path():
-    """The bundle cannot serve musl, an unlisted architecture, the optional extras or a
-    third-party binding plugin. ``--from-source`` is the documented answer to all four,
-    and every refusal in the installer points at it, so it has to keep existing."""
+    """The bundle cannot serve musl, an unlisted architecture, an extra it was not
+    frozen with, or a third-party binding plugin. ``--from-source`` is the documented
+    answer to all four, and every refusal in the installer points at it, so it has to
+    keep existing."""
     text = INSTALLER.read_text(encoding="utf-8")
     assert "--from-source" in text
     assert "uv tool install --force" in text, "the source path no longer installs anything"
@@ -226,21 +227,55 @@ def test_an_unfrozen_run_is_unaffected():
     assert _install.detect().method in {"pip", "editable", "uv-tool"}
 
 
-# --------------------------------------------------- 4. the extras, which cannot come
+# ----------------------------------------- 4. the extras: what is in, and what to say
 
-# The extras are the one place the two install methods disagree about something a user
-# is *told to do*. `pip install '<dist>[otel]'` is correct for a wheel in a virtualenv
-# and actively misleading for a bundle: it would install the package into some other
-# Python, leave the bundle untouched, and the collector would stay just as empty. Hints
-# here are documented as usually runnable and an agent runs whatever appears in one.
+# A bundle carries whichever extras it was frozen with and can never gain another, so
+# `BUNDLE_EXTRAS` is a decision rather than a default — and the two places that describe
+# it to a user (the builder's own comment block, and LIMITATIONS.md) are the ones that
+# go stale. `otel` is checked by name because taking it back out is a real regression
+# and a silent one: telemetry degrades politely to a no-op, so the CLI keeps working and
+# only an operator who enables it ever finds out.
+
+
+@needs_checkout
+def test_the_bundle_ships_the_telemetry_sdk():
+    assert re.search(r'^BUNDLE_EXTRAS="\$\{MEDIA_AI_BUNDLE_EXTRAS:-([^}]*)\}"', BUILDER.read_text(), re.M).group(1) \
+        .split() == ["otel"], "packaging/build.sh no longer freezes exactly the otel extra"
+
+
+@needs_checkout
+def test_the_build_applies_the_extras_to_what_it_installs():
+    """Declaring them is not installing them: what ends up frozen is whatever is in the
+    build environment, since that is what the hooks and `collect_submodules` read."""
+    assert '"${ROOT}[${BUNDLE_EXTRAS}]"' in BUILDER.read_text(), (
+        "BUNDLE_EXTRAS is declared but not applied to the project requirement"
+    )
+
+
+@needs_checkout
+def test_the_build_proves_telemetry_actually_exports():
+    """The check that cannot be replaced by a smaller one. A bundle that stopped
+    collecting OpenTelemetry starts, generates, and passes every other step — the SDK is
+    imported lazily and its absence is a `notices[]` entry, not a failure. Only turning
+    telemetry on and looking for a span catches it."""
+    text = BUILDER.read_text()
+    assert "telemetry_test" in text and "MEDIA_TELEMETRY=1" in text
+    assert "telemetry_unavailable" in text, "the build does not check for the degraded-to-no-op notice"
+
+
+# The hint is about the extras a bundle does *not* have — `keychain` today. Its wording
+# is the load-bearing part: `pip install '<dist>[keychain]'` is correct for a wheel in a
+# virtualenv and misleading for a bundle, where it would install the package into some
+# other Python and leave the reference that raised still raising. Hints here are
+# documented as usually runnable and an agent runs whatever appears in one.
 
 
 def test_the_extras_hint_is_pip_for_an_ordinary_install():
-    assert packaging.extra_hint("otel") == f"pip install '{brand.dist_name()}[otel]'"
+    assert packaging.extra_hint("keychain") == f"pip install '{brand.dist_name()}[keychain]'"
 
 
 def test_the_extras_hint_for_a_bundle_is_a_source_install(frozen):
-    hint = packaging.extra_hint("otel")
+    hint = packaging.extra_hint("keychain")
     assert hint.startswith("bash ") and hint.endswith("--from-source"), hint
     assert "pip install" not in hint
 

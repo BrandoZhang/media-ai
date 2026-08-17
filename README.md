@@ -42,8 +42,10 @@ and arm64. Options: `--version REF`, `--bin-dir PATH`, `--skills-dest PATH`,
 Upgrades write a new directory and move the symlink, so `media-ai upgrade` can replace
 the build it is running from.
 
-Two other ways in, for the cases a bundle cannot serve — musl (Alpine), an architecture
-with no published asset, the optional extras, or third-party binding plugins
+The bundle includes OpenTelemetry, so `media-ai init` can turn telemetry on and it will
+actually export. Two other ways in, for the cases a bundle cannot serve — musl (Alpine),
+an architecture with no published asset, the OS-keychain credential source, or
+third-party binding plugins
 ([docs/LIMITATIONS.md](docs/LIMITATIONS.md#the-standalone-bundle)):
 
 ```bash

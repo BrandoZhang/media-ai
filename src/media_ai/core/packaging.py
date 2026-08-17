@@ -2,12 +2,12 @@
 
 There are two shapes an installation of this CLI can have, and they differ in one way
 that reaches the user: a **standalone bundle** carries its own interpreter and cannot
-be added to. ``pip install '<dist>[otel]'`` is a perfectly good instruction for a wheel
-in a virtualenv and a misleading one for a bundle — it would install the package into
-some other Python, leave the bundle exactly as it was, and the collector would stay
-empty. This project documents ``error.hint`` and ``notices[].action`` as *usually
-runnable*, and an agent runs whatever appears in one, so the extras hint has to know
-which installation it is talking about.
+be added to. ``pip install '<dist>[keychain]'`` is a perfectly good instruction for a
+wheel in a virtualenv and a misleading one for a bundle — it would install the package
+into some other Python and leave the bundle exactly as it was, so the credential
+reference that raised would go on raising. This project documents ``error.hint`` and
+``notices[].action`` as *usually runnable*, and an agent runs whatever appears in one,
+so the extras hint has to know which installation it is talking about.
 
 This module is where that question lives, rather than in each of the three places that
 asks it (``credentials/reference.py`` for ``keychain``, ``cli/doctor.py`` and
@@ -79,11 +79,13 @@ def extra_hint(extra: str) -> str:
     """A runnable command for getting one optional extra onto *this* installation.
 
     For a package, that is pip. For a bundle it is not: there is no environment to add
-    a dependency to, and the extras are deliberately not frozen in (see
-    ``docs/LIMITATIONS.md`` — an install that never exports should not carry an
-    OpenTelemetry tree several times its own size, and a bundle would make that choice
-    for everybody permanently). So the answer is to swap the bundle for a source
-    install, which is a thing the installer it shipped with does in one flag.
+    a dependency to. A bundle carries whichever extras it was frozen with
+    (``BUNDLE_EXTRAS`` in ``packaging/build.sh``) and can never gain another, so the
+    only honest answer for one it does not have is to swap it for a source install —
+    which the installer it shipped with does in one flag.
+
+    Callers reach this on the path where the extra turned out to be *missing*, so an
+    extra that is in the bundle simply never asks.
 
     The command is returned bare, with no explanation attached: every caller already
     says what the extra is for, and a ``#`` comment inside an ``error.hint`` is one more

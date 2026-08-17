@@ -32,14 +32,21 @@ What has to be told to PyInstaller, and why each is not optional here:
     providers, so adding one needs no edit here — the same rule the rest of the repo
     follows about not keeping a second list of the models.
 
-What is deliberately **not** bundled: the ``otel`` and ``keychain`` extras. Both are
-extras for the reason ``pyproject.toml`` gives — an install that never exports should
-not carry a tree several times its own size — and freezing them in would make that
-choice for everyone, permanently, since a bundle cannot be added to afterwards. The
-CLI already degrades correctly without them (telemetry becomes a no-op with a notice;
-``keychain://`` raises with an install hint), and the source install remains the way to
-have them. ``docs/LIMITATIONS.md`` says so out loud, because a difference between two
-install methods that nobody wrote down is a bug report waiting to happen.
+Which optional extras are inside is **not** decided here — it is decided by what
+``packaging/build.sh`` installs (``BUNDLE_EXTRAS``), because that is what the hooks and
+``collect_submodules`` read. Today that is ``otel`` and not ``keychain``; the reasoning
+for each is written down beside the variable, and ``docs/LIMITATIONS.md`` says which
+is which for users, since a difference between two install methods that nobody wrote
+down is a bug report waiting to happen.
+
+Nothing here names OpenTelemetry either, and that is deliberate rather than an
+oversight: pyinstaller-hooks-contrib ships a hook that collects its entry-point groups
+(the SDK resolves its context runtime and its exporters through
+``importlib.metadata``, which a freeze does not carry unless told to). Listing them
+again here would be a second copy that goes stale against the hook. What proves it
+worked is ``build.sh``'s telemetry check, which exports a real span from the finished
+bundle — the failure mode being that telemetry degrades *politely* to a no-op, so a
+bundle that stopped collecting it would pass every other check.
 
 Run it through ``packaging/build.sh``, which is what pins the toolchain, sets the
 output paths and smoke-tests the result. Invoking ``pyinstaller`` on this file directly

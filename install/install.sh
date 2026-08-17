@@ -15,8 +15,8 @@
 #
 # `--from-source` keeps the old behaviour (install uv, install the package from git) for
 # the cases a bundle cannot serve: a platform with no published asset, musl libc, a
-# checkout, or an installation that needs the optional extras or third-party binding
-# plugins. See docs/LIMITATIONS.md.
+# checkout, third-party binding plugins, or an extra the bundle was not frozen with —
+# it carries OpenTelemetry but not the OS keychain. See docs/LIMITATIONS.md.
 #
 # Layout, and why it is not simply a directory that gets overwritten:
 #
@@ -140,7 +140,7 @@ usage: install.sh [options]
 
   --from-source      build from git with uv instead of downloading a bundle.
                      Needs a network path to an index; gives you an installation
-                     the optional extras and binding plugins can be added to.
+                     that extras and binding plugins can be added to.
   --from-file PATH   install a bundle already on disk (one you built with
                      packaging/build.sh, or downloaded yourself). Nothing is
                      fetched and nothing is checked against a published checksum.

@@ -23,6 +23,25 @@ set -euo pipefail
 # dependency bump: change the line, run this, run the smoke test it ends with.
 PYINSTALLER_VERSION="${MEDIA_AI_PYINSTALLER_VERSION:-6.22.1}"
 
+#: The optional extras frozen into the bundle, as a `pyproject.toml` extras list.
+#:
+#: This is the one decision a bundle cannot leave to the user, so it is made here and
+#: written down. An extra exists because not every installation should carry it — but
+#: "should" assumes there is a later moment to add it, and for a frozen build there is
+#: none: no environment, no package manager, nothing to `pip install` into. So the
+#: choice is *ship it or make it permanently unavailable*, and it gets made per extra:
+#:
+#: ``otel``
+#:     Shipped. Telemetry is still off by default and still costs nothing when off (the
+#:     SDK is imported lazily, only when enabled), so the download is the whole price —
+#:     and an operator who turns telemetry on and gets a `telemetry_unavailable` notice
+#:     they cannot act on is the failure this avoids.
+#:
+#: Not shipped: ``keychain``, which is genuinely optional in a way ``otel`` is not —
+#: `keyring` reaches an OS service that may not exist, and every binding can name an
+#: `env://` or `cred://` source instead. ``docs/LIMITATIONS.md`` says so out loud.
+BUNDLE_EXTRAS="${MEDIA_AI_BUNDLE_EXTRAS:-otel}"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 main() {
@@ -54,14 +73,21 @@ main() {
   [ "$keep_work" -eq 1 ] || trap "rm -rf '$work'" EXIT
   venv="$work/venv"
 
+  # What goes into the bundle is exactly what is installed here, so the extras are
+  # applied to the project requirement rather than added afterwards — `collect_submodules`
+  # and the hooks read the environment, not a list in the spec.
+  local project="$ROOT"
+  # `${ROOT}[…]`, not `$ROOT[…]`: unbraced, the bracket reads as an array subscript.
+  [ -z "$BUNDLE_EXTRAS" ] || project="${ROOT}[${BUNDLE_EXTRAS}]"
+
   say "creating the build environment ($python + pyinstaller $PYINSTALLER_VERSION)…"
   if command -v uv >/dev/null 2>&1; then
     uv venv --python "$python" "$venv" >&2
-    uv pip install --python "$venv/bin/python" "$ROOT" "pyinstaller==$PYINSTALLER_VERSION" >&2
+    uv pip install --python "$venv/bin/python" "$project" "pyinstaller==$PYINSTALLER_VERSION" >&2
   else
     "$python" -m venv "$venv" >&2
     "$venv/bin/python" -m pip install --quiet --upgrade pip >&2
-    "$venv/bin/python" -m pip install --quiet "$ROOT" "pyinstaller==$PYINSTALLER_VERSION" >&2
+    "$venv/bin/python" -m pip install --quiet "$project" "pyinstaller==$PYINSTALLER_VERSION" >&2
   fi
 
   # Both read out of the build environment rather than off a line in this file: the
@@ -198,7 +224,43 @@ smoke_test() {
   step "$exe" animation export --binding local/ffmpeg --input "$scratch/probe.mp4" \
        --output "$scratch/probe.webp" --max-width 160
   step "$exe" doctor
+  case " $BUNDLE_EXTRAS " in *" otel "*) telemetry_test "$exe" "$scratch" ;; esac
   say "smoke test passed (offline, no key needed)"
+}
+
+telemetry_test() {
+  # Prove the frozen SDK actually *exports*, not merely that it imports.
+  #
+  # This is the one part of the bundle that fails politely by design: with the SDK
+  # missing the CLI degrades to a no-op and says so in `notices[]`, which is correct
+  # behaviour for a pip install and a shipped bug for a bundle that is supposed to
+  # carry it. So a bundle that quietly stopped collecting OpenTelemetry would pass
+  # every other step here — and go on passing until an operator turned telemetry on.
+  #
+  # The console exporter, to stderr, is what makes this checkable with no collector: it
+  # is also the path that would break first, since OpenTelemetry resolves its context
+  # runtime and its exporters through entry points, and entry points need distribution
+  # metadata that a freeze does not carry unless it is told to.
+  local exe="$1" scratch="$2" out
+  out="$(MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_EXPORTER=console \
+         "$exe" image generate --binding mock/mock --prompt "telemetry check" \
+         --output "$scratch/otel.png" 2>&1 >"$scratch/otel.json")" || {
+    err "the bundle failed with telemetry on:"
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    return 1
+  }
+  if grep -q '"kind": *"telemetry_unavailable"' "$scratch/otel.json"; then
+    err "the bundle was built with the otel extra but reports the SDK as missing:"
+    sed 's/^/    /' "$scratch/otel.json" >&2
+    return 1
+  fi
+  # A span reaches stderr, and stdout stays the one JSON object it is contractually
+  # required to be — the console exporters are constructed with `out=sys.stderr` for
+  # exactly this reason, and a freeze is a fine place for that to silently regress.
+  grep -q '"name":' <<<"$out" || { err "telemetry is on but no span was exported"; return 1; }
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$scratch/otel.json" \
+    || { err "telemetry on stdout: the result is no longer one JSON object"; return 1; }
+  say "telemetry check passed (spans on stderr, stdout still one JSON object)"
 }
 
 step() {

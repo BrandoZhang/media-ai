@@ -231,6 +231,12 @@ Three things are worth knowing before touching the spec:
   files, and adapters are imported from strings in those manifests, so both are named
   explicitly (`collect_data_files`, `collect_submodules`). Get either wrong and you get
   a bundle that starts, answers `--version`, and fails on the first real command.
+- **Which extras go in is a decision, made in `BUNDLE_EXTRAS`.** An extra exists because
+  not every install should carry it — which assumes a later moment to add one, and a
+  freeze has none. Today `otel` is in and `keychain` is out, with the reasoning written
+  beside the variable. The build turns telemetry on with the console exporter and fails
+  unless a span reaches stderr, because a bundle that stopped collecting OpenTelemetry
+  degrades *politely* to a no-op and would pass every other check.
 - **The installer ships inside it.** A standalone install has no package manager, so
   `upgrade` and `uninstall` run `bash <bundle>/_internal/install.sh`
   ([`cli/_install.py`](../src/media_ai/cli/_install.py)). That is also why an upgrade
@@ -241,9 +247,9 @@ Three things are worth knowing before touching the spec:
   by curl and the other runs from a checkout — there is no third file to share.
   `tests/test_packaging.py` compares them; edit both.
 
-What a bundle deliberately cannot do — the optional extras, third-party binding plugins,
-musl — is in [LIMITATIONS.md](LIMITATIONS.md#the-standalone-bundle), and `--from-source`
-is the answer to all of it.
+What a bundle deliberately cannot do — the `keychain` extra, third-party binding
+plugins, musl — is in [LIMITATIONS.md](LIMITATIONS.md#the-standalone-bundle), and
+`--from-source` is the answer to all of it.
 
 ## Releasing
 
