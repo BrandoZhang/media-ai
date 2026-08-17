@@ -309,8 +309,19 @@ def test_the_build_proves_telemetry_actually_exports():
 # documented as usually runnable and an agent runs whatever appears in one.
 
 
-def test_the_extras_hint_is_pip_for_an_ordinary_install():
-    assert packaging.extra_hint("keychain") == f"pip install '{brand.dist_name()}[keychain]'"
+def test_the_extras_hint_names_this_interpreter_and_a_source_that_resolves():
+    """Two things a bare ``pip install '<dist>[keychain]'`` gets wrong.
+
+    It runs whichever pip is first on ``PATH`` — which on a machine with more than one
+    interpreter installs the extra somewhere else, *successfully*, leaving the reference
+    that raised still raising. ``cli/_install.py`` states that rule for the upgrade
+    steps; it is the same rule here. And the distribution is deliberately not on PyPI,
+    so the bare form resolves to nothing at all.
+    """
+    hint = packaging.extra_hint("keychain")
+    assert hint.startswith(f"{sys.executable} -m pip install "), hint
+    assert not hint.startswith("pip "), "a bare pip installs into whichever env is first on PATH"
+    assert f"{brand.dist_name()}[keychain] @ git+" in hint, "the dist is not on an index; name the source"
 
 
 def test_the_extras_hint_for_a_bundle_is_a_source_install(frozen):
@@ -380,3 +391,51 @@ def test_doctor_reports_the_install_method(frozen):
     path_line = next(c for c in doctor._check_cli() if c["check"] == "path")
     if path_line["status"] == "warn":
         assert "uv run" not in path_line["detail"], "a bundle has no environment to run inside"
+
+
+# ------------------------------------------- 5. the version a user actually types
+
+# A release is *tagged* `v0.8.0` and its version *is* `0.8.0`. Somebody upgrading reads
+# the tag off the releases page and passes it back, and every install method then added
+# its own `v` — producing `git+…@vv0.8.0` and `--version vv0.8.0`, refs no repository
+# has. `_target` normalises once, because the value is used three ways: to build that
+# ref, to compare against the running version, and as `to` in the result.
+
+
+def _args(target):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(target=target)
+
+
+@pytest.mark.parametrize("typed", ["0.8.0", "v0.8.0"])
+def test_a_tag_and_a_version_name_the_same_release(typed):
+    from media_ai.cli.upgrade import _target
+
+    assert _target(_args(typed)) == "0.8.0"
+
+
+def test_the_normalised_target_builds_a_ref_that_exists():
+    from media_ai.cli.upgrade import _target
+
+    for method in ("uv-tool", "pip", "standalone"):
+        install = _install.Install(method, "/x", installer="/x/install.sh")
+        rendered = " ".join(install.upgrade_steps("owner/repo", _target(_args("v0.8.0")))[0])
+        assert "vv" not in rendered, rendered
+        assert "v0.8.0" in rendered, rendered
+
+
+def test_a_v_prefixed_target_no_longer_reads_as_not_newer():
+    """The quiet half of the same bug: the version regex does not admit the prefix, so
+    `is_newer("v9.9.9", "0.8.0")` was False and a newer release compared as older."""
+    from media_ai.cli.upgrade import _target
+    from media_ai.core import update
+
+    assert update.is_newer(_target(_args("v9.9.9")), "0.8.0")
+
+
+def test_something_that_is_not_a_version_is_left_alone():
+    """`--version main` is not a release and must not be silently turned into `ain`."""
+    from media_ai.cli.upgrade import _target
+
+    assert _target(_args("main")) == "main"

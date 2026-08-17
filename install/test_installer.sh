@@ -286,6 +286,46 @@ recovered="$(
 )"
 equal "…and read back by resolve_layout" "$recovered" "$SCRATCH/bin"
 
+# An archive that does not extract cleanly must not be installed — and, crucially, must
+# not be *reported* as installed. Both tar implementations this runs under already refuse
+# a member with `..` in it, a leading `/`, or a write through a symlink, and exit non-zero
+# saying so; the bug was that nothing here looked at that status. `main` used to call these
+# functions as `install_file … || return $?`, which switches `errexit` off for the whole
+# call chain, so a failed extraction sailed on to "installed to …" and exit 0.
+python3 - "$SCRATCH/releases/$(asset_name "$CLI_NAME" 5.0.0 "$TRIPLE")" <<'PYEOF'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as tf:
+    d = tarfile.TarInfo("media-ai"); d.type = tarfile.DIRTYPE; d.mode = 0o755; tf.addfile(d)
+    exe = b"#!/bin/sh\necho ok\n"
+    e = tarfile.TarInfo("media-ai/media-ai"); e.size = len(exe); e.mode = 0o755
+    tf.addfile(e, io.BytesIO(exe))
+    bad = b"OWNED\n"; b = tarfile.TarInfo("../../../../ESCAPED"); b.size = len(bad)
+    tf.addfile(b, io.BytesIO(bad))
+PYEOF
+if install_file "$SCRATCH/releases/$(asset_name "$CLI_NAME" 5.0.0 "$TRIPLE")" 0 >/dev/null 2>&1; then
+  bad "an archive that fails to extract is refused" "reported success"
+else
+  pass "an archive that fails to extract is refused"
+fi
+equal "…and nothing was installed under that version" \
+  "$([ -e "$INSTALL_HOME/versions/5.0.0" ] && echo present || echo absent)" "absent"
+equal "…and the working install is untouched" "$("$BIN_DIR/$CLI_NAME")" "$CLI_NAME 4.0.0"
+
+# A payload root that is a symlink rather than a directory. tar will not write *through*
+# one, but it will create it — and moving it into place would leave the installed command
+# resolving wherever the archive pointed.
+python3 - "$SCRATCH/releases/$(asset_name "$CLI_NAME" 5.1.0 "$TRIPLE")" <<'PYEOF'
+import sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as tf:
+    ln = tarfile.TarInfo("media-ai"); ln.type = tarfile.SYMTYPE; ln.linkname = "/tmp"
+    tf.addfile(ln)
+PYEOF
+if install_file "$SCRATCH/releases/$(asset_name "$CLI_NAME" 5.1.0 "$TRIPLE")" 0 >/dev/null 2>&1; then
+  bad "a symlink payload root is refused" "reported success"
+else
+  pass "a symlink payload root is refused"
+fi
+
 # A dry run says what it would do and writes nothing.
 rm -rf "$SCRATCH/dryrun"
 INSTALL_HOME="$SCRATCH/dryrun/share" BIN_DIR="$SCRATCH/dryrun/bin" install_release v1.0.0 1 >/dev/null 2>&1

@@ -36,6 +36,7 @@ from ..brand import cli_name, cmd
 from ..core import update
 from ..core.errors import ErrorCategory, MediaError
 from ..core.result import SCHEMA_VERSION
+from ..core.versioning import VERSION
 from . import common
 from ._install import detect
 from ._prompt import Cancelled, _nobody_is_watching, get_prompter
@@ -67,15 +68,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _target(args) -> str:
-    """Which release to install. Refuses rather than falling back to the branch.
+    """Which release to install, as a bare version. Refuses rather than falling back.
 
     ``--version`` wins, then whatever the feed says is published — fetched here because
     this command is an explicit request and waiting for it is the deal. With neither,
     there is no target: installing the default branch would move somebody from a
     release onto whatever main happens to be, and call it an upgrade.
+
+    **Bare**, meaning no leading ``v``, and normalising it here is the whole fix for a
+    bug that reached every install method. A release is *tagged* ``v0.8.0`` and its
+    version *is* ``0.8.0``; a user typing the tag they can see on the releases page was
+    taken literally, and everything downstream added its own ``v``. That produced
+    ``git+…@vv0.8.0`` for uv and pip, ``--version vv0.8.0`` for a bundle's installer —
+    a ref no repository has — and it also silently broke the comparison below, since
+    ``is_newer("v9.9.9", "0.8.0")`` is ``False``: the version regex does not admit the
+    prefix, so the newer release read as not newer.
+
+    One place, because the value is used three ways — to build a ref, to compare
+    against the running version, and as ``to`` in the result — and the three would
+    otherwise each need to remember.
     """
     if args.target:
-        return args.target
+        return args.target.lstrip("v") if VERSION.match(args.target.lstrip("v")) else args.target
     feed = update.refresh(__version__, force=True) or update.cached()
     latest = update.latest_version(feed)
     if not latest:

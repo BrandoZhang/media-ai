@@ -221,10 +221,16 @@ before the runner ever sees it.
 The way most people get this CLI is a tarball that needs no Python:
 
 ```bash
-bash packaging/build.sh                    # -> dist/media-ai-<version>-<os>-<arch>.tar.gz (+ .sha256)
+bash packaging/build.sh                    # -> dist/<cli>-<version>-<os>-<arch>.tar.gz (+ .sha256)
 bash packaging/build.sh --python 3.12      # pick the interpreter that goes inside it
-bash install/install.sh --from-file dist/media-ai-*.tar.gz --no-init   # install what you just built
+bash install/install.sh --from-file dist/*.tar.gz --no-init            # install what you just built
 ```
+
+`<cli>` above is not a typo for the brand: `build.sh` reads the name from
+`media_ai.brand.CLI_NAME` and names the tarball with it, so a fork that renamed itself
+gets `dist/<its-name>-…` and a literal here would send its developers looking for a file
+that was never written. The two shell scripts write it the same way in their own
+headers.
 
 `build.sh` makes a throwaway virtualenv, installs the project plus a pinned PyInstaller
 into it, freezes it with [`packaging/standalone.spec`](../packaging/standalone.spec),
