@@ -231,9 +231,11 @@ into it, freezes it with [`packaging/standalone.spec`](../packaging/standalone.s
 then **runs the result** — an image through Pillow, a clip and an animation through the
 bundled ffmpeg, and `doctor` — before it packs anything. It builds for `uname` and takes
 no target: a bundle carries a compiled interpreter, Pillow's extension modules and an
-ffmpeg binary, and none of those cross-compile. CI builds one on Linux for every pull
-request; the release workflow builds all four (linux/macOS × x86_64/arm64) and attaches
-them to the release before it is published.
+ffmpeg binary, and none of those cross-compile. CI builds one on Linux **and one on
+macOS** for every pull request — the second because these are shell scripts and macOS
+ships bash 3.2, which parses `$var…` differently from bash 5; the first release found
+that out the hard way. The release workflow builds all four (linux/macOS × x86_64/arm64)
+and attaches them to the release before it is published.
 
 Three things are worth knowing before touching the spec:
 
