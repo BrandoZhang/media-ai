@@ -615,6 +615,37 @@ def _await_prompt(fd: int, *, quiet_for: float = 0.15, timeout: float = 10.0) ->
         time.sleep(0.01)
 
 
+def _exec_child(body: str) -> None:
+    """Become the scripted interpreter. Only returns if the exec *failed*.
+
+    The ``os._exit`` is the point: a fork whose ``execv`` raises carries on running
+    the test suite as a second process — two pytests sharing one terminal and one
+    output stream, which is a far worse thing to debug than a missing child.
+    """
+    src = f"import sys\nsys.path[:0] = {sys.path!r}\n" + textwrap.dedent(body)
+    try:
+        os.execv(sys.executable, [sys.executable, "-c", src])
+    finally:
+        os._exit(127)
+
+
+def _reap(pid: int) -> None:
+    """Wait briefly for the child, then make sure of it.
+
+    Bounded, and then ``SIGKILL``: a child left in raw mode on a pty is a process
+    nothing will ever collect, and a test helper that can leave one behind turns a
+    failed interaction into a run that never finishes. The blocking ``waitpid`` after
+    the kill is what stops it becoming a zombie instead.
+    """
+    for _ in range(10):
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            return
+        time.sleep(0.05)
+    os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+
+
 def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     """Run ``body`` in a child with a real controlling terminal, feeding ``keys``.
 
@@ -626,8 +657,7 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
     if pid == 0:  # child
         os.close(r)
         os.dup2(w, 1)
-        src = f"import sys\nsys.path[:0] = {sys.path!r}\n" + textwrap.dedent(body)
-        os.execv(sys.executable, [sys.executable, "-c", src])
+        _exec_child(body)
     os.close(w)
     os.set_blocking(fd, False)
 
@@ -667,19 +697,10 @@ def run_in_pty(body: str, keys: list[bytes], timeout: float = 5.0) -> str:
             if b"\n" in captured:
                 break
         os.close(r)
-        # The capture loop above is deliberately bounded.  Honour that bound when
+        # The capture loop above is deliberately bounded. Honour that bound when
         # reaping the pty child too: otherwise a broken interaction turns one failed
         # assertion into a permanently hung test run.
-        for _ in range(10):
-            reaped, _status = os.waitpid(pid, os.WNOHANG)
-            if reaped:
-                break
-            time.sleep(0.05)
-        else:
-            # This is a test-child cleanup path after its deadline has already expired.
-            # SIGKILL guarantees a stuck raw-mode process cannot leave the suite waiting.
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
+        _reap(pid)
         return captured.decode("utf-8", "replace")
     finally:
         # One master fd per call, and this helper runs once per prompt test — leaking
@@ -983,23 +1004,34 @@ def run_in_pty_watching_the_terminal(body: str, keys: list[bytes]) -> str:
     """
     pid, fd = pty.fork()
     if pid == 0:  # child
-        src = f"import sys\nsys.path[:0] = {sys.path!r}\n" + textwrap.dedent(body)
-        os.execv(sys.executable, [sys.executable, "-c", src])
-    os.set_blocking(fd, False)
-    captured, deadline, sent = b"", time.time() + 4.0, False
-    while time.time() < deadline:
-        try:
-            captured += os.read(fd, 65536)
-        except (BlockingIOError, OSError):
-            pass
-        if not sent and time.time() > deadline - 3.0:
-            for key in keys:
-                os.write(fd, key)
-                time.sleep(0.12)
-            sent = True
-        time.sleep(0.05)
-    os.waitpid(pid, os.WNOHANG)
-    return captured.decode("utf-8", "replace")
+        _exec_child(body)
+    # Everything below is in a `try`, and that is the whole repair. This helper used to
+    # reap with `WNOHANG` alone and never close `fd`: a child still drawing when the
+    # window closed was left alive, in raw mode, on a pty whose master nobody would ever
+    # read again — and the master leaked with it. Its sibling above had always done
+    # this correctly, so the two now share `_reap`.
+    #
+    # A leaked child of this shape is not a tidiness problem. It is a process the runner
+    # reports as an orphan at cleanup, holding a terminal, and it is the most plausible
+    # way this file can end a run that no longer finishes.
+    try:
+        os.set_blocking(fd, False)
+        captured, deadline, sent = b"", time.time() + 4.0, False
+        while time.time() < deadline:
+            try:
+                captured += os.read(fd, 65536)
+            except (BlockingIOError, OSError):
+                pass
+            if not sent and time.time() > deadline - 3.0:
+                for key in keys:
+                    os.write(fd, key)
+                    time.sleep(0.12)
+                sent = True
+            time.sleep(0.05)
+        return captured.decode("utf-8", "replace")
+    finally:
+        _reap(pid)
+        os.close(fd)
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")

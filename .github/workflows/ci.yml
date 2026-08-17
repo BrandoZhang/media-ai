@@ -20,6 +20,13 @@ jobs:
   test:
     name: test (py${{ matrix.python }} · ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Bounded, because the default is 360 minutes and this suite takes 70 seconds. A
+    # macOS test job once hung in the pty tests and sat there for the whole six hours
+    # before the platform killed it — reported as *cancelled*, which reads like somebody
+    # pressed a button rather than like a defect. A job that cannot outlive its work by
+    # more than a few minutes turns that into a red X with the same log, twenty minutes
+    # in.
+    timeout-minutes: 20
     strategy:
       # Every version gets its answer. Stopping at the first failure hides whether the
       # break is "3.14 only" or "everything past 3.11", which is the first thing anyone
@@ -61,6 +68,7 @@ jobs:
   telemetry:
     name: test (otel extra)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -74,6 +82,7 @@ jobs:
 
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -138,6 +147,7 @@ jobs:
   standalone:
     name: standalone bundle (${{ matrix.triple }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       # "Linux only" and "both" are different diagnoses, and stopping at the first
       # failure hides which one it is.

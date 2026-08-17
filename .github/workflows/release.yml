@@ -61,6 +61,7 @@ jobs:
   # the bundles together.
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.plan.outputs.version }}
       release: ${{ steps.plan.outputs.release }}
@@ -143,6 +144,7 @@ jobs:
     if: needs.plan.outputs.release == 'true'
     name: bundle (${{ matrix.triple }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -195,6 +197,7 @@ jobs:
     needs: [plan, bundle]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # Re-exported so the steps below read one name rather than a `needs.` path each
       # time; `steps.plan.outputs.version` used to be that name.
