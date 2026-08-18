@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from ..core.adapter import Adapter
 from ..core.errors import ErrorCategory, MediaError
+from ..core.headers import RESERVED_PREFIX
 from ..credentials.secret import BrokeredHandle, Credential
 from ._http import HttpClient
 
@@ -28,6 +29,12 @@ class HttpAdapter(Adapter):
 
     def brokered(self, headers: dict) -> bool:
         """Whether these auth headers route through a credential broker.
+
+        Read from the dict :meth:`_prepare` returns, which also carries the call's own
+        ``--header`` values — so the answer would be a caller's to give if the marker
+        were one a caller could set. It is not: ``core/headers.RESERVED_PREFIX`` refuses
+        the whole ``X-Media-*`` namespace, which is what keeps this question about the
+        credential.
 
         For the few wire paths a broker cannot carry — Gemini's resumable Files upload
         talks to a Google endpoint of its own, which the broker does not forward — so the
@@ -69,10 +76,19 @@ class HttpAdapter(Adapter):
         """
         cred = self.credential()
         base, headers = self._auth(cred)
-        clash = sorted(n for n in self.binding.headers if n.lower() in {k.lower() for k in headers})
-        if clash:
+        # Two names a caller may not occupy. The header this binding signs with is known
+        # only here — the manifest says whether that is `Authorization` or
+        # `x-goog-api-key` — and `X-Media-*` is the broker's namespace, which
+        # :meth:`brokered` reads back, so a caller able to set one would be answering a
+        # question about the credential. `core/headers` refuses both at the CLI edge;
+        # this is the same rule at the layer that actually sends them, which is what a
+        # binding filled by anything other than a command line still passes through.
+        taken = {k.lower() for k in headers}
+        reserved = sorted(n for n in self.binding.headers
+                          if n.lower() in taken or n.lower().startswith(RESERVED_PREFIX))
+        if reserved:
             raise MediaError(
-                f"--header {clash[0]!r} is how this binding sends its credential",
+                f"header {reserved[0]!r} is reserved: it is how this binding authenticates",
                 category=ErrorCategory.VALIDATION, code="header_reserved", provider=self.name,
                 hint="the key is named by the binding's `credential`; drop the header",
             )

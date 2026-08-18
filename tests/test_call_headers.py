@@ -120,6 +120,8 @@ def test_a_value_with_a_colon_in_it_survives(configured, sent, tmp_path):
     ("Authorization: Bearer sk-someone-elses", "header_reserved"),
     ("Content-Type: text/plain", "header_reserved"),
     ("Host: elsewhere.test", "header_reserved"),
+    ("Accept: application/json", "header_reserved"),
+    ("X-Media-Session: forged", "header_reserved"),
     ("x request id: a", "header_name_invalid"),
     ("x-request-id: a\r\nX-Injected: yes", "header_value_invalid"),
     ("x-request-id: 咖啡", "header_value_invalid"),
@@ -134,14 +136,42 @@ def test_what_a_header_may_not_be(configured, sent, tmp_path, capsys, argument, 
     assert not sent
 
 
-def test_one_header_named_twice_is_refused_rather_than_sent_twice(configured, sent, tmp_path, capsys):
-    """`x-request-id` and `X-Request-Id` are one header. Sending both would be one field
-    with two values, which HTTP allows and no API here means."""
+@pytest.mark.parametrize("second", ["x-request-id: b", "X-Request-Id: b"])
+def test_one_header_named_twice_is_refused_rather_than_sent_twice(configured, sent, tmp_path, capsys, second):
+    """Contradictory instructions, in either spelling — HTTP compares field names
+    case-blind, so both are the same header named twice.
+
+    The two used to end differently: validating a *dict* built from the arguments
+    collapsed the identical pair before anything looked at it, so `a` was dropped and `b`
+    sent quietly, while the case-differing pair was refused. Same mistake, two answers.
+    """
     exit_code = generate(image_mod, *image(tmp_path, "--header", "x-request-id: a",
-                                           "--header", "X-Request-Id: b"))
+                                           "--header", second))
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert exit_code == 3 and out["error"]["code"] == "header_duplicated"
     assert not sent
+
+
+def test_a_forged_broker_marker_cannot_make_a_direct_call_look_brokered(monkeypatch):
+    """`X-Media-*` is what a brokered credential writes and what an adapter reads back to
+    tell the two apart — Gemini refuses an over-ceiling upload on the one path a broker
+    cannot carry. A caller able to set it would send the broker's routing headers
+    upstream *and* make a binding holding a real key describe itself as brokered.
+
+    Refused twice: at the CLI edge, and here at the layer that sends them — this builds
+    the binding by hand, which is what a caller reaching the library rather than the
+    command line does.
+    """
+    from dataclasses import replace
+
+    from media_ai.core.registry import build_adapter
+
+    monkeypatch.setenv("MEDIA_TEST_KEY", "sk-test")
+    adapter = build_adapter(replace(bound("gemini/nano-banana-2"),
+                                    headers={"X-Media-Session": "forged"}))
+    with pytest.raises(MediaError) as ei:
+        adapter._prepare()
+    assert ei.value.code == "header_reserved"
 
 
 def test_a_header_argument_without_a_colon_is_refused():

@@ -167,7 +167,7 @@ def call_headers(rb, args):
             category=ErrorCategory.CLI, code="header_unsupported",
             details={"binding": rb.id, "transport": rb.provider.transport.value},
         )
-    return replace(rb, headers=parse_headers(dict(split_header_argument(item) for item in given)))
+    return replace(rb, headers=parse_headers(split_header_argument(item) for item in given))
 
 
 def provider_name(args) -> str | None:
