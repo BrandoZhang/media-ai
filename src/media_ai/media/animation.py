@@ -41,6 +41,15 @@ from .ffmpeg import LOCAL_ONLY_INPUT, ensure_parent, has_encoder, run_ffmpeg
 #: ``scheme://`` — the shape of a thing ffmpeg would open over a network.
 _URL_SCHEME = re.compile(r"[a-z][a-z0-9+.\-]*://", re.I)
 
+#: The two ways an animated image gets written. ``ffmpeg`` is every container's route;
+#: ``pillow`` is WebP's second one, taken only where the encoder below is missing. The
+#: value travels back with the result rather than being re-derived, because the two
+#: questions ("which route was taken" and "does this build have the encoder") stop having
+#: the same answer exactly when it matters — a build whose ``-encoders`` cannot be read
+#: falls back at encode time with the check in front of it still saying yes.
+ROUTE_FFMPEG = "ffmpeg"
+ROUTE_PILLOW = "pillow"
+
 #: The encoder that writes an *animated* WebP, and the one part of this module that is
 #: not a property of ffmpeg but of **the build of ffmpeg on this machine**. It comes from
 #: libwebp, so it is there only if the binary was configured ``--enable-libwebp``: the
@@ -90,6 +99,14 @@ CONTAINERS: dict[str, Container] = {
                "or the consumer cannot read animated WebP.",),
     ),
 }
+
+@dataclass(frozen=True)
+class Rendered:
+    """The finished file, and which route wrote it."""
+
+    path: Path
+    route: str
+
 
 CONTAINER_NAMES = tuple(CONTAINERS)
 SCALE_FILTERS = ("lanczos", "bicubic", "bilinear", "neighbor", "spline")
@@ -572,8 +589,8 @@ def _webp_without_libwebp(req, out: Path, *, transparent: bool, plays: int) -> N
             im.save(out, format="WEBP", save_all=True, duration=durations, loop=plays, **save)
 
 
-def render(req, container: Container, *, transparent: bool) -> Path:
-    """Encode and return the output path.
+def render(req, container: Container, *, transparent: bool) -> Rendered:
+    """Encode, and return the output path together with the route that wrote it.
 
     ffmpeg is the primary route for all three containers and stays that way when it can
     encode what was asked for. WebP is the one case with a second route, taken only when
@@ -586,7 +603,9 @@ def render(req, container: Container, *, transparent: bool) -> Path:
     _check_inputs(req)
     ensure_parent(out)
     plays = int(req.loop or 0)
+    route = ROUTE_FFMPEG
     if container.name == "webp" and not has_encoder(WEBP_ANIM_ENCODER):
+        route = ROUTE_PILLOW
         _webp_without_libwebp(req, out, transparent=transparent, plays=plays)
     else:
         try:
@@ -596,6 +615,7 @@ def render(req, container: Container, *, transparent: bool) -> Path:
             # not be read reaches the fallback here instead of before the attempt.
             if container.name != "webp" or exc.details.get("encoder") != WEBP_ANIM_ENCODER:
                 raise
+            route = ROUTE_PILLOW
             _webp_without_libwebp(req, out, transparent=transparent, plays=plays)
     if not out.is_file() or out.stat().st_size == 0:
         raise MediaError(
@@ -604,7 +624,7 @@ def render(req, container: Container, *, transparent: bool) -> Path:
         )
     if container.name == "gif" and plays > 1:
         _set_gif_loop_count(out, plays)
-    return out
+    return Rendered(out, route)
 
 
 def probe(out: Path) -> dict:
@@ -626,16 +646,21 @@ def probe(out: Path) -> dict:
         return {}
 
 
-def describe(container: Container) -> list[str]:
+def describe(container: Container, *, route: str = ROUTE_FFMPEG) -> list[str]:
     """Caveats worth returning with the result, not just documenting.
 
     Including which route wrote a WebP. The file is what was asked for either way, so
     this is not a request that went unhonoured — but "the same command produced a
     noticeably larger file on my laptop than in CI" is otherwise unanswerable from the
     result, and the answer is a property of the machine rather than of the request.
+
+    The route is *passed in*, from :class:`Rendered`. Asking :func:`has_encoder` again
+    here would answer the wrong question in the one case worth reporting: where the
+    listing could not be read, the check says the encoder is there, ffmpeg refuses at
+    encode time, and the file that comes out is Pillow's with nothing said about it.
     """
     notes = list(container.notes)
-    if container.name == "webp" and not has_encoder(WEBP_ANIM_ENCODER):
+    if container.name == "webp" and route == ROUTE_PILLOW:
         notes.append(
             f"this ffmpeg was built without {WEBP_ANIM_ENCODER}, so the frames were encoded "
             f"through a lossless intermediate by Pillow; the animation is the one asked for, "
@@ -646,6 +671,7 @@ def describe(container: Container) -> list[str]:
 
 __all__ = [
     "CONTAINERS", "CONTAINER_NAMES", "DEFAULT_FRAME_RATE", "DITHERS", "KEY_MODES",
-    "MAX_PLAYS", "PALETTE_STATS", "SCALE_FILTERS", "WEBP_ANIM_ENCODER", "Container",
-    "build_args", "container_for", "describe", "frames_input", "probe", "render",
+    "MAX_PLAYS", "PALETTE_STATS", "ROUTE_FFMPEG", "ROUTE_PILLOW", "SCALE_FILTERS",
+    "WEBP_ANIM_ENCODER", "Container", "Rendered", "build_args", "container_for",
+    "describe", "frames_input", "probe", "render",
 ]

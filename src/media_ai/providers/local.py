@@ -50,7 +50,8 @@ class LocalAdapter(Adapter):
 
         container = animation.container_for(Path(req.output), req.output_format)
         transparent = bool(req.transparent)
-        out = animation.render(req, container, transparent=transparent)
+        rendered = animation.render(req, container, transparent=transparent)
+        out = rendered.path
         scene = derive_scene(req)
 
         produced = animation.probe(out)
@@ -79,7 +80,7 @@ class LocalAdapter(Adapter):
             meta["frames"] = [f.raw for f in req.frames]
         elif req.source is not None:
             meta["source"] = req.source.raw
-        notes = animation.describe(container)
+        notes = animation.describe(container, route=rendered.route)
         if transparent and container.alpha == "binary":
             notes = [*notes, "keyed with a chroma distance, so a soft or motion-blurred edge "
                              "keeps a fringe; shoot on a flat colour or feed matted frames back "

@@ -179,6 +179,9 @@ jobs:
       # through `source <(…)`, which bash 3.2 can truncate, so the file that tests the
       # installer was the one thing on macOS that never ran. Seconds, and offline.
       - name: Installer unit tests (bash 3.2 on the macOS row)
+        # macOS only: the `checks` job already runs these on Linux, and what this row
+        # adds is the shell, not a second answer from the same one.
+        if: runner.os == 'macOS'
         run: bash install/test_installer.sh
 
       # And then install it the way a user would, from the tarball rather than from the

@@ -55,12 +55,18 @@ grep -qxF "$ENTRY_POINT" "$HERE/install.sh" || {
   exit 1
 }
 PREFIX="$(mktemp "${TMPDIR:-/tmp}/installer-prefix.XXXXXX")"
+# Removed on the way out as well as after the source: `set -e` and a syntax error in
+# install.sh would otherwise leave one copy of it in TMPDIR per run — an accumulation
+# per run being the one thing the re-runnable-installer rule exists to prevent. The trap
+# is cleared again immediately, so it cannot be the one the scratch directory needs.
+trap 'rm -f "$PREFIX"' EXIT
 # awk on a whole-line string comparison, so the marker needs no regex escaping — `$@`
 # and the quotes around it are matched as the literal text they are.
 awk -v marker="$ENTRY_POINT" '$0 == marker { exit } { print }' "$HERE/install.sh" > "$PREFIX"
 # shellcheck disable=SC1090
 source "$PREFIX"
 rm -f "$PREFIX"
+trap - EXIT
 
 # --------------------------------------------------------------------- parse_tag
 
