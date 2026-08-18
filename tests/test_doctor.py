@@ -52,6 +52,22 @@ def test_reports_the_version_and_the_local_media_stack(home):
     assert found["pillow"]["status"] == "ok"
 
 
+def test_an_ffmpeg_without_the_animated_webp_encoder_says_so(home, monkeypatch):
+    """The condition that made a macOS bundle unbuildable, as a line a reader can see
+    before it surprises them — and not a `warn`, because the WebP still comes out and
+    there is nothing here to go and fix."""
+    from media_ai.media import ffmpeg
+
+    # Both halves are patched. Whether *this* machine's ffmpeg has the encoder is the
+    # thing under test, so reading it would make the assertion say the opposite on macOS
+    # arm64 — the platform the line exists for.
+    monkeypatch.setattr(ffmpeg, "has_encoder", lambda encoder: True)
+    assert "ffmpeg-webp" not in checks(diagnose())  # nothing to say when the build has it
+    monkeypatch.setattr(ffmpeg, "has_encoder", lambda encoder: False)
+    line = checks(diagnose())["ffmpeg-webp"]
+    assert line["status"] == "ok" and "Pillow" in line["detail"]
+
+
 def test_status_is_the_worst_of_the_checks(home):
     result = diagnose()
     assert result["status"] in ("ok", "warn", "fail")

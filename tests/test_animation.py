@@ -21,9 +21,10 @@ from pathlib import Path
 import pytest
 from conftest import have_media_stack
 
-from media_ai.core.errors import MediaError
+from media_ai.core.errors import ErrorCategory, MediaError
 from media_ai.core.types import AnimationRequest, GeometrySpec, MediaRef
 from media_ai.media import animation
+from media_ai.media import ffmpeg as ffmpeg_module
 
 
 def req(tmp_path, name="out.gif", **kw) -> AnimationRequest:
@@ -603,6 +604,228 @@ def test_a_partial_frame_list_is_refused_end_to_end(clip, env, tmp_path):
 
     result = export(env, "--frames", *stills[:3], "--output", str(tmp_path / "f.gif"), expect=3)
     assert result["error"]["code"] == "animation_frames_extra"
+
+
+# ------------------------------------------- webp on an ffmpeg without libwebp_anim
+#
+# `libwebp_anim` is not part of ffmpeg: it comes from libwebp, so it is in a build only
+# if that build was configured with it — and the binary `imageio-ffmpeg` unpacks has it
+# on Linux and not on macOS arm64. A hard-coded `-c:v libwebp_anim` therefore made
+# `--format webp` a platform coin flip, and, through the smoke test at the end of
+# `packaging/build.sh`, made producing a macOS standalone bundle impossible.
+#
+# These run the fallback *on a machine that does not need it*, which is the only way it
+# stays honest: the two routes are compared frame for frame against each other rather
+# than each against its own expectations.
+
+
+def has_webp_encoder() -> bool:
+    """Whether the ffmpeg *this machine* has can write an animated WebP itself."""
+    return have_media_stack() and ffmpeg_module.has_encoder(animation.WEBP_ANIM_ENCODER)
+
+
+#: The tests that need **both** routes to exist. Forcing the fallback works anywhere;
+#: forcing the ffmpeg route does not, and on a build without `libwebp_anim` a comparison
+#: between the two would quietly become a comparison of Pillow against itself — passing,
+#: on the one platform the whole change exists for. Skipped there instead, and every
+#: assertion about the fallback itself still runs.
+needs_both_routes = pytest.mark.skipif(
+    not has_webp_encoder(),
+    reason="this ffmpeg has no libwebp_anim, so there is no first route to compare against",
+)
+
+
+def render_webp(tmp_path, name, *, fallback, **kw) -> Path:
+    """Render one WebP through a named route, and assert it was the route taken.
+
+    The assertion is the point: `fallback=False` used to mean only "do not patch
+    anything", which on a build without the encoder is the *same* route as
+    `fallback=True` — so a test comparing the two would compare a file with itself.
+    """
+    out = tmp_path / name
+    request = req(tmp_path, name, **kw)
+    if fallback:
+        animation.has_encoder = lambda encoder: encoder != animation.WEBP_ANIM_ENCODER
+    try:
+        rendered = animation.render(request, animation.container_for(out),
+                                    transparent=kw.get("transparent", False))
+    finally:
+        animation.has_encoder = ffmpeg_module.has_encoder
+    expected = animation.ROUTE_PILLOW if fallback else animation.ROUTE_FFMPEG
+    assert rendered.route == expected, f"{name} went through {rendered.route}"
+    return rendered.path
+
+
+def frames_and_millis(path: Path) -> tuple[int, float, list[int]]:
+    """Frame count, total playing time, and the size — read off the finished file."""
+    from PIL import Image
+
+    total = 0.0
+    with Image.open(path) as im:
+        count = im.n_frames
+        for index in range(count):
+            im.seek(index)
+            im.load()  # webp fills in `duration` on load, not on seek
+            total += im.info.get("duration", 0)
+        return count, total, [im.width, im.height]
+
+
+@pytestmark_media
+@needs_both_routes
+@pytest.mark.parametrize("kw", [
+    {},
+    {"loop": 3},
+    {"transparent": True},
+    {"start_seconds": 0.5, "duration_seconds": 0.5, "max_width": 80},
+    {"bounce": True, "fps": 6},
+])
+def test_a_webp_without_libwebp_anim_is_the_same_animation(clip, tmp_path, kw):
+    """Same frames, same size, same timing, same play count — the request is honoured
+    either way. What differs is which library compressed the bytes, and that is the one
+    thing not asserted here."""
+    kw = {**kw, "source": MediaRef(str(clip))}
+    through_ffmpeg = render_webp(tmp_path, "ff.webp", fallback=False, **kw)
+    through_pillow = render_webp(tmp_path, "fb.webp", fallback=True, **kw)
+
+    ff_frames, ff_millis, ff_size = frames_and_millis(through_ffmpeg)
+    fb_frames, fb_millis, fb_size = frames_and_millis(through_pillow)
+    assert fb_frames == ff_frames > 1
+    assert fb_size == ff_size
+    assert abs(fb_millis - ff_millis) <= 2 * fb_frames, (fb_millis, ff_millis)
+    assert webp_plays(through_pillow) == webp_plays(through_ffmpeg) == kw.get("loop", 0)
+    # …and it is a WebP, not the APNG it was assembled from wearing a `.webp` name.
+    assert through_pillow.read_bytes()[8:12] == b"WEBP"
+
+
+@pytestmark_media
+def test_the_fallback_refuses_a_loop_count_no_container_can_hold(tmp_path):
+    """The intermediate's loop count is deliberately not the caller's, so the check that
+    lives in the ffmpeg route's `-loop` would never see the number Pillow is about to
+    write — and a `uint16` field takes 99999 as something else entirely."""
+    (tmp_path / "in.mp4").write_bytes(b"")
+    with pytest.raises(MediaError) as ei:
+        render_webp(tmp_path, "l.webp", fallback=True, loop=animation.MAX_PLAYS + 1)
+    assert ei.value.code == "animation_loop_invalid"
+    assert not (tmp_path / "l.webp").exists()
+
+
+@pytestmark_media
+def test_a_frame_sequence_reaches_the_fallback_too(clip, tmp_path):
+    """The other animation scene. Everything the request says is decided by the ffmpeg
+    pass, so the input role travels with it — but a route taken by one scene and not the
+    other is exactly the kind of thing nothing else here would notice."""
+    from PIL import Image
+
+    seq = tmp_path / "seq"
+    seq.mkdir()
+    for index in range(4):
+        Image.new("RGB", (32, 24), (10 * index, 120, 10)).save(seq / f"f_{index:03}.png")
+    out = tmp_path / "s.webp"
+    request = AnimationRequest(output=out, frames=[MediaRef(str(seq))], fps=8)
+    animation.has_encoder = lambda encoder: encoder != animation.WEBP_ANIM_ENCODER
+    try:
+        rendered = animation.render(request, animation.container_for(out), transparent=False)
+    finally:
+        animation.has_encoder = ffmpeg_module.has_encoder
+    assert rendered.route == animation.ROUTE_PILLOW
+    assert frames_and_millis(out)[0] == 4
+
+
+@pytestmark_media
+def test_the_fallback_keys_the_background_out_too(clip, tmp_path):
+    """The intermediate is APNG precisely so the alpha survives the hop."""
+    from PIL import Image
+
+    out = render_webp(tmp_path, "k.webp", fallback=True, source=MediaRef(str(clip)), transparent=True)
+    with Image.open(out) as im:
+        im.seek(0)
+        rgba = im.convert("RGBA")
+    assert rgba.getpixel((2, 2))[3] == 0
+    assert rgba.getpixel((24, 60))[3] == 255
+
+
+@pytestmark_media
+@needs_both_routes
+def test_ffmpegs_own_refusal_reaches_the_fallback(clip, tmp_path, monkeypatch):
+    """The encoder listing is a hint; ffmpeg saying so is the fact. A build whose
+    `-encoders` cannot be read must still end up with a WebP."""
+    real = animation.run_ffmpeg
+
+    def refuse_the_webp_encoder(args):
+        if animation.WEBP_ANIM_ENCODER in args:
+            raise MediaError(
+                f"this ffmpeg was built without the {animation.WEBP_ANIM_ENCODER!r} encoder",
+                category=ErrorCategory.UNSUPPORTED, code="ffmpeg_encoder_missing",
+                details={"encoder": animation.WEBP_ANIM_ENCODER},
+            )
+        return real(args)
+
+    monkeypatch.setattr(animation, "run_ffmpeg", refuse_the_webp_encoder)
+    out = tmp_path / "e.webp"
+    rendered = animation.render(req(tmp_path, "e.webp", source=MediaRef(str(clip))),
+                                animation.container_for(out), transparent=False)
+    # The encoder check in front of it said yes, so this is the *error* branch — the
+    # one a machine whose `-encoders` cannot be read takes.
+    assert rendered.route == animation.ROUTE_PILLOW
+    assert frames_and_millis(out)[0] > 1
+
+
+@pytestmark_media
+def test_an_ordinary_ffmpeg_failure_is_not_answered_with_a_second_encode(tmp_path):
+    """Only a missing encoder takes the other route. Anything else — a corrupt input, an
+    impossible filter — is the caller's to see, and a fallback that swallowed it would
+    turn one refusal into a slower one."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"not a video")
+    out = tmp_path / "bad.webp"
+    with pytest.raises(MediaError) as ei:
+        animation.render(req(tmp_path, "bad.webp", source=MediaRef(str(source))),
+                         animation.container_for(out), transparent=False)
+    assert ei.value.code != "ffmpeg_encoder_missing"
+    assert not out.exists()
+
+
+@pytestmark_media
+def test_a_pixel_format_is_refused_rather_than_dropped_when_the_encoder_is_missing(tmp_path):
+    """`pix_fmt` is a knob on the encoder that is not there. Ignoring it would report a
+    request that was not honoured — the thing this module refuses to do everywhere else."""
+    (tmp_path / "in.mp4").write_bytes(b"")  # refused before anything reads it
+    out = tmp_path / "p.webp"
+    with pytest.raises(MediaError) as ei:
+        render_webp(tmp_path, "p.webp", fallback=True, options={"pix_fmt": "yuva420p"})
+    assert ei.value.code == "animation_pix_fmt_unsupported"
+    assert ei.value.exit_code == 3 and "apng" in (ei.value.hint or "")
+    assert not out.exists()
+
+
+@pytestmark_media
+def test_nothing_can_write_the_webp_is_a_refusal_with_two_ways_out(tmp_path, monkeypatch):
+    """Both halves of the fallback are checked before it is relied on: a Pillow built
+    without libwebp raises `KeyError: 'WEBP'` from inside `save()`, which reads like a
+    bug in this file rather than like a missing library."""
+    (tmp_path / "in.mp4").write_bytes(b"")  # refused before anything reads it
+    monkeypatch.setattr(animation, "_pillow_writes_animated_webp", lambda: False)
+    with pytest.raises(MediaError) as ei:
+        render_webp(tmp_path, "n.webp", fallback=True)
+    assert ei.value.code == "animation_webp_unavailable"
+    assert "gif" in (ei.value.hint or "") and "apng" in (ei.value.hint or "")
+
+
+def test_the_notes_say_which_route_wrote_the_webp():
+    """Not a request that went unhonoured, so not an error — but "the same command made
+    a bigger file on my laptop than in CI" is otherwise unanswerable from the result.
+
+    Asked of the *route*, which is what `render` reports, and not of this machine's
+    ffmpeg: the case worth reporting is the one where those two disagree.
+    """
+    webp = animation.CONTAINERS["webp"]
+    assert not any("Pillow" in note for note in animation.describe(webp))
+    assert not any("Pillow" in note for note in
+                   animation.describe(webp, route=animation.ROUTE_FFMPEG))
+    assert any("Pillow" in note for note in animation.describe(webp, route=animation.ROUTE_PILLOW))
+    # …and it is said about WebP only; nothing else has a second route.
+    assert not any("Pillow" in note for note in
+                   animation.describe(animation.CONTAINERS["gif"], route=animation.ROUTE_PILLOW))
 
 
 @pytestmark_media

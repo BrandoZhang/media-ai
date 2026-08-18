@@ -130,6 +130,60 @@ def test_no_shell_variable_runs_into_a_non_ascii_character():
     assert not offenders, "brace these — macOS bash 3.2 reads the following bytes as part of the name:\n" + "\n".join(offenders)
 
 
+#: ``source <(…)`` / ``. <(…)`` — reading a *script* out of a process substitution.
+_SOURCED_PROCESS_SUBSTITUTION = re.compile(r"^\s*(?:source|\.)\s+<\(")
+
+
+@needs_checkout
+def test_no_script_is_sourced_out_of_a_process_substitution():
+    """Write it to a file first.
+
+    The second member of the same family as the rule above, and it cost the same way:
+    ``source <(sed '$ d' install.sh)`` loaded the installer's functions for its unit
+    tests, and bash 3.2 — macOS's — can reach the end of a ``/dev/fd`` stream before the
+    writer has finished a script this long. The functions defined near the end are then
+    absent, so the harness dies while loading its own subject, and every check it exists
+    to run silently never happens. A regular file is complete before it is read.
+
+    A ``while read … done < <(cmd)`` loop is *not* this shape and stays allowed: it reads
+    to EOF and cares about the bytes rather than about parsing a complete program.
+    """
+    offenders = [
+        f"{name}:{number}: {line.strip()}"
+        for name in SHELL_SCRIPTS
+        for number, line in enumerate((ROOT / name).read_text(encoding="utf-8").splitlines(), 1)
+        if not line.lstrip().startswith("#") and _SOURCED_PROCESS_SUBSTITUTION.search(line)
+    ]
+    assert not offenders, (
+        "write the text to a temporary file and source that — bash 3.2 may read only "
+        "part of a process substitution:\n" + "\n".join(offenders)
+    )
+
+
+@needs_checkout
+def test_the_installer_is_sourced_at_its_entry_point_marker():
+    """And the cut is made *at* ``main "$@"``, not at the last physical line.
+
+    ``sed '$ d'`` is right only while nothing follows the entry point. Add a trailing
+    comment — the most harmless edit there is — and running the unit tests performs a
+    real install into the developer's home directory instead. So the marker is matched
+    literally, and the test file refuses to load an installer that no longer carries it.
+    """
+    harness = (ROOT / "install" / "test_installer.sh").read_text(encoding="utf-8")
+    # Comments are exempt for the reason they are exempt above: the note explaining this
+    # rule quotes the broken form on purpose.
+    code = "\n".join(l for l in harness.splitlines() if not l.lstrip().startswith("#"))
+    assert "sed '$ d'" not in code, "the harness cuts at the last line again"
+    assert 'ENTRY_POINT=\'main "$@"\'' in harness, "the harness no longer names the entry point it cuts at"
+    assert 'grep -qxF "$ENTRY_POINT"' in harness, "a missing entry point must refuse, not fall through"
+    assert INSTALLER.read_text(encoding="utf-8").rstrip().endswith('main "$@"'), (
+        "install.sh no longer ends at the marker its unit tests cut on"
+    )
+    # The same line, for a second reason: under `curl … | bash` a transfer that dies
+    # mid-file leaves a truncated *definition* that is never invoked, because the only
+    # call is the last thing in the file.
+
+
 @needs_checkout
 def test_the_installer_still_offers_the_source_path():
     """The bundle cannot serve musl, an unlisted architecture, an extra it was not

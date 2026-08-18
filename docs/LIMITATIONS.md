@@ -104,6 +104,16 @@ install with `--from-source` instead, which gives an ordinary `uv tool` installa
   signature arm64 requires to execute, which is enough for a `curl`-installed tarball
   (nothing sets a quarantine attribute on it) but not for one downloaded through a
   browser, where Gatekeeper will ask.
+- **The bundled ffmpeg is not the same build on every platform.** It comes from
+  `imageio-ffmpeg`, and which external encoders it carries is decided when that binary
+  is compiled: the static Linux build has libwebp, the macOS arm64 build of the same
+  release does not. `animation export --format webp` therefore encodes through Pillow
+  from a lossless intermediate wherever `libwebp_anim` is absent — same frames, same
+  size, same timing, same loop count, compressed by a different library. `media-ai
+  doctor` says which route this machine takes, the result's `meta.notes` says so too,
+  and `--option pix_fmt` is refused there rather than dropped, since it is a knob on the
+  encoder that is missing. Installing a system ffmpeg built with libwebp puts the
+  one-pass route back: one on `PATH` is preferred over the bundled binary.
 - **Startup costs about 30 ms more** — ~120 ms against ~90 ms for the same command from
   a virtualenv (measured on Linux/x86_64, `--version`, warm cache). The bootloader has
   to locate and map the archive before the interpreter starts. It is a constant, not a

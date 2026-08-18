@@ -9,6 +9,8 @@ on:
 # the version check and the installer's own tests do not — `ruff` reads its target from
 # `pyproject.toml`, `shellcheck` reads bash, and `check_version.py` compares strings —
 # so running them four times would only buy four identical answers and four minutes.
+# (The installer's tests do depend on the *shell*, which is a different question: they
+# run a second time on the macOS bundle row, where bash is 3.2.)
 #
 # The same question decides the operating system, and gives a different answer. What
 # can differ on macOS is not the interpreter but the platform underneath it: `termios`
@@ -170,6 +172,17 @@ jobs:
       # exported through the frozen OpenTelemetry SDK.
       - name: Build
         run: bash packaging/build.sh --output dist --python 3.12
+
+      # The installer's own unit tests, here for the shell rather than for the bundle:
+      # the `checks` job already runs them on Linux, and this is the only row where bash
+      # is 3.2. That gap is not hypothetical — the harness used to load its subject
+      # through `source <(…)`, which bash 3.2 can truncate, so the file that tests the
+      # installer was the one thing on macOS that never ran. Seconds, and offline.
+      - name: Installer unit tests (bash 3.2 on the macOS row)
+        # macOS only: the `checks` job already runs these on Linux, and what this row
+        # adds is the shell, not a second answer from the same one.
+        if: runner.os == 'macOS'
+        run: bash install/test_installer.sh
 
       # And then install it the way a user would, from the tarball rather than from the
       # build directory. This is the only thing that covers the unpack, the symlink flip

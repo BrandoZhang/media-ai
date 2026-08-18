@@ -153,6 +153,87 @@ def test_a_failed_run_reports_the_tail_of_stderr(monkeypatch):
     assert "line 19" in str(ei.value) and "line 11" not in str(ei.value)  # last 8 lines only
 
 
+# ------------------------------------------------------------------ which build is this
+
+_ENCODER_LISTING = """Encoders:
+ V..... = Video
+ A..... = Audio
+ ------
+ V....D gif                  GIF (Graphics Interchange Format)
+ V....D libwebp_anim         libwebp WebP image (codec webp)
+ A....D aac                  AAC (Advanced Audio Coding)
+"""
+
+
+@pytest.fixture
+def listing(monkeypatch):
+    """Answer ``-encoders`` with a fixture, from a fresh cache."""
+
+    def install(stdout: str, returncode: int = 0, exe: str = "/fake/ffmpeg") -> None:
+        class Listed:
+            pass
+
+        Listed.returncode, Listed.stdout, Listed.stderr = returncode, stdout, ""
+        ffmpeg._encoder_names.cache_clear()
+        monkeypatch.setattr(ffmpeg, "ffmpeg_exe", lambda: exe)
+        monkeypatch.setattr(ffmpeg.subprocess, "run", lambda cmd, **kw: Listed())
+
+    yield install
+    ffmpeg._encoder_names.cache_clear()
+
+
+def test_the_encoder_list_is_read_off_the_binary_and_not_guessed(listing):
+    """Which external encoders an ffmpeg has is a *build option*, and the bundled binary
+    is built differently per platform — libwebp is in the Linux one and not in the macOS
+    arm64 one of the same `imageio-ffmpeg` release."""
+    listing(_ENCODER_LISTING)
+    assert ffmpeg.has_encoder("libwebp_anim") and ffmpeg.has_encoder("gif")
+    assert not ffmpeg.has_encoder("libx264")
+    # The header rows have an encoder line's shape with `=` where the name goes.
+    assert "=" not in ffmpeg._encoder_names("/fake/ffmpeg")
+
+
+def test_a_listing_that_could_not_be_read_reads_as_yes(listing):
+    """"Don't know" must not send a caller down a fallback nobody's ffmpeg needed: the
+    encode itself answers the question precisely, and loudly."""
+    listing("", returncode=1)
+    assert ffmpeg.has_encoder("libwebp_anim")
+    listing("Encoders:\n ------\n", exe="/fake/ffmpeg2")
+    assert ffmpeg.has_encoder("libwebp_anim")
+
+
+def test_a_missing_encoder_is_not_reported_as_an_io_failure(monkeypatch):
+    """Exit 3 with a code, not exit 1 with a tail of stderr. "This build cannot express
+    your request" is a different thing to do something about from "your input is bad",
+    and the caller — usually an agent — branches on the category."""
+    class Failed:
+        returncode = 1
+        stdout = ""
+        stderr = ("Unknown encoder 'libwebp_anim'\n"
+                  "Error selecting an encoder\nError opening output files: Encoder not found\n")
+
+    monkeypatch.setattr(ffmpeg, "ffmpeg_exe", lambda: "/fake/ffmpeg")
+    monkeypatch.setattr(ffmpeg.subprocess, "run", lambda cmd, **kw: Failed())
+    with pytest.raises(MediaError) as ei:
+        ffmpeg.run_ffmpeg(["-i", "a.mp4", "-c:v", "libwebp_anim", "a.webp"])
+    assert ei.value.code == "ffmpeg_encoder_missing"
+    assert ei.value.exit_code == 3
+    assert ei.value.details["encoder"] == "libwebp_anim"
+    assert "libwebp_anim" in str(ei.value) and ei.value.hint
+
+
+def test_the_real_binary_lists_its_own_encoders():
+    """The parse against a real listing, since the format is ffmpeg's and not ours."""
+    from conftest import have_media_stack
+
+    if not have_media_stack():
+        pytest.skip("needs Pillow + ffmpeg")
+    ffmpeg._encoder_names.cache_clear()
+    names = ffmpeg._encoder_names(ffmpeg.ffmpeg_exe())
+    assert names and {"gif", "apng"} <= names, names  # both built in to every ffmpeg
+    assert not ffmpeg.has_encoder("no_such_encoder_exists")
+
+
 def test_the_real_binary_accepts_the_pin(tmp_path):
     """The pin is only worth having if it does not break the ordinary local case — and
     an unknown option would make ffmpeg refuse *every* call, so this runs the real one.

@@ -9,12 +9,24 @@ import re
 import shutil
 import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from ..core import telemetry
 from ..core.errors import ErrorCategory, MediaError
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
+
+#: One line of ``ffmpeg -encoders``: six capability flags, then the encoder's name.
+#: The header rows above the ``------`` rule have the same shape with ``=`` where a name
+#: would be, which the ``\w`` first character excludes.
+_ENCODER_RE = re.compile(r"^\s*[VAS][A-Z.]{5}\s+(\w[\w.\-]*)")
+
+#: ffmpeg's words for "this build was compiled without that encoder". The name it quotes
+#: is the one that was asked for, so it is worth handing back rather than only printing:
+#: an external encoder (``libwebp_anim``, ``libx264``) is a *build option*, and which
+#: ones the bundled binary carries differs by platform.
+_UNKNOWN_ENCODER_RE = re.compile(r"Unknown encoder '([^']+)'")
 
 DEFAULT_W = 768
 DEFAULT_H = 432  # 16:9
@@ -92,10 +104,62 @@ def ffmpeg_exe() -> str:
         ) from exc
 
 
+@lru_cache(maxsize=4)
+def _encoder_names(exe: str) -> frozenset[str] | None:
+    """Every encoder ``exe`` was built with, or None when the list could not be read.
+
+    Keyed on the executable because that is what the answer is about: a system ffmpeg on
+    ``PATH`` and the bundled one are different builds with different ``--enable-lib*``
+    lists, and the process may resolve either. Cached because a listing is a fixed
+    property of a binary and this is on the path of a command that has real work to do.
+    """
+    try:
+        proc = _run(["-encoders"])
+    except Exception:  # noqa: BLE001 - an unreadable listing is "don't know", not a failure
+        return None
+    if proc.returncode != 0:
+        return None
+    found = {m.group(1) for m in (_ENCODER_RE.match(line) for line in (proc.stdout or "").splitlines()) if m}
+    return frozenset(found) or None
+
+
+def has_encoder(name: str) -> bool:
+    """Whether this ffmpeg can encode *name*.
+
+    **Unknown reads as yes.** The listing is a check *in front of* the encode, and the
+    encode already fails loudly and precisely when the encoder is missing (see
+    :func:`run_ffmpeg`); a build whose ``-encoders`` could not be read is a reason to go
+    ahead and let the real command answer, never a reason to take a fallback path
+    nobody's ffmpeg needed.
+    """
+    names = _encoder_names(ffmpeg_exe())
+    return name in names if names is not None else True
+
+
+def missing_encoder(text: str) -> str | None:
+    """The encoder ffmpeg said it did not have, read out of its stderr — else None."""
+    found = _UNKNOWN_ENCODER_RE.search(text or "")
+    return found.group(1) if found else None
+
+
 def run_ffmpeg(args: list[str]) -> None:
     proc = _run(["-y", "-loglevel", "error", *args])
     if proc.returncode != 0:
-        tail = (proc.stderr or "").strip().splitlines()[-8:]
+        stderr = proc.stderr or ""
+        tail = stderr.strip().splitlines()[-8:]
+        absent = missing_encoder(stderr)
+        if absent:
+            # Not an IO failure and not the caller's fault: the request is expressible,
+            # this *build* cannot express it. A distinct category (exit 3, unsupported)
+            # and a code, because the answer is "use another format or another ffmpeg",
+            # which is a different action from "fix your input".
+            raise MediaError(
+                f"this ffmpeg was built without the {absent!r} encoder:\n" + "\n".join(tail),
+                category=ErrorCategory.UNSUPPORTED, code="ffmpeg_encoder_missing",
+                provider="local", details={"encoder": absent, "ffmpeg": ffmpeg_exe()},
+                hint="install a system ffmpeg carrying it (`apt install ffmpeg`, `brew install ffmpeg`) "
+                     "and it will be preferred over the bundled binary",
+            )
         raise MediaError("ffmpeg failed:\n" + "\n".join(tail), category=ErrorCategory.IO)
 
 
@@ -107,7 +171,12 @@ def image_to_clip(image: Path, out: Path, *, seconds: int, fps: int, w: int, h: 
     tail = ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(out)]
     try:
         run_ffmpeg([*common, "-vf", vf, *tail])
-    except MediaError:
+    except MediaError as exc:
+        # The retry drops the zoom, which is the part an older filter chain may refuse.
+        # It cannot help with a missing encoder — the second command asks for the same
+        # one — so that failure is reported once instead of twice as slowly.
+        if exc.code == "ffmpeg_encoder_missing":
+            raise
         run_ffmpeg([*common, "-vf", f"scale={w}:{h},format=yuv420p", *tail])
 
 

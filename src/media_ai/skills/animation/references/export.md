@@ -110,6 +110,13 @@ silently ignored. Reach for these only after `--max-width`, `--fps` and `--forma
 |---|---|
 | `pix_fmt` | override the container's pixel format. Rarely needed — the right one is already chosen from whether `--transparent` was asked for |
 
+Some ffmpeg builds have no animated-WebP encoder (it comes from libwebp, and whether the
+bundled binary carries it depends on the platform). `--format webp` still works there —
+the frames are encoded from a lossless intermediate instead, with the same size, timing
+and loop count — but `--option pix_fmt` is **refused** rather than ignored, because it is
+a setting on the encoder that is missing. `meta.notes` says when that route was taken;
+`{{cli}} doctor` says whether this machine takes it.
+
 ## Getting the size down
 
 In the order worth trying:
