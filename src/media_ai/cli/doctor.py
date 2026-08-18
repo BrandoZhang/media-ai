@@ -137,9 +137,20 @@ def _check_media() -> list[dict]:
     """ffmpeg and Pillow back the offline mock provider and every local media step."""
     out = []
     try:
-        from ..media.ffmpeg import ffmpeg_exe
+        from ..media.animation import WEBP_ANIM_ENCODER
+        from ..media.ffmpeg import ffmpeg_exe, has_encoder
 
         out.append(_check("ffmpeg", "ok", ffmpeg_exe()))
+        # Which external encoders a build carries is a build option, not a property of
+        # ffmpeg, and the bundled binary is built differently per platform — libwebp is
+        # in the Linux one and not in the macOS arm64 one of the same release. That is a
+        # real difference in how `animation export --format webp` runs on this machine
+        # (through Pillow, from a lossless intermediate), so it is a line here rather
+        # than something to infer from a file size. Not a `warn`: the WebP still comes
+        # out, and there is nothing for the reader to go and fix.
+        if not has_encoder(WEBP_ANIM_ENCODER):
+            out.append(_check("ffmpeg-webp", "ok",
+                              f"no {WEBP_ANIM_ENCODER} in this build; animated WebP is encoded by Pillow"))
     except MediaError as exc:
         out.append(_check("ffmpeg", "fail", str(exc)))
     try:
