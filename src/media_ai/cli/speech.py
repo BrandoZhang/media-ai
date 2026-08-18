@@ -32,6 +32,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--timestamps", type=common.bool_arg, default=False, help="also emit a character-alignment sidecar")
     gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(gen)
+    common.add_call_headers(gen)
 
     dlg = sub.add_parser("dialogue", help="multi-voice dialogue -> speech")
     dlg.add_argument("--speaker", action="append", metavar="NAME=VOICE", default=[],
@@ -50,6 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="also emit a character-alignment sidecar")
     dlg.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(dlg)
+    common.add_call_headers(dlg)
     return ap
 
 

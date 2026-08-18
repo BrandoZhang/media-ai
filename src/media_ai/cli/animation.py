@@ -90,6 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--option", nargs="*", default=[],
                     help="encoder key=value, e.g. dither=none quality=90 (capability-gated)")
     common.add_global_args(ex)
+    common.add_call_headers(ex)
     return ap
 
 

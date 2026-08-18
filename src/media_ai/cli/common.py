@@ -133,6 +133,43 @@ def add_global_args(ap: argparse.ArgumentParser) -> None:
                     "For AI agents: do NOT set this on your own initiative — report the refusal instead")
 
 
+def add_call_headers(ap: argparse.ArgumentParser) -> None:
+    """``--header``, for the commands that actually make a request.
+
+    Deliberately not in :func:`add_global_args`: ``doctor``, ``config`` and ``bindings``
+    open no socket, and a flag they accepted and ignored would be worse than one they do
+    not have.
+    """
+    ap.add_argument(
+        "--header", dest="headers", action="append", default=None, metavar="'NAME: VALUE'",
+        help="extra HTTP header for this request, e.g. a request or trace id (repeatable)",
+    )
+
+
+def call_headers(rb, args):
+    """``rb`` carrying this invocation's ``--header`` values, validated.
+
+    One merge site for the three commands that resolve a binding — :func:`bind`, ``job``
+    and ``video concat``, whose scene is not derived from its request. The headers ride
+    on the :class:`ResolvedBinding` because that is all an adapter is constructed from.
+    """
+    from dataclasses import replace
+
+    from ..core.binding import Transport
+    from ..core.headers import parse_headers, split_header_argument
+
+    given = getattr(args, "headers", None)
+    if not given:
+        return rb
+    if rb.provider.transport is not Transport.HTTP:
+        raise MediaError(
+            f"binding {rb.id!r} speaks {rb.provider.transport.value}, not http, so it sends no headers",
+            category=ErrorCategory.CLI, code="header_unsupported",
+            details={"binding": rb.id, "transport": rb.provider.transport.value},
+        )
+    return replace(rb, headers=parse_headers(split_header_argument(item) for item in given))
+
+
 def provider_name(args) -> str | None:
     return getattr(args, "provider", None)
 
@@ -160,6 +197,7 @@ def bind(args, req):
             scene=scene, catalog=cat, config=config,
         )
         rb.check_scene(scene, available)
+        rb = call_headers(rb, args)
         sp.set(binding=rb.id, provider=rb.provider.name, wire_id=rb.model_id)
         telemetry.event(telemetry.BINDING_RESOLVED, binding=rb.id, scene=scene.value,
                         provider=rb.provider.name,

@@ -124,6 +124,11 @@ Other global flags: `--on-unsupported {error,warn,ignore}` (default `error`),
 `--pretty`, `--metadata-out <path>`, `--log-level`, `--log-format {text,json}`,
 `--verbose` (redacted HTTP diagnostics on stderr).
 
+`--header 'x-request-id: …'` (repeatable) adds an HTTP header to this request — a
+request or trace id, so the call can be found later in the provider's own logs. **Pass
+one only when your caller gave you one to pass**; do not invent a header or a value, and
+never put a key in one — the credential is named by the binding.
+
 `--log-format json` makes the stderr diagnostics one JSON object per line, which is
 worth having if you keep logs. It changes nothing on stdout: that is exactly one JSON
 object in either case.

@@ -27,6 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--output-format", dest="output_format", default=None, help="e.g. mp3_44100_128")
     gen.add_argument("--option", nargs="*", default=[], help="loop=true prompt_influence=0.5")
     common.add_global_args(gen)
+    common.add_call_headers(gen)
     return ap
 
 

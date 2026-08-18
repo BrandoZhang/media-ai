@@ -51,6 +51,11 @@ class ResolvedBinding:
     base_url: str | None = None
     credential: str | None = None
     options: dict = field(default_factory=dict)
+    headers: dict = field(default_factory=dict)
+    """Extra HTTP headers *this invocation* asked for (``--header``). Not configuration:
+    nothing here comes from the config file, and a binding resolved by anything but a
+    command line has none. It rides on the binding because that is all an adapter is
+    constructed from."""
     configured: bool = False
     """False for a binding usable without configuration (no credential required)."""
 
