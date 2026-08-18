@@ -59,6 +59,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_geometry_args(gen, resolution_help="480p|720p|1080p (provider-dependent)")
     common.add_global_args(gen)
+    common.add_call_headers(gen)
 
     cat = sub.add_parser("concat", help="join finished clips into one film (local ffmpeg)")
     cat.add_argument("--inputs", required=True, nargs="+", help="ordered clip paths or a JSON array")
@@ -68,6 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cat.add_argument("--height", type=int, default=ffmpeg.DEFAULT_H,
                      help="output height in pixels (default: %(default)s)")
     common.add_global_args(cat)
+    common.add_call_headers(cat)
     return ap
 
 
@@ -85,6 +87,10 @@ def _concat(args) -> object:
     rb = resolve(binding=args.binding, provider=args.provider, model=args.model,
                  scene=Scene.VIDEO_CONCAT, catalog=cat, config=config)
     rb.check_scene(Scene.VIDEO_CONCAT, available_bindings(cat, config))
+    # Concat resolves its own binding rather than going through `common.bind`, since the
+    # scene is not derived from the request. That makes it the third place a `--header`
+    # has to be merged — and `local/ffmpeg` is where it is refused rather than dropped.
+    rb = common.call_headers(rb, args)
     adapter = build_adapter(rb)
     return common.produce(
         lambda: adapter.concat(inputs, Path(args.output), width=args.width, height=args.height),

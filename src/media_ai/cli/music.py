@@ -32,6 +32,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--detailed", type=common.bool_arg, default=False, help="also write a <output>.metadata.json sidecar")
     gen.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(gen)
+    common.add_call_headers(gen)
 
     plan = sub.add_parser("plan", help="prompt -> composition plan (JSON; credit-free)")
     plan.add_argument("--prompt", required=True, help="text instruction for the composition plan")
@@ -41,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--source-plan", dest="source_plan", default=None, help="optional source composition-plan JSON to refine")
     plan.add_argument("--option", nargs="*", default=[], help="provider-specific key=value options (capability-gated)")
     common.add_global_args(plan)
+    common.add_call_headers(plan)
     return ap
 
 

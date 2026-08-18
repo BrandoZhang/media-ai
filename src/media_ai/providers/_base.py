@@ -16,7 +16,7 @@ rides in some other header is a manifest edit, not a new branch here.
 from __future__ import annotations
 
 from ..core.adapter import Adapter
-from ..core.errors import MediaError
+from ..core.errors import ErrorCategory, MediaError
 from ..credentials.secret import BrokeredHandle, Credential
 from ._http import HttpClient
 
@@ -53,9 +53,30 @@ class HttpAdapter(Adapter):
 
     def _prepare(self, **client_kw) -> tuple[HttpClient, dict]:
         """Resolve the credential (per call, for rotation) and return an
-        :class:`HttpClient` bound to the right base URL plus the auth headers."""
+        :class:`HttpClient` bound to the right base URL plus the headers to send.
+
+        The call's own ``--header`` values ride *with* the auth headers rather than
+        inside the client, and that is what gives them the right reach for free:
+        adapters thread this dict through every request that talks to the provider, and
+        pass no headers at all when they fetch a result from wherever the provider
+        pointed — a CDN, a signed object-store URL. A request id belongs on the first and
+        has no business on the second.
+
+        Auth wins a collision, because it has to arrive. A caller who names the header
+        this binding signs with is refused rather than silently ignored: only the
+        manifest knows which header that is (``x-goog-api-key``, ``xi-api-key``, …), so
+        no static list could, and a flag that quietly does nothing is the worse failure.
+        """
         cred = self.credential()
         base, headers = self._auth(cred)
+        clash = sorted(n for n in self.binding.headers if n.lower() in {k.lower() for k in headers})
+        if clash:
+            raise MediaError(
+                f"--header {clash[0]!r} is how this binding sends its credential",
+                category=ErrorCategory.VALIDATION, code="header_reserved", provider=self.name,
+                hint="the key is named by the binding's `credential`; drop the header",
+            )
+        headers = {**self.binding.headers, **headers}
         client = HttpClient(
             base_url=base, provider=self.name, error_mapper=self._error,
             retry_classifier=getattr(self, "retry_classifier", None),

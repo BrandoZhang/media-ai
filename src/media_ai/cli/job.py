@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
         if op == "query":
             p.add_argument("--output", default=None, help="download the finished artifact here")
         common.add_global_args(p)
+        common.add_call_headers(p)
     return ap
 
 
@@ -35,7 +36,7 @@ def _do(args):
 
     # No scene to default from — a job is identified by the binding that created it,
     # which is why a JobHandle's `poll` command names one.
-    rb = resolve(binding=args.binding, provider=args.provider, model=args.model)
+    rb = common.call_headers(resolve(binding=args.binding, provider=args.provider, model=args.model), args)
     adapter = build_adapter(rb)
     ref = JobRef(provider=rb.provider.name, id=args.id, model=rb.model_id)
     # The job id goes on the span and nowhere near a metric label. It is the one field

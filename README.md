@@ -221,6 +221,18 @@ Knobs belonging to the *integration* rather than the call — poll intervals, an
 an inline-upload ceiling — live on the binding in `config.toml`, not in the
 environment. Two bindings on one provider can differ.
 
+`--header 'NAME: VALUE'` (repeatable) adds an HTTP header to one request, which is how a
+batch gets its own id into the provider's logs:
+
+```bash
+media-ai image generate --prompt "..." --output o.png --header 'x-request-id: run-4417-shard-12'
+```
+
+It is on the commands that make a request and nowhere else. The credential header and
+the transport's own (`Content-Type`, `Content-Length`, `Host`) are refused rather than
+silently dropped, and a value is plain text — `argv` is readable by every process on the
+machine, so it is not a place for a secret.
+
 ## Machine contract (for Agent Skills)
 
 - **stdout** is exactly one JSON object — success *or* failure — so a Skill parses

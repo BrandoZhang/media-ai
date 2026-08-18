@@ -27,6 +27,7 @@ def _add_common(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--option", nargs="*", default=[], help="provider-specific key=value (capability-gated)")
     common.add_geometry_args(ap, resolution_help="named tier, e.g. 1K|2K|4K")
     common.add_global_args(ap)
+    common.add_call_headers(ap)
 
 
 def _build_parser() -> argparse.ArgumentParser:
