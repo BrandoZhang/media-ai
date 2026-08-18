@@ -19,7 +19,8 @@
 #    keeps only the newest version deletes the bundle whose own `upgrade` is running.
 #
 # The installer's `main` is never called: this sources everything above it and calls the
-# functions directly.
+# functions directly. How it does that is load-bearing — see the note above the `source`
+# below.
 
 set -euo pipefail
 
@@ -35,8 +36,31 @@ equal() {
 }
 
 # Source the functions without running main().
+#
+# Through a **regular file**, and cut at an **explicit marker**. The obvious spelling,
+# `source <(sed '$ d' install.sh)`, is wrong twice:
+#
+# 1. macOS ships bash 3.2, which can finish reading a `/dev/fd` process substitution
+#    before `sed` has written all of a script this long — so the functions defined near
+#    the end are simply absent, and the run dies with `parse_tag: command not found`
+#    while loading its own subject. A regular file is complete before it is read.
+# 2. `sed '$ d'` deletes the last *physical* line, which is only the entry point for as
+#    long as nobody adds a trailing comment or blank line under it. The day someone does,
+#    this file runs a real install of a real release into a developer's `~/.local` as a
+#    side effect of running the unit tests. Cutting at `main "$@"` says what is meant, and
+#    a missing marker is a refusal rather than a guess.
+ENTRY_POINT='main "$@"'
+grep -qxF "$ENTRY_POINT" "$HERE/install.sh" || {
+  printf 'install.sh no longer ends with the %s entry point; refusing to source it\n' "$ENTRY_POINT" >&2
+  exit 1
+}
+PREFIX="$(mktemp "${TMPDIR:-/tmp}/installer-prefix.XXXXXX")"
+# awk on a whole-line string comparison, so the marker needs no regex escaping — `$@`
+# and the quotes around it are matched as the literal text they are.
+awk -v marker="$ENTRY_POINT" '$0 == marker { exit } { print }' "$HERE/install.sh" > "$PREFIX"
 # shellcheck disable=SC1090
-source <(sed '$ d' "$HERE/install.sh")
+source "$PREFIX"
+rm -f "$PREFIX"
 
 # --------------------------------------------------------------------- parse_tag
 
