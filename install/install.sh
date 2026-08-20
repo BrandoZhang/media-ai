@@ -38,7 +38,7 @@ set -euo pipefail
 # repository it was forked from unless that is changed too.
 REPO="${MEDIA_AI_REPO:-BrandoZhang/media-ai}"
 # Fallback when the releases API is unreachable or rate-limited. Bump on release.
-DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.9.0}"
+DEFAULT_VERSION="${MEDIA_AI_DEFAULT_VERSION:-v0.10.0}"
 # The CLI's name, and the distribution `uv tool` keys the install by. Both are pinned
 # to `media_ai.brand.CLI_NAME` by tests/test_brand.py — this script is outside the
 # package and cannot import it, which is exactly why a test holds them together
