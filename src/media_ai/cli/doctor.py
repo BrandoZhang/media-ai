@@ -85,6 +85,12 @@ def _check_environment() -> list[dict]:
     be missed in a scroll-back, and "my config file setting is being ignored" is exactly
     the symptom that sends somebody to `doctor`.
 
+    A ``warn`` here moves the whole command's ``status``, which is the field a script
+    branches on — so the short list `envvars._REPORTED` keeps it to variables that are
+    unambiguously ours and unambiguously lost. One of the generic old spellings, set on
+    the machine for something else entirely, would otherwise pin this installation at
+    ``warn`` forever, with nothing the user could do about it.
+
     Offline, like everything else here — it reads the process's own environment.
     """
     from ..core.envvars import legacy_in_use

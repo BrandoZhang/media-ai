@@ -115,6 +115,36 @@ NAMES: frozenset[str] = frozenset({
 #: was ``MEDIA_`` plus the same tail.
 RENAMED: dict[str, str] = {f"MEDIA_{name[len(PREFIX):]}": name for name in sorted(NAMES)}
 
+#: The subset :func:`legacy_in_use` will speak up about, and it is deliberately small.
+#:
+#: Reporting all eighteen would repeat the mistake this rename was made to fix. The
+#: argument against ``MEDIA_`` is that it is generic enough to belong to somebody else —
+#: and ``MEDIA_LOG_LEVEL`` or ``MEDIA_CONFIG_FILE`` set for an unrelated tool is exactly
+#: that case. A warning on every command's ``notices[]``, and a permanent ``warn`` in
+#: the field ``doctor`` tells scripts to branch on, would be this CLI claiming a
+#: namespace it has just finished arguing it does not own.
+#:
+#: So the test is not "was this ours" but **"if it is ignored, does something happen
+#: that the user would not attribute to their own setting being dropped?"** Two ways to
+#: pass it: the value decides where configuration or secrets are read and *written*, or
+#: ignoring it turns an outbound behaviour **on**.
+#:
+#: Everything else fails visibly and at once. Colour and glyphs look wrong
+#: (``MEDIA_ASCII``, ``MEDIA_NO_TTY``), the log goes quiet (``MEDIA_LOG_LEVEL``), a
+#: ledger line lands in the working directory (``MEDIA_USAGE_LOG``), a ``broker://``
+#: reference raises because it has no endpoint (``MEDIA_CRED_BROKER``). None of those
+#: is a silent change of behaviour, and none is worth a false positive on somebody
+#: else's machine.
+_REPORTED: frozenset[str] = frozenset({
+    # Reads *and writes* somewhere else — including, for these two, the user's real
+    # configuration and their real keys.
+    CONFIG_FILE, CREDENTIALS_FILE,
+    # Ignored, each of these turns something outbound back on: telemetry starts
+    # exporting prompts, the update check starts fetching and forking, and a feed
+    # deliberately pointed at an internal mirror goes back to the public host.
+    TELEMETRY, UPDATE_CHECK, UPDATE_FEED,
+})
+
 
 def legacy_in_use() -> dict[str, str]:
     """Old names that are set while their replacement is not: ``{old: new}``.
@@ -123,14 +153,15 @@ def legacy_in_use() -> dict[str, str]:
     baggage this rename exists to remove, and one that silently honours both spellings
     would have to be maintained forever by everyone who adds a variable.
 
-    But a break that says nothing is a different thing from a break. Three of these fail
-    *dangerously* when ignored rather than merely inconveniently: an unread
+    But a break that says nothing is a different thing from a break. An unread
     ``MEDIA_CONFIG_FILE`` sends a script pointed at a scratch profile to the user's real
     configuration — and to their real ``credentials.toml`` — while an unread
     ``MEDIA_TELEMETRY=0`` turns telemetry back on and starts shipping prompts to a
     collector, which is the exact failure the telemetry design is arranged to prevent.
-    Every one of those looks, from the outside, like the tool having decided something on
-    its own.
+    Both look, from the outside, like the tool having decided something on its own.
+
+    Only :data:`_REPORTED`, not all of :data:`RENAMED` — see there for why claiming the
+    whole old namespace would repeat the mistake being fixed.
 
     Only when the new name is *unset*: somebody mid-migration who has set both has
     already answered, and a warning then would be nagging about a variable that is being
@@ -141,5 +172,5 @@ def legacy_in_use() -> dict[str, str]:
     """
     return {
         old: new for old, new in RENAMED.items()
-        if os.environ.get(old, "").strip() and not os.environ.get(new, "").strip()
+        if new in _REPORTED and os.environ.get(old, "").strip() and not os.environ.get(new, "").strip()
     }

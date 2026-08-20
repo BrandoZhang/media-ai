@@ -76,6 +76,12 @@ def _environment_variables_that_moved():
     re-consented to. From the outside both look like the tool deciding something on its
     own, which is the one thing this project's notices exist to prevent.
 
+    Which is also why it is not every renamed variable: `envvars._REPORTED` is a short
+    list, and the ones left off it fail visibly and at once. Warning about all eighteen
+    would mean treating any set ``MEDIA_LOG_LEVEL`` as ours — the very over-claiming of
+    a generic namespace that the rename was made to stop, now with a `warn` on every
+    command belonging to whoever else set it.
+
     Only when the new name is unset, so somebody who has already migrated — or who is
     setting both during one — is not nagged about a variable that is correctly ignored.
 

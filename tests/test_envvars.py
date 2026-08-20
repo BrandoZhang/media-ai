@@ -143,6 +143,61 @@ def test_every_new_name_has_an_old_one_and_they_derive():
         assert old == "MEDIA_" + new[len(envvars.PREFIX):]
 
 
+def test_only_the_silent_losses_are_reported(monkeypatch):
+    """The narrow list is the point. Warning about every renamed variable would mean
+    treating any set `MEDIA_LOG_LEVEL` as ours — the exact over-claiming of a generic
+    namespace this rename was made to stop, now with a `warn` on every command belonging
+    to whoever else set it."""
+    monkeypatch.delenv(envvars.LOG_LEVEL, raising=False)
+    monkeypatch.setenv("MEDIA_LOG_LEVEL", "debug")
+    assert envvars.legacy_in_use() == {}
+
+
+@pytest.mark.parametrize("old_name", sorted(
+    old for old, new in envvars.RENAMED.items() if new in envvars._REPORTED
+))
+def test_a_silently_lost_name_is_reported(monkeypatch, old_name):
+    new_name = envvars.RENAMED[old_name]
+    monkeypatch.delenv(new_name, raising=False)
+    monkeypatch.setenv(old_name, "1")
+    assert envvars.legacy_in_use() == {old_name: new_name}
+
+
+def test_the_reported_list_stays_short_and_justified():
+    """Its members are the ones that, ignored, either move where configuration and
+    secrets are read *and written*, or turn an outbound behaviour back on. Adding one
+    outside that rule is what turns a diagnostic into noise, so it is asserted rather
+    than left to a comment."""
+    assert envvars._REPORTED == {
+        envvars.CONFIG_FILE, envvars.CREDENTIALS_FILE,     # reads and writes elsewhere
+        envvars.TELEMETRY, envvars.UPDATE_CHECK, envvars.UPDATE_FEED,  # turn egress on
+    }
+    assert envvars._REPORTED < envvars.NAMES
+
+
+def test_a_doctor_run_is_not_pinned_to_warn_by_somebody_elses_variable(tmp_path, monkeypatch, capsys):
+    """`status` is what a script branches on, and a false positive here has no cure the
+    user could apply — the variable is not theirs to unset."""
+    import json
+    import sys
+
+    from media_ai.cli import doctor
+    from media_ai.core import notices
+
+    monkeypatch.setenv("MEDIA_LOG_LEVEL", "debug")
+    monkeypatch.setenv("MEDIA_USAGE_LOG", "/somewhere/else.jsonl")
+    notices.clear()
+    old, sys.argv = sys.argv, ["media-ai doctor"]
+    try:
+        doctor.main()
+    finally:
+        sys.argv = old
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert not [c for c in payload["checks"] if c["check"] == "environment"]
+    assert not [n for n in payload.get("notices", []) if n["kind"] == "env_renamed"]
+    notices.clear()
+
+
 def test_an_old_name_is_reported(monkeypatch):
     monkeypatch.setenv("MEDIA_CONFIG_FILE", "/somewhere")
     monkeypatch.delenv(envvars.CONFIG_FILE, raising=False)

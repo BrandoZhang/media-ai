@@ -524,7 +524,7 @@ wrapper script makes the two disagree.
 | Follows the brand | Stays fixed |
 |---|---|
 | the executable, and the distribution `uv tool` keys by | `media_ai`, the **import package** — the resource root for `skills/`+`bindings/` and the `media_ai.bindings` entry-point group third-party manifests register under |
-| `error.hint`, `--help`, `meta.poll`, wizard and `doctor` output | `MEDIA_AI_CONFIG_FILE`, `MEDIA_AI_CREDENTIALS_FILE`, `MEDIA_AI_USAGE_LOG` … — these name a *modality*, not a brand, and each is a per-invocation override rather than a namespace, so renaming them would break callers' CI for no isolation gained |
+| `error.hint`, `--help`, `meta.poll`, wizard and `doctor` output | `MEDIA_AI_CONFIG_FILE`, `MEDIA_AI_CREDENTIALS_FILE`, `MEDIA_AI_USAGE_LOG` … — the prefix derives from the **import package** rather than from the brand (`core/envvars.py` declares them all), and each is a per-invocation override rather than a namespace, so a build renamed to `foo` still reads `MEDIA_AI_CONFIG_FILE` |
 | `~/.config/<brand>/` — config, credentials, install receipt | `REPO` in `install/install.sh`: where the code comes from is not what the tool is called |
 | installed skill directories (`<brand>-image`), their cross-references, and their `needs:` edges | the packaged directories, which are named for the command group (`skills/image/`) |
 | the default keychain service name | the scene ids, binding ids, and the result schema |
