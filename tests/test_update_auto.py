@@ -41,8 +41,8 @@ FEED = {
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
-    for name in ("CI", "MEDIA_UPDATE_CHECK", "MEDIA_UPDATE_FEED", "MEDIA_UPDATE_INTERVAL"):
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
+    for name in ("CI", "MEDIA_AI_UPDATE_CHECK", "MEDIA_AI_UPDATE_FEED", "MEDIA_AI_UPDATE_INTERVAL"):
         monkeypatch.delenv(name, raising=False)
     return tmp_path
 
@@ -57,7 +57,7 @@ def cache(tmp_path, feed: dict | None = FEED, *, age_seconds: float = 0.0) -> No
 def published(tmp_path, monkeypatch, feed: dict) -> None:
     path = tmp_path / "feed.json"
     path.write_text(json.dumps(feed), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", path.as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", path.as_uri())
 
 
 class Spawns:
@@ -121,7 +121,7 @@ def test_a_stamp_from_the_future_is_a_clock_that_moved_not_a_check_from_tomorrow
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off"])
 def test_the_off_switch_stops_it_being_due_at_all(tmp_path, monkeypatch, value):
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", value)
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", value)
     assert update.due(media_ai.__version__) is False
 
 
@@ -137,7 +137,7 @@ def test_a_runner_that_wants_the_check_can_say_so(monkeypatch):
     states. An override that could only force one direction leaves a nightly that
     reports its own staleness with no way to ask."""
     monkeypatch.setenv("CI", "true")
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", "1")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", "1")
     assert update.due(media_ai.__version__) is True
 
 
@@ -168,7 +168,7 @@ def test_a_configured_interval_is_reported_as_configured(tmp_path):
 
 def test_the_environment_wins_over_the_config(tmp_path, monkeypatch):
     (tmp_path / "config.toml").write_text("[update]\ninterval = 600\n", encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_INTERVAL", "10")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_INTERVAL", "10")
     assert update.interval_seconds() == 10
     assert update.settings_from()["interval"] == "env"
 
@@ -176,7 +176,7 @@ def test_the_environment_wins_over_the_config(tmp_path, monkeypatch):
 def test_zero_means_after_every_command(tmp_path, monkeypatch):
     """What a staged rollout or a demo wants. It still costs the caller nothing — the
     fetch is in another process either way."""
-    monkeypatch.setenv("MEDIA_UPDATE_INTERVAL", "0")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_INTERVAL", "0")
     cache(tmp_path, age_seconds=0)
     assert update.due(media_ai.__version__) is True
 
@@ -186,7 +186,7 @@ def test_an_unusable_environment_interval_is_ignored_not_refused(monkeypatch, va
     """The opposite of how the config file is read, deliberately: this is consulted on
     the way out of *every* command, and a typo in a shell profile must not turn each of
     them into an error about a preference nobody was exercising."""
-    monkeypatch.setenv("MEDIA_UPDATE_INTERVAL", value)
+    monkeypatch.setenv("MEDIA_AI_UPDATE_INTERVAL", value)
     assert update.interval_seconds() == update.DEFAULT_INTERVAL_SECONDS
     assert update.settings_from()["interval"] == "default"
 
@@ -591,7 +591,7 @@ def test_uninstall_does_not_put_back_what_it_just_removed(tmp_path, monkeypatch,
     from media_ai.cli import uninstall
 
     cache(tmp_path)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
     old, sys.argv = sys.argv, ["media-ai uninstall", "--yes", "--skills-dest", str(tmp_path / "none")]
     try:
         uninstall.main()
@@ -749,7 +749,7 @@ def test_uninstall_takes_every_file_the_check_writes(tmp_path, monkeypatch, caps
     cache(tmp_path)
     update.lock_path().write_text("4242", encoding="utf-8")
     (tmp_path / "update-cache.json.abcdef.tmp").write_text("{half a docum", encoding="utf-8")
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
     old, sys.argv = sys.argv, ["media-ai uninstall", "--yes", "--skills-dest", str(tmp_path / "none")]
     try:
         uninstall.main()

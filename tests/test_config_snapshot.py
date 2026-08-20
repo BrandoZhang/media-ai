@@ -27,7 +27,7 @@ from media_ai.core.errors import MediaError
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     path.write_text(f'schema = {config_mod.SCHEMA}\n[bindings."mock/mock"]\n', encoding="utf-8")
     return path
 

@@ -250,7 +250,7 @@ def test_error_hints_follow(renamed, monkeypatch, tmp_path):
     from media_ai.core.result import error_payload
     from media_ai.core.scene import Scene
 
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     # Three shapes of failure, because the hint is built differently in each: an
     # unknown binding, a scene with nothing configured to serve it, and a request that
     # the manifest rejects. Asserting on `error_payload` rather than on `details` is
@@ -282,8 +282,8 @@ def test_the_job_poll_string_follows(renamed):
 
 def test_the_config_namespace_follows(renamed, monkeypatch):
     """Two brands must not share a config: it names bindings the other may not ship."""
-    monkeypatch.delenv("MEDIA_CONFIG_FILE", raising=False)
-    monkeypatch.delenv("MEDIA_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("MEDIA_AI_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("MEDIA_AI_CREDENTIALS_FILE", raising=False)
     from media_ai.core.config import config_path
     from media_ai.credentials.stores import credentials_path
 
@@ -298,7 +298,7 @@ def test_the_env_var_names_do_not_follow(renamed, monkeypatch, tmp_path):
     default path above. Renaming them would break every caller's CI for no isolation."""
     from media_ai.core.config import config_path
 
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "elsewhere.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "elsewhere.toml"))
     assert config_path() == tmp_path / "elsewhere.toml"
 
 

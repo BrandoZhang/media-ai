@@ -34,8 +34,8 @@ FEED = {
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
-    for var in ("CI", "MEDIA_UPDATE_CHECK", "MEDIA_UPDATE_FEED"):
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
+    for var in ("CI", "MEDIA_AI_UPDATE_CHECK", "MEDIA_AI_UPDATE_FEED"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path
 
@@ -60,7 +60,7 @@ def cache(tmp_path, feed: dict) -> None:
 def published(tmp_path, monkeypatch, feed: dict) -> None:
     path = tmp_path / "feed.json"
     path.write_text(json.dumps(feed), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", path.as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", path.as_uri())
 
 
 # ---------------------------------------------------------------------- show
@@ -87,7 +87,7 @@ def test_show_reports_every_schema_this_build_reads(capsys):
 
 def test_show_never_touches_the_network(monkeypatch, capsys):
     """It reports what this build *is*; nothing about that is remote."""
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", "https://definitely.invalid/feed.json")
     assert run("show", capsys=capsys)["ok"] is True
 
 
@@ -175,7 +175,7 @@ def test_checking_can_be_turned_off_in_the_config(tmp_path, capsys):
 
 def test_the_environment_wins_and_says_that_it_did(tmp_path, monkeypatch, capsys):
     (tmp_path / "config.toml").write_text("schema = 2\n\n[update]\ncheck = false\n", encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", "1")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", "1")
     result = run("check", "--offline", capsys=capsys)
     assert result["settings"]["check"] is True
     assert result["settings_from"]["check"] == "env"

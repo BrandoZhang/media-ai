@@ -129,7 +129,7 @@ def test_it_reaches_the_json_a_caller_keeps(tmp_path, monkeypatch, capsys):
 
     cfg = tmp_path / "config.toml"
     cfg.write_text(render_config(Config(bindings={"mock/mock": UserBinding(id="mock/mock")})), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(cfg))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(cfg))
 
     argv = ["media-ai image", "generate", "--binding", "mock/mock",
             "--prompt", "a red bicycle", "--output", str(tmp_path / "out.png")]

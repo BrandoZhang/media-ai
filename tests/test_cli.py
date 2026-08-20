@@ -52,8 +52,8 @@ def env(tmp_path):
     )), encoding="utf-8")
 
     e = dict(os.environ)
-    e["MEDIA_CONFIG_FILE"] = str(config)
-    e["MEDIA_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
+    e["MEDIA_AI_CONFIG_FILE"] = str(config)
+    e["MEDIA_AI_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
     for k in ("ARK_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
         e.pop(k, None)
     return e
@@ -186,7 +186,7 @@ def _with_ark(env, tmp_path):
     path.write_text(render_config(Config(bindings={
         "volc-ark/seedream-4.5": UserBinding(id="volc-ark/seedream-4.5", credential="env://ARK_API_KEY"),
     })), encoding="utf-8")
-    return dict(env) | {"MEDIA_CONFIG_FILE": str(path)}
+    return dict(env) | {"MEDIA_AI_CONFIG_FILE": str(path)}
 
 
 def test_unsupported_option_exits_3_with_json(env, tmp_path):
@@ -223,8 +223,8 @@ def test_naming_no_binding_with_no_default_refuses_rather_than_guessing(tmp_path
     the agent that asked for a video.
     """
     e = dict(os.environ)
-    e["MEDIA_CONFIG_FILE"] = str(tmp_path / "empty.toml")
-    e["MEDIA_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
+    e["MEDIA_AI_CONFIG_FILE"] = str(tmp_path / "empty.toml")
+    e["MEDIA_AI_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
     proc = run(e, "video", "generate", "--prompt", "p", "--output", str(tmp_path / "v.mp4"), expect=2)
     err = json_out(proc)["error"]
     assert err["code"] == "no_default_binding"

@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 
 from ..brand import cli_name
+from ..core import envvars
 from ..core.errors import ErrorCategory, MediaError
 from ..core.packaging import extra_hint
 from .secret import BrokeredHandle, Credential, Secret
@@ -69,14 +70,14 @@ def resolve_reference(ref: str, *, provider: str = "") -> Credential:
     scheme, rest = _split(ref)
 
     if scheme == "broker":
-        endpoint = rest or os.getenv("MEDIA_CRED_BROKER", "")
+        endpoint = rest or os.getenv(envvars.CRED_BROKER, "")
         if not endpoint:
             raise MediaError(
                 "credential is 'broker://' but no broker endpoint is set; "
-                "use broker://<host> or export MEDIA_CRED_BROKER",
+                "use broker://<host> or export MEDIA_AI_CRED_BROKER",
                 category=ErrorCategory.AUTH, code="credential_unresolved", provider=provider,
             )
-        return BrokeredHandle(provider=provider, endpoint=endpoint, token=os.getenv("MEDIA_CRED_BROKER_TOKEN", ""))
+        return BrokeredHandle(provider=provider, endpoint=endpoint, token=os.getenv(envvars.CRED_BROKER_TOKEN, ""))
 
     return Secret(_reveal(scheme, rest, ref, provider), provider=provider, source=scheme)
 

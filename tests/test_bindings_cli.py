@@ -43,7 +43,7 @@ def run(mod, *argv, expect=0, capsys=None):
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     return path
 
 

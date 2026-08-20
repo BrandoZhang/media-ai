@@ -308,13 +308,13 @@ def test_summarize_buckets_a_scene_less_line_rather_than_dropping_it(tmp_path, m
     # `job query` finalizes work whose scene is unknowable by then; the cost is still real.
     log = tmp_path / "u.jsonl"
     log.write_text(json.dumps({"binding": "volc-ark/seedance-2.0", "total_tokens": 7}) + "\n")
-    monkeypatch.setenv("MEDIA_USAGE_LOG", str(log))
+    monkeypatch.setenv("MEDIA_AI_USAGE_LOG", str(log))
     totals = usage.summarize_usage()
     assert totals["by_binding"] == {"volc-ark/seedance-2.0": 7} and totals["by_scene"] == {"?": 7}
 
 
 def test_record_usage_never_raises(monkeypatch):
-    monkeypatch.setenv("MEDIA_USAGE_LOG", "/proc/definitely/not/writable/u.jsonl")
+    monkeypatch.setenv("MEDIA_AI_USAGE_LOG", "/proc/definitely/not/writable/u.jsonl")
     usage.record_usage({"total_tokens": 1})  # must not raise
 
 

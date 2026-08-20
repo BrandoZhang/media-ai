@@ -22,13 +22,13 @@ SECRET = "sk-sentinel-doctor-must-not-print-7c1d"
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "cfg" / "credentials.toml"))
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "cfg" / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "cfg" / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "cfg" / "config.toml"))
     monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
     (tmp_path / "fakehome").mkdir()
     (tmp_path / "cfg").mkdir()
     for var in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ARK_API_KEY",
-                "VOLC_API_KEY", "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "MEDIA_CRED_BROKER"):
+                "VOLC_API_KEY", "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "MEDIA_AI_CRED_BROKER"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -88,8 +88,8 @@ def test_exit_code_is_zero_even_when_checks_warn(home):
         [sys.executable, "-m", "media_ai", "doctor"],
         capture_output=True, text=True, timeout=60, cwd=str(home),
         env={**dict(__import__("os").environ), "HOME": str(home / "fakehome"),
-             "MEDIA_CREDENTIALS_FILE": str(home / "cfg" / "credentials.toml"),
-             "MEDIA_CONFIG_FILE": str(home / "cfg" / "config.toml")},
+             "MEDIA_AI_CREDENTIALS_FILE": str(home / "cfg" / "credentials.toml"),
+             "MEDIA_AI_CONFIG_FILE": str(home / "cfg" / "config.toml")},
     )
     assert res.returncode == 0
     parsed = json.loads(res.stdout)
@@ -176,7 +176,7 @@ class TestABrokenFileDoesNotTakeDownTheDiagnosis:
 def test_the_fail_verdict_stays_inside_the_encoding_it_chose(home, monkeypatch, capsys):
     """It names the mark it just printed; a hard-coded ✗ would both point at a glyph
     that was never drawn and raise on the stderr that made us degrade."""
-    monkeypatch.setenv("MEDIA_ASCII", "1")
+    monkeypatch.setenv("MEDIA_AI_ASCII", "1")
     path = home / "cfg" / "credentials.toml"
     path.write_text('[openai]\napi_key = "x"\n', encoding="utf-8")
     path.chmod(0o644)
@@ -188,7 +188,7 @@ def test_the_fail_verdict_stays_inside_the_encoding_it_chose(home, monkeypatch, 
 def test_marks_degrade_on_a_terminal_that_cannot_encode_them(home, monkeypatch, capsys):
     """`doctor` is most useful on a constrained box — which is exactly where stderr
     may not encode ✓, and where raising would take down the diagnosis."""
-    monkeypatch.setenv("MEDIA_ASCII", "1")
+    monkeypatch.setenv("MEDIA_AI_ASCII", "1")
     diagnose()
     err = capsys.readouterr().err
     assert "✓" not in err and "ok  " in err

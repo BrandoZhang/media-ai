@@ -166,7 +166,7 @@ def test_a_notice_is_redacted_like_everything_else_on_stdout():
 
 def receipt(tmp_path, monkeypatch, version: str):
     """An install receipt claiming a destination was written by ``version``."""
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     (tmp_path / "installed-skills.toml").write_text(
         f'[dests."{tmp_path}/skills"]\nskills = ["x"]\nversion = "{version}"\n', encoding="utf-8"
     )
@@ -187,7 +187,7 @@ def test_skills_from_another_build_are_reported_with_a_runnable_fix(tmp_path, mo
 
 def test_no_receipt_at_all_says_nothing(tmp_path, monkeypatch):
     """A hand-copied install, or none — neither is drift, and neither is ours to nag about."""
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     assert list(common._skills_from_another_build()) == []
 
 

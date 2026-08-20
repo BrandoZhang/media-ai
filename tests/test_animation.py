@@ -436,8 +436,8 @@ def env(tmp_path):
         defaults={"animation.from_video": "local/ffmpeg", "animation.from_frames": "local/ffmpeg"},
     )), encoding="utf-8")
     e = dict(os.environ)
-    e["MEDIA_CONFIG_FILE"] = str(config)
-    e["MEDIA_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
+    e["MEDIA_AI_CONFIG_FILE"] = str(config)
+    e["MEDIA_AI_USAGE_LOG"] = str(tmp_path / "usage.jsonl")
     return e
 
 
@@ -831,7 +831,7 @@ def test_the_notes_say_which_route_wrote_the_webp():
 @pytestmark_media
 def test_the_ledger_attributes_the_encode_to_its_binding(clip, env, tmp_path):
     export(env, "--input", str(clip), "--output", str(tmp_path / "u.gif"))
-    lines = [json.loads(x) for x in Path(env["MEDIA_USAGE_LOG"]).read_text().splitlines()]
+    lines = [json.loads(x) for x in Path(env["MEDIA_AI_USAGE_LOG"]).read_text().splitlines()]
     assert lines[-1]["binding"] == "local/ffmpeg"
     assert lines[-1]["scene"] == "animation.from_video"
     assert lines[-1]["kind"] == "animation" and lines[-1]["format"] == "gif"

@@ -4,7 +4,7 @@ stdout is reserved for the one-line JSON contract; all human/diagnostic logging 
 stderr and is passed through :func:`~media_ai.credentials.redaction.redact` so a secret
 can never appear even if some adapter interpolates one into a message.
 
-Two renderings of the same records, chosen by ``--log-format`` / ``MEDIA_LOG_FORMAT``::
+Two renderings of the same records, chosen by ``--log-format`` / ``MEDIA_AI_LOG_FORMAT``::
 
     binding resolved: binding=mock/mock scene=image.text_to_image
 
@@ -38,10 +38,11 @@ import sys
 from collections.abc import Callable
 
 from ..credentials.redaction import redact
+from . import envvars
 
 _LOGGER_NAME = "media_ai"
 
-#: Rendering names accepted by ``--log-format`` and ``MEDIA_LOG_FORMAT``.
+#: Rendering names accepted by ``--log-format`` and ``MEDIA_AI_LOG_FORMAT``.
 FORMATS = ("text", "json")
 
 #: Facts true of the whole invocation, attached to every record. Replaced wholesale
@@ -135,10 +136,10 @@ def configure(level: str | None = None, *, fmt: str | None = None) -> logging.Lo
     """Configure the package logger. Idempotent (safe to call once per CLI run)."""
     logger = get_logger()
     logger.handlers.clear()
-    lvl = (level or os.getenv("MEDIA_LOG_LEVEL") or "warning").upper()
+    lvl = (level or os.getenv(envvars.LOG_LEVEL) or "warning").upper()
     logger.setLevel(getattr(logging, lvl, logging.WARNING))
     handler = logging.StreamHandler(sys.stderr)
-    chosen = (fmt or os.getenv("MEDIA_LOG_FORMAT") or FORMATS[0]).strip().lower()
+    chosen = (fmt or os.getenv(envvars.LOG_FORMAT) or FORMATS[0]).strip().lower()
     handler.setFormatter(_JsonFormatter() if chosen == "json" else _RedactingFormatter("%(message)s"))
     logger.addHandler(handler)
     logger.propagate = False

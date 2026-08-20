@@ -33,10 +33,10 @@ FEED = {
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     """A config directory this test owns, and no ambient CI variable."""
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("MEDIA_UPDATE_CHECK", raising=False)
-    monkeypatch.delenv("MEDIA_UPDATE_FEED", raising=False)
+    monkeypatch.delenv("MEDIA_AI_UPDATE_CHECK", raising=False)
+    monkeypatch.delenv("MEDIA_AI_UPDATE_FEED", raising=False)
     return tmp_path
 
 
@@ -44,7 +44,7 @@ def published(tmp_path, monkeypatch, feed: dict | str) -> None:
     """Serve ``feed`` from a local file, the way an internal mirror would."""
     path = tmp_path / "feed.json"
     path.write_text(feed if isinstance(feed, str) else json.dumps(feed), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", path.as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", path.as_uri())
 
 
 def cache(tmp_path, feed: dict, *, age_seconds: float = 0.0) -> None:
@@ -108,7 +108,7 @@ def test_a_malformed_feed_is_silence(tmp_path, monkeypatch, body):
 
 def test_an_unreachable_feed_is_silence_and_writes_nothing(tmp_path, monkeypatch):
     """A CDN having a bad day must not fail an install, a generation or a diagnosis."""
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "does-not-exist.json").as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", (tmp_path / "does-not-exist.json").as_uri())
     assert update.refresh("0.6.0") is None
     assert not update.cache_path().exists()
 
@@ -129,7 +129,7 @@ def test_a_feed_larger_than_the_ceiling_is_ignored(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
 def test_the_env_switch_turns_checking_off(monkeypatch, value):
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", value)
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", value)
     assert update.should_check("0.6.0") is False
 
 
@@ -145,7 +145,7 @@ def test_no_tty_does_not_turn_checking_off(monkeypatch):
     terminal still wants to be told its CLI is out of date — the agent is the party
     that can act on it.
     """
-    monkeypatch.setenv("MEDIA_NO_TTY", "1")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "1")
     assert update.should_check("0.6.0") is True
 
 
@@ -158,7 +158,7 @@ def test_a_build_that_is_not_a_release_never_checks(version):
 
 def test_a_fresh_cache_is_not_refetched(tmp_path, monkeypatch):
     cache(tmp_path, FEED, age_seconds=60)
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "does-not-exist.json").as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", (tmp_path / "does-not-exist.json").as_uri())
     assert update.refresh("0.6.0") is None  # would have failed loudly if it had fetched
     assert update.latest_version(update.cached()) == "9.9.9"
 
@@ -181,7 +181,7 @@ def test_force_ignores_the_ttl(tmp_path, monkeypatch):
 def test_the_cache_is_the_only_thing_the_hot_path_touches(tmp_path, monkeypatch):
     """`cached` cannot block: point the feed at a URL that would fail and read anyway."""
     cache(tmp_path, FEED)
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", "https://definitely.invalid/feed.json")
     assert update.latest_version(update.cached()) == "9.9.9"
 
 
@@ -278,7 +278,7 @@ def test_doctor_reports_from_the_cache_and_never_the_network(tmp_path, monkeypat
     from media_ai.cli import doctor
 
     cache(tmp_path, FEED)
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", "https://definitely.invalid/feed.json")
     (found,) = doctor._check_update()
     assert found["status"] == "warn"
     assert "9.9.9" in found["detail"]
@@ -311,7 +311,7 @@ def test_uninstall_takes_the_cache_with_it(tmp_path, monkeypatch):
     from media_ai.cli import uninstall
 
     cache(tmp_path, FEED)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
     argv = ["media-ai uninstall", "--yes", "--skills-dest", str(tmp_path / "none")]
     old, sys.argv = sys.argv, argv
     try:

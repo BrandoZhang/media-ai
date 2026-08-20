@@ -66,7 +66,7 @@ def test_media_no_tty_can_force_interactive_against_ci(monkeypatch):
     from media_ai.cli._prompt import _nobody_is_watching
 
     monkeypatch.setenv("CI", "true")
-    monkeypatch.setenv("MEDIA_NO_TTY", "0")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "0")
     assert _nobody_is_watching() is False
 
 
@@ -74,16 +74,16 @@ def test_media_no_tty_still_forces_the_fallback(monkeypatch):
     from media_ai.cli._prompt import _nobody_is_watching
 
     monkeypatch.delenv("CI", raising=False)
-    monkeypatch.setenv("MEDIA_NO_TTY", "1")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "1")
     assert _nobody_is_watching() is True
 
 
 def test_an_override_beats_a_dumb_terminal_too(monkeypatch):
-    """`MEDIA_NO_TTY` is the local override for the whole question, not only for `CI`."""
+    """`MEDIA_AI_NO_TTY` is the local override for the whole question, not only for `CI`."""
     from media_ai.cli._prompt import _nobody_is_watching
 
     monkeypatch.setenv("TERM", "dumb")
-    monkeypatch.setenv("MEDIA_NO_TTY", "0")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "0")
     assert _nobody_is_watching() is False
 
 
@@ -95,7 +95,7 @@ def test_media_ascii_zero_does_not_force_ascii(monkeypatch):
 
     from media_ai.cli._prompt import UNICODE, glyphs_for
 
-    monkeypatch.setenv("MEDIA_ASCII", "0")
+    monkeypatch.setenv("MEDIA_AI_ASCII", "0")
     assert glyphs_for(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) is UNICODE
 
 
@@ -116,8 +116,8 @@ def test_the_update_check_reads_ci_the_same_way(monkeypatch):
     # `conftest` now turns the check off for the whole suite (it forks a real process
     # otherwise); this test is about how `CI` is *read*, so it asks the question with
     # nothing else answering it — which is also the only state in which `CI` decides,
-    # since an explicit `MEDIA_UPDATE_CHECK` overrules it in both directions.
-    monkeypatch.delenv("MEDIA_UPDATE_CHECK", raising=False)
+    # since an explicit `MEDIA_AI_UPDATE_CHECK` overrules it in both directions.
+    monkeypatch.delenv("MEDIA_AI_UPDATE_CHECK", raising=False)
     monkeypatch.setenv("CI", "false")
     assert update.should_check("0.1.0") is True
     monkeypatch.setenv("CI", "true")
@@ -126,6 +126,6 @@ def test_the_update_check_reads_ci_the_same_way(monkeypatch):
 
 def test_media_update_check_off_still_turns_it_off(monkeypatch):
     """The one site that already parsed properly keeps behaving, now through one reader."""
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", "0")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", "0")
     assert update.settings().check is False
     assert update.settings_from()["check"] == "env"

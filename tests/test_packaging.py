@@ -351,7 +351,7 @@ def test_the_build_proves_telemetry_actually_exports():
     imported lazily and its absence is a `notices[]` entry, not a failure. Only turning
     telemetry on and looking for a span catches it."""
     text = BUILDER.read_text()
-    assert "telemetry_test" in text and "MEDIA_TELEMETRY=1" in text
+    assert "telemetry_test" in text and "MEDIA_AI_TELEMETRY=1" in text
     assert "telemetry_unavailable" in text, "the build does not check for the degraded-to-no-op notice"
     assert '*,otel,*' in text, "the gate must match BUNDLE_EXTRAS' comma separator, not spaces"
 

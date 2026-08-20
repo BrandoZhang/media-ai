@@ -75,6 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..brand import cli_name, cmd, config_dir
+from ..core import envvars
 from ..core.errors import ErrorCategory, MediaError
 from ..core.logging import get_logger
 
@@ -104,12 +105,12 @@ _RESERVED = "schema"
 
 
 def credentials_path() -> Path:
-    """Where the secret-bearing file lives (``$MEDIA_CREDENTIALS_FILE``).
+    """Where the secret-bearing file lives (``$MEDIA_AI_CREDENTIALS_FILE``).
 
     Public because ``init``/``uninstall``/``doctor`` all have to name the same file
     this module reads; a second copy of the default is a bug waiting to happen.
     """
-    return Path(os.getenv("MEDIA_CREDENTIALS_FILE") or config_dir() / "credentials.toml").expanduser()
+    return Path(os.getenv(envvars.CREDENTIALS_FILE) or config_dir() / "credentials.toml").expanduser()
 
 
 def _read() -> dict:

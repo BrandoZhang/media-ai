@@ -60,7 +60,7 @@ def configured(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
     path.write_text(render_config(Config(bindings={"openai/gpt-image-2": UserBinding(
         id="openai/gpt-image-2", credential="env://OPENAI_API_KEY")})), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     return path
 

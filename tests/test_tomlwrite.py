@@ -178,7 +178,7 @@ def test_written_file_is_readable_by_the_credential_store(tmp_path, monkeypatch)
     """The end-to-end contract: what the writer produces, the reader accepts."""
     dest = tmp_path / "credentials.toml"
     write_private(dest, dumps({"openai": {"api_key": "sk-round-trip"}}))
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(dest))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(dest))
     assert stores.named_account("openai") == "sk-round-trip"
 
 

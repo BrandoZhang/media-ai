@@ -169,7 +169,7 @@ Full rules → `references/credentials.md`.
 ## Recommended flow
 
 ```bash
-export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl   # per-task, so concurrent runs don't mix
+export MEDIA_AI_USAGE_LOG=/tmp/run/usage.jsonl   # per-task, so concurrent runs don't mix
 
 {{cli}} bindings list                                    # 1. what can I call?
 {{cli}} capabilities --scene video.image_to_video        # 2. what accepts this work?

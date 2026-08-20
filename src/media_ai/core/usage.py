@@ -1,10 +1,10 @@
 """Usage ledger (cost tracking).
 
-Every generation appends one JSONL line to ``$MEDIA_USAGE_LOG`` (default
+Every generation appends one JSONL line to ``$MEDIA_AI_USAGE_LOG`` (default
 ``./media_usage.jsonl``) so an agent harness can aggregate token/artifact cost as
 an evaluation metric. Writes are best-effort (never raise) and lock-guarded so
 concurrent batch generations don't interleave partial lines. Point
-``MEDIA_USAGE_LOG`` and each ``--output`` at a per-task directory to isolate
+``MEDIA_AI_USAGE_LOG`` and each ``--output`` at a per-task directory to isolate
 concurrent runs on a shared filesystem.
 
 Records never contain credentials (only provider names, model ids, token counts).
@@ -18,10 +18,12 @@ import threading
 import time
 from pathlib import Path
 
+from . import envvars
+
 
 def usage_log_path() -> Path:
-    """Where usage lines are appended. ``$MEDIA_USAGE_LOG`` or ``./media_usage.jsonl``."""
-    return Path(os.getenv("MEDIA_USAGE_LOG", "media_usage.jsonl")).expanduser()
+    """Where usage lines are appended. ``$MEDIA_AI_USAGE_LOG`` or ``./media_usage.jsonl``."""
+    return Path(os.getenv(envvars.USAGE_LOG, "media_usage.jsonl")).expanduser()
 
 
 _LEDGER_LOCK = threading.Lock()

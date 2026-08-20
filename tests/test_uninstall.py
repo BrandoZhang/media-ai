@@ -28,8 +28,8 @@ def home(tmp_path, monkeypatch):
     Both matter here: uninstall scans ``~`` *and* ``./`` for the conventional agent
     directories, so a leaky fixture would have it deleting the checkout's own skills.
     """
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "cfg" / "credentials.toml"))
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "cfg" / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "cfg" / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "cfg" / "config.toml"))
     monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
     (tmp_path / "fakehome").mkdir()
     (tmp_path / "cfg").mkdir()
@@ -323,8 +323,8 @@ def test_stdout_is_exactly_one_json_object(home):
         [sys.executable, "-m", "media_ai", "uninstall", "--yes"],
         capture_output=True, text=True, timeout=60, cwd=str(home),
         env={**dict(__import__("os").environ), "HOME": str(home / "fakehome"),
-             "MEDIA_CREDENTIALS_FILE": str(home / "cfg" / "credentials.toml"),
-             "MEDIA_CONFIG_FILE": str(home / "cfg" / "config.toml")},
+             "MEDIA_AI_CREDENTIALS_FILE": str(home / "cfg" / "credentials.toml"),
+             "MEDIA_AI_CONFIG_FILE": str(home / "cfg" / "config.toml")},
     )
     assert res.returncode == 0, res.stderr
     parsed = json.loads(res.stdout)

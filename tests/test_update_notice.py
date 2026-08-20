@@ -26,8 +26,8 @@ FEED = {"schema": 1, "latest": {"version": "9.9.9"}, "notices": [], "retired_bin
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
-    for var in ("CI", "MEDIA_UPDATE_CHECK", "MEDIA_UPDATE_FEED"):
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
+    for var in ("CI", "MEDIA_AI_UPDATE_CHECK", "MEDIA_AI_UPDATE_FEED"):
         monkeypatch.delenv(var, raising=False)
     notices.reset()
     yield
@@ -140,7 +140,7 @@ def test_ci_does_not_turn_the_notice_off(tmp_path, monkeypatch):
 def test_it_never_reaches_for_the_network(tmp_path, monkeypatch):
     """A generation command must not wait on a feed. Point it somewhere that would
     fail loudly and read anyway."""
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", "https://definitely.invalid/feed.json")
     cache(tmp_path, FEED)
     assert len(found()) == 1
 

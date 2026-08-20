@@ -32,7 +32,7 @@ BINDING = "mock/mock"
 def cfg(tmp_path, monkeypatch):
     """A config path this test owns, wired up the way every command finds it."""
     path = tmp_path / "config.toml"
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     return path
 
 

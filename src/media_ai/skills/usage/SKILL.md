@@ -26,15 +26,15 @@ aggregates it into token/artifact totals for the run.
 
 ## The ledger
 
-- Default path: `$MEDIA_USAGE_LOG`, else `./media_usage.jsonl`.
-- **Isolate concurrent runs:** point `MEDIA_USAGE_LOG` (and each `--output`) at a
+- Default path: `$MEDIA_AI_USAGE_LOG`, else `./media_usage.jsonl`.
+- **Isolate concurrent runs:** point `MEDIA_AI_USAGE_LOG` (and each `--output`) at a
   per-task directory so parallel pipelines don't collide.
 
 ```bash
-export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
+export MEDIA_AI_USAGE_LOG=/tmp/run/usage.jsonl
 {{cli}} image generate --prompt "..." --output /tmp/run/a.png
 {{cli}} video generate --prompt "..." --output /tmp/run/b.mp4 --resolution 480p
-{{cli}} usage                       # summarize $MEDIA_USAGE_LOG
+{{cli}} usage                       # summarize $MEDIA_AI_USAGE_LOG
 {{cli}} usage --log /tmp/run/usage.jsonl --pretty   # or an explicit ledger path
 ```
 
@@ -42,7 +42,7 @@ export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
 
 | flag | notes |
 |---|---|
-| `--log PATH` | ledger path (default `$MEDIA_USAGE_LOG` → `./media_usage.jsonl`) |
+| `--log PATH` | ledger path (default `$MEDIA_AI_USAGE_LOG` → `./media_usage.jsonl`) |
 | `--pretty` | indent the JSON |
 | `--metadata-out PATH` | also write the JSON to a file |
 

@@ -203,7 +203,7 @@ class TestEverythingDrawnFitsTheTerminalsEncoding:
 
     @staticmethod
     def ascii_prompter(monkeypatch):
-        monkeypatch.setenv("MEDIA_ASCII", "1")
+        monkeypatch.setenv("MEDIA_AI_ASCII", "1")
         out = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
         return TerminalPrompter(open(os.devnull, "rb", buffering=0), out), out
 
@@ -244,9 +244,9 @@ def test_the_escape_delay_survives_a_junk_env_var(monkeypatch):
     nothing on stdout — breaking the machine contract for the groups that never prompt."""
     from media_ai.cli._prompt import _ESC_TAIL_DEFAULT, _esc_tail_seconds
 
-    monkeypatch.setenv("MEDIA_ESC_DELAY", "not-a-number")
+    monkeypatch.setenv("MEDIA_AI_ESC_DELAY", "not-a-number")
     assert _esc_tail_seconds() == _ESC_TAIL_DEFAULT
-    monkeypatch.setenv("MEDIA_ESC_DELAY", "0.4")
+    monkeypatch.setenv("MEDIA_AI_ESC_DELAY", "0.4")
     assert _esc_tail_seconds() == 0.4
 
 
@@ -257,7 +257,7 @@ def test_a_junk_escape_delay_does_not_break_an_unrelated_command(monkeypatch, tm
         [sys.executable, "-m", "media_ai", "image", "generate", "--provider", "mock",
          "--prompt", "hi", "--output", str(tmp_path / "x.png")],
         capture_output=True, text=True, timeout=60,
-        env={**os.environ, "MEDIA_ESC_DELAY": "abc", "MEDIA_USAGE_LOG": str(tmp_path / "u.jsonl")},
+        env={**os.environ, "MEDIA_AI_ESC_DELAY": "abc", "MEDIA_AI_USAGE_LOG": str(tmp_path / "u.jsonl")},
     )
     assert res.returncode == 0, res.stderr
     assert json.loads(res.stdout)["ok"] is True
@@ -297,7 +297,7 @@ class TestGlyphFallbacks:
                 assert _display_width(line) <= columns, f"{columns}-column box emitted a {len(line)}-column row"
 
     def test_the_fallback_can_be_forced(self, monkeypatch):
-        monkeypatch.setenv("MEDIA_ASCII", "1")
+        monkeypatch.setenv("MEDIA_AI_ASCII", "1")
         assert glyphs_for(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) is ASCII
 
     def test_ascii_and_unicode_sets_cover_the_same_glyphs(self):
@@ -516,7 +516,7 @@ def test_fallback_shows_every_description():
 
 
 def test_get_prompter_falls_back_without_tty(monkeypatch):
-    monkeypatch.setenv("MEDIA_NO_TTY", "1")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "1")
     assert isinstance(get_prompter(), FallbackPrompter)
 
 
