@@ -67,6 +67,29 @@ def group_main(group: str):
     return import_module(f".cli.{_GROUPS[group]}", __package__).main
 
 
+def _hidden_main(group: str):
+    """The entry point for an internal, undocumented group, or ``None``.
+
+    Deliberately not a second entry in :data:`_GROUPS`. That mapping is a contract:
+    ``tests/test_scene.py`` reads it to assert that every scene group has a command and
+    nothing else does, ``_usage`` prints it, and ``tests/test_cli_help.py`` requires a
+    help line for each key. A background errand is none of those things — it takes no
+    arguments, produces no JSON, and appearing in ``--help`` would be an invitation to
+    run it.
+
+    Reached only for a group starting with an underscore, which no real one does, so the
+    ordinary path never pays for the import. The name comes from
+    :mod:`media_ai.core.update`, which is also what builds the argv the child is
+    launched with: one declaration, so a rename cannot leave the spawner calling a group
+    the dispatcher no longer has.
+    """
+    from .core.update import REFRESH_COMMAND
+
+    if group != REFRESH_COMMAND:
+        return None
+    return import_module(".cli._refresh", __package__).main
+
+
 # ``(argv after the command name, trailing comment or "")``. Held as data rather than
 # as finished lines because the command name is not a fixed width — see `_usage`.
 _EXAMPLES = (
@@ -140,6 +163,13 @@ def main() -> int:
     if not argv:
         return _usage_error(f"no command given; expected: {cli_name()} <group> <op> [args...]")
     group, rest = argv[0], argv[1:]
+    if group.startswith("_"):
+        # Before the membership test below, so an internal errand is dispatched rather
+        # than reported as an unknown group — and after everything else, so it costs a
+        # `str.startswith` on the path every real command takes.
+        if hidden := _hidden_main(group):
+            sys.argv = [f"{cli_name()} {group}", *rest]
+            return hidden()
     if group not in _GROUPS:
         return _usage_error(f"unknown group {group!r}; expected one of: {', '.join(_GROUPS)}")
     sys.argv = [f"{cli_name()} {group}", *rest]

@@ -394,6 +394,41 @@ misparses does not fail loudly — it applies a notice, or a block, to the wrong
 stored exactly as the writer produces it, so a bump never lands a formatting diff on top
 of the version it came for.
 
+#### How a client gets it
+
+Every command tops the cache up on its way **out**, in a detached child process
+(`<cli> __refresh-feed`, an internal group that takes no arguments and prints nothing).
+Nothing on the hot path ever waits on the network: a call reads
+`update-cache.json` beside `config.toml`, and the refresh that follows is a `Popen`
+the parent never waits for.
+
+That ordering is what makes automatic checking affordable, and it has one consequence
+worth stating: the policy a call is subject to is the one that was on disk when it
+started. A machine that has never fetched is subject to nothing — a first run that
+cannot reach the feed must not be a first run that refuses to work — and a floor
+published today reaches an active machine on its *second* invocation.
+
+Three things keep it from becoming a nuisance:
+
+| | |
+|---|---|
+| `[update] interval` / `$MEDIA_UPDATE_INTERVAL` | how stale the cache may get; default 24h, `0` means every command |
+| the stamp, written *before* the request | a fetch that fails costs one attempt per interval, not one per command — so an offline or sandboxed machine spawns one child a day, not one per invocation |
+| an `O_CREAT|O_EXCL` lock beside the cache | twenty shells starting at once make one request; the nineteen that lose exit immediately. Cleared if older than two minutes, so a killed process does not lock the machine out |
+
+And the escape hatches, because it is on by default: `[update] check = false` or
+`MEDIA_UPDATE_CHECK=0` turns off the request (the cached answer is still read and
+reported — that costs nothing); `CI` turns it off by default, since a fresh container
+fetches a document nobody reads and only makes noise when the network wobbles;
+`MEDIA_UPDATE_CHECK=1` overrules `CI` for a runner that does want it; a development
+build never checks; and a machine that cannot reach the feed says nothing at all.
+
+The request carries **no identifier of any kind** — it is an anonymous GET of a static
+file. The version goes in the `User-Agent` and nowhere else: a `?version=`/`?id=` on
+the URL would make this a telemetry endpoint wearing an update check's clothes, which
+is a different thing to build, to document, and to be asked about. `[telemetry]` is
+where this project puts anything that reports.
+
 ### Where the version lives
 
 One place: `__version__` in [`src/media_ai/__init__.py`](../src/media_ai/__init__.py).

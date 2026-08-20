@@ -165,19 +165,28 @@ class UserBinding:
 
 @dataclass(frozen=True)
 class UpdateSettings:
-    """``[update]`` — whether this machine looks for a newer release, and where.
+    """``[update]`` — whether this machine looks for a newer release, where, and how often.
 
-    Two fields, and the second one is why this is in the config rather than only in the
-    environment: an internal distribution points every install at its own mirror once,
-    at setup, and a variable every shell has to export is not that.
+    ``feed`` is why this is in the config rather than only in the environment: an
+    internal distribution points every install at its own mirror once, at setup, and a
+    variable every shell has to export is not that.
 
-    There is no interval knob. Nobody has asked for one, the constant it would replace
-    is read in exactly one place, and a setting that exists before its use case does is
-    a setting whose default nobody has had a reason to think about.
+    ``interval`` earned its place when the check became automatic. While a fetch only
+    ever happened in ``init`` and in ``version check``, the TTL was a detail of one
+    function: a human asked, and the answer was as old as the last time they asked. Now
+    that an ordinary command refreshes the cache on its way out, the interval *is* the
+    policy — it decides how long a machine keeps calling a binding the feed has
+    retired, and how long it keeps running below a floor the feed has published. A day
+    is right for a release announcement and wrong for an incident, and the only party
+    who can tell them apart is the operator. ``0`` means every command, which is what a
+    demo or a staged rollout wants and what nobody should ship.
     """
 
     check: bool = True
     feed: str | None = None
+    #: Seconds. Not a bare ``int`` default in two places — :mod:`media_ai.core.update`
+    #: owns the number, because it is the module that reads it.
+    interval: int = 24 * 60 * 60
 
 
 #: OTLP/HTTP on a collector's default port. A *base* URL: the per-signal paths
@@ -339,7 +348,13 @@ def _parse_update(raw: object, path: Path) -> UpdateSettings:
     feed = raw.get("feed")
     if feed is not None and (not isinstance(feed, str) or not feed):
         raise _fail(f"{path}: [update].feed must be a non-empty URL, got {feed!r}")
-    return UpdateSettings(check=check, feed=feed)
+    interval = raw.get("interval", UpdateSettings().interval)
+    # `bool` first: it is a subclass of `int`, so `interval = true` would otherwise be
+    # accepted as one second — a config that says nothing about seconds turned into the
+    # most aggressive setting the field has.
+    if isinstance(interval, bool) or not isinstance(interval, int) or interval < 0:
+        raise _fail(f"{path}: [update].interval must be a whole number of seconds (0 or more), got {interval!r}")
+    return UpdateSettings(check=check, feed=feed, interval=interval)
 
 
 def _parse_telemetry(raw: object, path: Path) -> TelemetrySettings:
@@ -767,7 +782,7 @@ def render_config(config: Config, *, header: str | None = None) -> str:
     # exactly what the defaults say.
     if (update := config.update) != UpdateSettings():
         data["update"] = {
-            k: v for k, v in (("check", update.check), ("feed", update.feed))
+            k: v for k, v in (("check", update.check), ("feed", update.feed), ("interval", update.interval))
             if v != getattr(UpdateSettings(), k)
         }
     # Same rule as `[update]`: written only when it differs from the defaults, and then

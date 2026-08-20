@@ -287,7 +287,10 @@ def _do(args) -> dict:
 
 def main() -> int:
     args = common.parse_args(_build_parser())
-    return common.run(_do, args)
+    # The one command that opts out of the background update check. Everything below
+    # this line has just been deleted on purpose, the cache among it, and a check on the
+    # way out would recreate the config directory to write a stamp into.
+    return common.run(_do, args, refresh_feed=False)
 
 
 if __name__ == "__main__":

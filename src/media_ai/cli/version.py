@@ -106,7 +106,14 @@ def _check(args) -> dict:
         "update_available": update.is_newer(latest, __version__),
         "source": source,
         "checked_at": update.cached_at(),
-        "settings": {"check": update.settings().check, "feed": update.feed_url()},
+        "settings": {
+            "check": update.settings().check,
+            "feed": update.feed_url(),
+            # Reported for the same reason `check` is: the check now happens on its own,
+            # so "why did this machine not notice for a week?" is a real question, and
+            # the interval is half its answer. The other half is `settings_from`.
+            "interval": update.interval_seconds(),
+        },
         "settings_from": update.settings_from(),
         # Not `notices`: that key belongs to the envelope every command shares
         # (`cli/common._with_notices`), which would overwrite whatever were put here.

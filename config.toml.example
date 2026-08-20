@@ -74,20 +74,30 @@ credential = "env://ARK_API_KEY"
 
 # ------------------------------------------------------------------ update
 #
-# Whether this machine looks for a newer release, and where. Both optional — the
-# table is absent on a fresh install, and absent means the defaults below.
+# Whether this machine looks for a newer release, where, and how often. All optional —
+# the table is absent on a fresh install, and absent means the defaults below.
 #
-# The check never happens during a generation: those read a cached answer and never
-# wait on the network. A fetch happens in `media-ai init` and in
-# `media-ai version check`, and never in CI.
+# No command ever waits on this. A command reads the cached answer, and *after* it has
+# printed its result it starts a detached background process that tops the cache up if
+# it is older than `interval`. So the answer a call acts on is always a local file
+# read, and a feed published today reaches an active machine on its next invocation.
+#
+# `interval` is the policy knob, not a performance one: the feed can say which versions
+# are unsupported and which bindings have been withdrawn, and this is how long a machine
+# may go without hearing it. 0 means check after every command.
 #
 # `feed` points an internal distribution at its own mirror once, here, rather than at
-# every shell. `MEDIA_UPDATE_CHECK=0` and `MEDIA_UPDATE_FEED=…` override both for one
-# machine; `media-ai version check` reports which layer won.
+# every shell.
+#
+# Never in CI, and never for a development build. `MEDIA_UPDATE_CHECK=0`,
+# `MEDIA_UPDATE_FEED=…` and `MEDIA_UPDATE_INTERVAL=…` override all three for one
+# machine, and `MEDIA_UPDATE_CHECK=1` also overrules the CI rule for a runner that does
+# want to be told. `media-ai version check` reports which layer won.
 
 # [update]
-# check = true                                  # false: never look for a new release
-# feed  = "https://mirror.internal/feed.json"   # default: this project's published feed
+# check    = true                                  # false: never look for a new release
+# feed     = "https://mirror.internal/feed.json"   # default: this project's published feed
+# interval = 86400                                 # seconds between background checks
 
 # ------------------------------------------------------------- telemetry
 #

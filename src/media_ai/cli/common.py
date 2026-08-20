@@ -59,7 +59,8 @@ def _a_newer_release_is_published():
     ``version check`` answers this on request; this is the same fact arriving unasked,
     on whatever command the caller was already running — which is the only way an agent
     that never thinks to ask ever finds out. Reading the cache is what makes that
-    affordable: the fetch happened in ``init``, or in an explicit check, and a
+    affordable: the fetch happened in ``init``, in an explicit check, or in the detached
+    child a previous command left behind (:func:`_refresh_feed_afterwards`), and a
     generation command still touches nothing but a file.
 
     Stateless on purpose. A "shown once" flag would suppress it for every later session,
@@ -247,7 +248,16 @@ def _enforce_published_policy(args, rb, available) -> bool:
     out *why* is a floor they will answer by deleting the config directory.
 
     The cache, never the network. A blocked call must not also be a slow one, and the
-    fact was fetched by ``init`` or by an explicit check like everything else here.
+    fact was fetched by ``init``, by an explicit check, or by the background refresh a
+    previous command started, like everything else here.
+
+    One consequence worth stating out loud, because it looks like a hole and is not: a
+    machine whose cache has never been written is not stopped by anything. A first run
+    that cannot reach the feed would otherwise be a first run that refuses to work, and
+    the answer to a tool that bricks itself on install is not "upgrade it", it is `rm
+    -rf` on the config directory. With the refresh now running after every command, the
+    practical effect is that a floor or a retirement published today reaches an active
+    machine by its *second* invocation.
 
     Returns whether the feed had anything to say about *this binding*, so the manifest's
     own declaration can stay quiet rather than repeating it.
@@ -614,9 +624,12 @@ def _command_of(parser: argparse.ArgumentParser, args) -> str:
     return f"{group}.{op}" if group and op else (group or "?")
 
 
-def run(build_and_call, args) -> int:
+def run(build_and_call, args, *, refresh_feed: bool = True) -> int:
     """Configure logging and telemetry, run the command, and turn any failure into the
     JSON error contract + a category-specific exit code.
+
+    ``refresh_feed=False`` is for the one command that is not simply *using* this
+    installation but taking it apart — see :func:`_refresh_feed_afterwards`.
 
     The whole of it runs inside ``config.snapshot()``, so an invocation has one view of
     the configuration — the command body and the notice sources that run on the way out
@@ -633,6 +646,7 @@ def run(build_and_call, args) -> int:
 
     configure("debug" if getattr(args, "verbose", False) else getattr(args, "log_level", None),
               fmt=getattr(args, "log_format", None))
+    interrupted = False
     with snapshot(), telemetry.invocation(getattr(args, "_command", "?")) as inv:
         try:
             result = build_and_call(args)
@@ -641,6 +655,7 @@ def run(build_and_call, args) -> int:
             inv.failed(e)
             return inv.finish(emit_error(e, args))
         except KeyboardInterrupt:
+            interrupted = True
             err = MediaError("interrupted", category=ErrorCategory.TIMEOUT)
             inv.failed(err)
             return inv.finish(emit_error(err, args))
@@ -649,3 +664,51 @@ def run(build_and_call, args) -> int:
             err = MediaError(str(e) or e.__class__.__name__, category=ErrorCategory.UNKNOWN)
             inv.failed(err)
             return inv.finish(emit_error(err, args))
+        finally:
+            if refresh_feed and not interrupted:
+                _refresh_feed_afterwards()
+
+
+def _refresh_feed_afterwards() -> None:
+    """Top the release-feed cache up, in the background, on the way out of a command.
+
+    **After**, not before, and that is the whole design. Before means every command pays
+    the latency of a request it did not ask for, on the one path this project has spent
+    the most effort keeping clear; after means this run used whatever was already on
+    disk and the *next* one gets the newer answer. For a document that says which
+    versions are supported and which bindings have been withdrawn — decisions taken over
+    days — being right one invocation later is not a compromise.
+
+    It is what makes the check automatic. Until now a fetch happened only in ``init``
+    and in ``version check``, so the two things the feed is allowed to *stop*
+    (:func:`~media_ai.core.update.below_floor`,
+    :func:`~media_ai.core.update.retirement_for`) were read from a cache that a machine
+    might refresh once and never again. Whether a policy applies is still decided
+    entirely by the feed's ``min_supported`` and ``retired_bindings``; this only makes
+    sure the machine has heard of them.
+
+    In the ``finally``, so a command that *failed* refreshes too — being out of date is
+    a plausible reason for the failure, and the update notice riding the next
+    invocation's ``notices[]`` is how anyone finds out. Not after an interrupt: Ctrl-C
+    means stop, and a process that outlives the one the user just killed is the
+    opposite of that.
+
+    Inside ``snapshot()`` because the decision reads ``[update]``, and it must be the
+    same configuration the rest of the command saw. Wrapped, because an update check is
+    never a reason for a command to fail — least of all here, where the result has
+    already been printed and the exit code already chosen.
+
+    ``uninstall`` opts out (``run(..., refresh_feed=False)``), and it is the only
+    command that needs to. This writes a stamp before it spawns anything, so on the way
+    out of a command that has just deleted the cache — and the config directory holding
+    it — it would put one of them straight back. "Uninstalling leaves nothing behind" is
+    a promise this project makes in as many words, and a file recreated one millisecond
+    after removal is the most confusing possible way to break it: the command reports
+    the path as removed, and the path is there.
+    """
+    from ..core import update
+
+    try:
+        update.refresh_detached(__version__)
+    except Exception as exc:  # noqa: BLE001 - a preference is never worth failing a command over
+        get_logger().debug("could not start a background update check: %s", exc)
