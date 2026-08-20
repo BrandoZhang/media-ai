@@ -106,36 +106,36 @@ def fake_provider(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _ledger(tmp_path, monkeypatch, request):
-    monkeypatch.setenv("MEDIA_USAGE_LOG", str(tmp_path / "usage.jsonl"))
+    monkeypatch.setenv("MEDIA_AI_USAGE_LOG", str(tmp_path / "usage.jsonl"))
     # `live` tests hit real APIs and MUST keep the real environment (keys, base
     # URLs, model ids); only the offline tests are scrubbed hermetic.
     if request.node.get_closest_marker("live"):
         return tmp_path / "usage.jsonl"
     for var in ("ARK_API_KEY", "VOLC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
                 "ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_BASE_URL",
-                "MEDIA_CRED_BROKER", "MEDIA_CREDENTIALS_FILE", "MEDIA_CONFIG_FILE",
+                "MEDIA_AI_CRED_BROKER", "MEDIA_AI_CREDENTIALS_FILE", "MEDIA_AI_CONFIG_FILE",
                 # Telemetry is off unless a test says otherwise. Left set, a developer's
-                # own `MEDIA_TELEMETRY=1` would make the suite boot an SDK and try to
+                # own `MEDIA_AI_TELEMETRY=1` would make the suite boot an SDK and try to
                 # reach their collector — and `OTEL_EXPORTER_OTLP_ENDPOINT` is exactly
                 # the variable a machine with one already exports globally.
-                "MEDIA_TELEMETRY", "MEDIA_TELEMETRY_EXPORTER", "MEDIA_TELEMETRY_ENDPOINT",
-                "MEDIA_TELEMETRY_TIMEOUT", "MEDIA_LOG_FORMAT", "MEDIA_LOG_LEVEL",
+                "MEDIA_AI_TELEMETRY", "MEDIA_AI_TELEMETRY_EXPORTER", "MEDIA_AI_TELEMETRY_ENDPOINT",
+                "MEDIA_AI_TELEMETRY_TIMEOUT", "MEDIA_AI_LOG_FORMAT", "MEDIA_AI_LOG_LEVEL",
                 "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME"):
         monkeypatch.delenv(var, raising=False)
     # A test that never writes a config still gets an empty one, so nothing reads the
     # developer's real ~/.config/media-ai while the suite runs. Both files, not just the
-    # config: unsetting `MEDIA_CREDENTIALS_FILE` sends the resolver to the real path,
+    # config: unsetting `MEDIA_AI_CREDENTIALS_FILE` sends the resolver to the real path,
     # which was survivable only while nothing in the suite *wrote* there. It stopped
     # being survivable the moment `config migrate` grew a credentials half — a test
     # asserting "nothing to convert" would have converted the developer's own keys.
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
     # The release feed points at a file that is not there, rather than being unset.
     # Unset means the published URL, so a test that reaches `update.refresh` without
     # saying otherwise would make a real network call — quietly passing on a laptop and
     # failing, or worse succeeding, in CI. A test that wants a feed writes one and
     # points this at it.
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "no-such-feed.json").as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", (tmp_path / "no-such-feed.json").as_uri())
     # And the check is off by default, which it did not used to be — back when nothing
     # happened unless a test asked, "the code path that decides whether to check at all
     # is itself under test" was reason enough to leave this alone. It stopped being: a
@@ -144,7 +144,7 @@ def _ledger(tmp_path, monkeypatch, request):
     # where no amount of monkeypatching reaches the child. An environment variable is
     # the only lever that crosses that boundary. The five files that are about update
     # checking delete it in their own fixtures, exactly as they already do for `CI`.
-    monkeypatch.setenv("MEDIA_UPDATE_CHECK", "0")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_CHECK", "0")
     registry.reset_catalog()
     return tmp_path / "usage.jsonl"
 
@@ -166,7 +166,7 @@ def _no_background_refresh(monkeypatch, request):
     `tests/test_update_auto.py` puts the real one back where it is the subject.
 
     The second half of a pair, and each half covers what the other cannot.
-    `MEDIA_UPDATE_CHECK=0` above crosses into CLI subprocesses, where nothing in this
+    `MEDIA_AI_UPDATE_CHECK=0` above crosses into CLI subprocesses, where nothing in this
     process can reach; this covers the five files that delete that variable because
     they are *about* update checking, and which would otherwise fork while asserting
     something else entirely.
@@ -237,7 +237,7 @@ def configured(tmp_path, monkeypatch):
             defaults=defaults or {},
         )
         path.write_text(render_config(config), encoding="utf-8")
-        monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+        monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
         return path
 
     return make

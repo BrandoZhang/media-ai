@@ -75,7 +75,7 @@ def sunset(clean_registry, tmp_path, monkeypatch):
         })),
         encoding="utf-8",
     )
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     notices.clear()
     yield
     notices.clear()
@@ -186,7 +186,7 @@ def test_the_feed_wins_when_both_have_something_to_say(sunset, tmp_path, monkeyp
     """
     import time
 
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     (tmp_path / "update-cache.json").write_text(json.dumps({
         "checked_at": time.time(),
         "feed": {"schema": 1, "notices": [], "retired_bindings": [{

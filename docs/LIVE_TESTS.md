@@ -267,8 +267,8 @@ uv run media-ai speech generate --binding elevenlabs/eleven-multilingual-v2 --te
 A smaller smoke subset runs automatically when opted in:
 
 ```bash
-MEDIA_LIVE_TESTS=1 uv run pytest -q tests/test_live.py     # + MEDIA_LIVE_VIDEO=1 for Veo
+MEDIA_AI_LIVE_TESTS=1 uv run pytest -q tests/test_live.py     # + MEDIA_AI_LIVE_VIDEO=1 for Veo
 ```
 
-These self-skip unless `MEDIA_LIVE_TESTS=1` and the relevant provider key are set, so
+These self-skip unless `MEDIA_AI_LIVE_TESTS=1` and the relevant provider key are set, so
 the default suite stays offline and green.

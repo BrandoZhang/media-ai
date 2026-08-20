@@ -270,17 +270,17 @@ a broker injects the key at egress, so the CLI holds only a session token. See
 
 ## Usage ledger
 
-Every generation appends a line to `$MEDIA_USAGE_LOG` (default
+Every generation appends a line to `$MEDIA_AI_USAGE_LOG` (default
 `./media_usage.jsonl`). `media-ai usage` aggregates token/artifact cost **per binding
 and per scene** — not per provider, because two models behind one provider cost
 different amounts and a provider total cannot tell you which to stop calling. Point
-`MEDIA_USAGE_LOG` and each `--output` at a per-task directory to isolate concurrent
+`MEDIA_AI_USAGE_LOG` and each `--output` at a per-task directory to isolate concurrent
 runs on a shared filesystem.
 
 ## Example
 
 ```bash
-export MEDIA_USAGE_LOG=/tmp/run/usage.jsonl
+export MEDIA_AI_USAGE_LOG=/tmp/run/usage.jsonl
 media-ai image generate --prompt "silver astronaut on a red dune" --output /tmp/run/ref.png --seed 7
 media-ai video generate --first-frame /tmp/run/ref.png --prompt "he turns to camera" \
     --output /tmp/run/s1.mp4 --duration 3 --resolution 480p

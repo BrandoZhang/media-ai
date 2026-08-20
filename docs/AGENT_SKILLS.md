@@ -66,7 +66,7 @@ carries the candidates or alternatives in `details`.
    `media-ai capabilities --scene <scene>` or `--binding <id>` (what one accepts).
    **Never hardcode model ids** — the manifests are the source of truth and lineups
    change. Choose a request that fits the declared constraints.
-2. **Generate.** Pass `--output` (and `MEDIA_USAGE_LOG`) inside a per-task
+2. **Generate.** Pass `--output` (and `MEDIA_AI_USAGE_LOG`) inside a per-task
    directory so concurrent tasks don't collide. Read `artifacts[]` for paths.
 3. **Async video.** `video generate --wait false` returns
    `{"status":"queued","job":{"binding","model","id"},"poll":"media-ai job query …"}`.

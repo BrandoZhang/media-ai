@@ -76,6 +76,27 @@ def _check_cli() -> list[dict]:
     return out
 
 
+def _check_environment() -> list[dict]:
+    """A ``MEDIA_*`` variable that is set and is no longer read.
+
+    The same fact `cli/common._environment_variables_that_moved` reports as a notice, in
+    the command someone runs *because* something is behaving oddly. That is the whole
+    reason it is in both places: the notice rides whatever they happened to run and can
+    be missed in a scroll-back, and "my config file setting is being ignored" is exactly
+    the symptom that sends somebody to `doctor`.
+
+    Offline, like everything else here — it reads the process's own environment.
+    """
+    from ..core.envvars import legacy_in_use
+
+    moved = legacy_in_use()
+    if not moved:
+        return []
+    return [_check("environment", "warn",
+                   "renamed and no longer read: "
+                   + ", ".join(f"${old} -> ${new}" for old, new in sorted(moved.items())))]
+
+
 def _check_update() -> list[dict]:
     """Whether a newer release is published, from the cache and never the network.
 
@@ -336,7 +357,7 @@ def _check_skills() -> list[dict]:
 
 def _diagnose(args) -> dict:
     checks = (
-        _check_cli() + _check_update() + _check_media() + _check_files()
+        _check_cli() + _check_environment() + _check_update() + _check_media() + _check_files()
         + _check_bindings() + _check_defaults() + _check_skills() + _check_telemetry()
     )
     status = max((c["status"] for c in checks), key=lambda s: _RANK[s], default="ok")

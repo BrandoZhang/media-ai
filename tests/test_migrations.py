@@ -35,14 +35,14 @@ from media_ai.credentials import stores
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     return path
 
 
 @pytest.fixture
 def creds(tmp_path, monkeypatch):
     path = tmp_path / "credentials.toml"
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(path))
     return path
 
 

@@ -3,7 +3,7 @@
 Two sources, and the environment wins. ``[telemetry]`` in ``config.toml`` is the
 machine's standing answer — parsed and type-checked in :mod:`media_ai.core.config`
 beside ``[update]``, because it is a config table like any other — and
-``MEDIA_TELEMETRY`` and friends are this invocation's, which is the shape every other
+``MEDIA_AI_TELEMETRY`` and friends are this invocation's, which is the shape every other
 override here takes (see :mod:`media_ai.core.envflag`).
 
 **Off unless somebody said otherwise.** A CLI that exports on first run is a CLI that
@@ -12,7 +12,7 @@ ships the caller's prompts to a collector nobody declared, so there is no
 is a config that says so or a variable that says so.
 
 ``enabled`` is read three-state for the reason :mod:`media_ai.core.envflag` explains at
-length — ``MEDIA_TELEMETRY=0`` has to be able to overrule a config that says ``true``,
+length — ``MEDIA_AI_TELEMETRY=0`` has to be able to overrule a config that says ``true``,
 which is exactly the shared-config-on-a-machine-that-must-not-export case. A two-state
 read could only ever force it *on*.
 
@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 
 from ...brand import cli_name
+from .. import envvars
 from ..config import DEFAULT_TELEMETRY_ENDPOINT, Exporter, TelemetrySettings
 from ..envflag import env_flag
 
@@ -46,16 +47,16 @@ def settings() -> TelemetrySettings:
     parse error like any other hand-edited field, raised by
     :func:`media_ai.core.config.load_config` before this is reached. In the environment
     it is ignored with the configured value kept, because a stray
-    ``MEDIA_TELEMETRY_EXPORTER`` in a shell profile must not make every command in that
+    ``MEDIA_AI_TELEMETRY_EXPORTER`` in a shell profile must not make every command in that
     shell fail.
     """
     cfg = _configured()
-    enabled = env_flag("MEDIA_TELEMETRY")
+    enabled = env_flag(envvars.TELEMETRY)
     return TelemetrySettings(
         enabled=cfg.enabled if enabled is None else enabled,
-        exporter=_exporter(os.getenv("MEDIA_TELEMETRY_EXPORTER")) or cfg.exporter,
+        exporter=_exporter(os.getenv(envvars.TELEMETRY_EXPORTER)) or cfg.exporter,
         endpoint=(
-            os.getenv("MEDIA_TELEMETRY_ENDPOINT")
+            os.getenv(envvars.TELEMETRY_ENDPOINT)
             or cfg.endpoint
             # OTel's own variable, last: a collector already declared for the rest of a
             # deployment is the right endpoint for this too, and making an operator
@@ -64,7 +65,7 @@ def settings() -> TelemetrySettings:
             or DEFAULT_TELEMETRY_ENDPOINT
         ).rstrip("/"),
         service=cfg.service or os.getenv("OTEL_SERVICE_NAME") or cli_name(),
-        timeout=_int(os.getenv("MEDIA_TELEMETRY_TIMEOUT"), cfg.timeout),
+        timeout=_int(os.getenv(envvars.TELEMETRY_TIMEOUT), cfg.timeout),
         sample_percent=cfg.sample_percent,
         logs=cfg.logs,
     )

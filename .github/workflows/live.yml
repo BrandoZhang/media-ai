@@ -14,9 +14,9 @@ jobs:
   live:
     runs-on: ubuntu-latest
     env:
-      MEDIA_LIVE_TESTS: "1"
+      MEDIA_AI_LIVE_TESTS: "1"
       # Keep the config out of the runner's real home, so a failed run leaves nothing.
-      MEDIA_CONFIG_FILE: ${{ github.workspace }}/.live/config.toml
+      MEDIA_AI_CONFIG_FILE: ${{ github.workspace }}/.live/config.toml
       # Provider credentials (add these in repo Settings → Secrets). An absent secret
       # resolves to "" and the binding that wanted it is never configured, so the tests
       # needing it skip. There is no per-provider list below on purpose: the bindings
@@ -25,8 +25,8 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ARK_API_KEY: ${{ secrets.ARK_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-      # Set repo variable MEDIA_LIVE_VIDEO=1 to also run the (slow, costly) video smoke.
-      MEDIA_LIVE_VIDEO: ${{ vars.MEDIA_LIVE_VIDEO }}
+      # Set repo variable MEDIA_AI_LIVE_VIDEO=1 to also run the (slow, costly) video smoke.
+      MEDIA_AI_LIVE_VIDEO: ${{ vars.MEDIA_AI_LIVE_VIDEO }}
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

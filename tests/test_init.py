@@ -54,8 +54,8 @@ def _no_otel_extra(monkeypatch):
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """Isolated config paths, a clean environment, and cwd inside the sandbox."""
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     monkeypatch.setenv("HOME", str(tmp_path))
     for var in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ARK_API_KEY",
                 "VOLC_API_KEY", "ELEVENLABS_API_KEY", "ELEVEN_API_KEY"):
@@ -1127,8 +1127,8 @@ def test_stdout_is_exactly_one_json_object(home):
          "--skills-dest", str(home / "sk")],
         capture_output=True, text=True, timeout=60,
         env={**dict(__import__("os").environ), "HOME": str(home),
-             "MEDIA_CREDENTIALS_FILE": str(home / "credentials.toml"),
-             "MEDIA_CONFIG_FILE": str(home / "config.toml")},
+             "MEDIA_AI_CREDENTIALS_FILE": str(home / "credentials.toml"),
+             "MEDIA_AI_CONFIG_FILE": str(home / "config.toml")},
     )
     assert res.returncode == 0, res.stderr
     parsed = json.loads(res.stdout)
@@ -1141,8 +1141,8 @@ def test_failure_is_also_one_json_object(home):
         [sys.executable, "-m", "media_ai", "init", "--non-interactive"],
         capture_output=True, text=True, timeout=60,
         env={**dict(__import__("os").environ), "HOME": str(home),
-             "MEDIA_CREDENTIALS_FILE": str(home / "credentials.toml"),
-             "MEDIA_CONFIG_FILE": str(home / "config.toml")},
+             "MEDIA_AI_CREDENTIALS_FILE": str(home / "credentials.toml"),
+             "MEDIA_AI_CONFIG_FILE": str(home / "config.toml")},
     )
     assert res.returncode == 2
     assert json.loads(res.stdout)["ok"] is False

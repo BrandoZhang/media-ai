@@ -222,7 +222,7 @@ smoke_test() {
   mkdir -p "$scratch"
   # A scratch HOME so the build cannot read — or write — the builder's own config,
   # and the usage ledger goes with it rather than into the current directory.
-  export HOME="$scratch" MEDIA_USAGE_LOG="$scratch/usage.jsonl"
+  export HOME="$scratch" MEDIA_AI_USAGE_LOG="$scratch/usage.jsonl"
 
   local got
   got="$("$exe" --version)"
@@ -254,7 +254,7 @@ telemetry_test() {
   # runtime and its exporters through entry points, and entry points need distribution
   # metadata that a freeze does not carry unless it is told to.
   local exe="$1" scratch="$2" python="$3" out
-  out="$(MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_EXPORTER=console \
+  out="$(MEDIA_AI_TELEMETRY=1 MEDIA_AI_TELEMETRY_EXPORTER=console \
          "$exe" image generate --binding mock/mock --prompt "telemetry check" \
          --output "$scratch/otel.png" 2>&1 >"$scratch/otel.json")" || {
     err "the bundle failed with telemetry on:"

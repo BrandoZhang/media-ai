@@ -25,7 +25,7 @@ def _creds_file(tmp_path, monkeypatch, body: str, mode: int = 0o600):
     path = tmp_path / "credentials.toml"
     path.write_text(body, encoding="utf-8")
     path.chmod(mode)
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(path))
     return path
 
 
@@ -76,8 +76,8 @@ def test_an_account_key_may_itself_be_a_reference(tmp_path, monkeypatch):
 
 
 def test_broker_reference_holds_no_key(monkeypatch):
-    monkeypatch.setenv("MEDIA_CRED_BROKER", "https://broker.internal")
-    monkeypatch.setenv("MEDIA_CRED_BROKER_TOKEN", "session-token-xyz")
+    monkeypatch.setenv("MEDIA_AI_CRED_BROKER", "https://broker.internal")
+    monkeypatch.setenv("MEDIA_AI_CRED_BROKER_TOKEN", "session-token-xyz")
     cred = resolve_reference("broker://", provider="openai")
     assert isinstance(cred, BrokeredHandle)
     assert cred.endpoint == "https://broker.internal"
@@ -152,7 +152,7 @@ def test_a_cred_reference_cycle_is_refused(tmp_path, monkeypatch):
 
 def test_an_absent_credentials_file_is_not_an_error(tmp_path, monkeypatch):
     """Only asking it for something it does not have is."""
-    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "nope.toml"))
+    monkeypatch.setenv("MEDIA_AI_CREDENTIALS_FILE", str(tmp_path / "nope.toml"))
     assert named_account("anything") is None
 
 

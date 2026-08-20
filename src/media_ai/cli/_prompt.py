@@ -43,12 +43,12 @@ deterministic behaviour instead of hanging.
 The environment gets a say, through the variables everything else already honours:
 ``CI`` and ``TERM=dumb`` take the fallback however capable the terminal looks
 (:func:`_nobody_is_watching`), ``NO_COLOR`` and ``TERM=dumb`` drop the colour
-(:func:`_color_enabled`), and ``MEDIA_NO_TTY`` / ``MEDIA_ASCII`` are the local
+(:func:`_color_enabled`), and ``MEDIA_AI_NO_TTY`` / ``MEDIA_AI_ASCII`` are the local
 overrides for forcing each by hand.
 
 Every one of those except ``NO_COLOR`` is read through
 :func:`media_ai.core.envflag.env_flag`, so ``CI=false`` means what it says and
-``MEDIA_NO_TTY=0`` overrules it — see that module for why ``NO_COLOR`` is the
+``MEDIA_AI_NO_TTY=0`` overrules it — see that module for why ``NO_COLOR`` is the
 exception.
 
 Colour is also gated on the stream itself being a terminal, which is the half that
@@ -70,6 +70,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..core import envvars
 from ..core.envflag import env_flag
 
 __all__ = [
@@ -117,13 +118,13 @@ def _esc_tail_seconds() -> float:
     later, and an arrow key that misses the deadline reads as Esc. Hence a value well
     above local jitter, and an escape hatch for links slow enough to need more.
 
-    Read per call and never at import: a junk ``MEDIA_ESC_DELAY`` evaluated at import
+    Read per call and never at import: a junk ``MEDIA_AI_ESC_DELAY`` evaluated at import
     time takes down *every* command — `__main__` imports this module for `init` — with
     a bare traceback and nothing on stdout, breaking the machine contract for the
     twelve groups that never open a prompt. A bad value is ignored instead.
     """
     try:
-        return max(0.0, float(os.environ["MEDIA_ESC_DELAY"]))
+        return max(0.0, float(os.environ[envvars.ESC_DELAY]))
     except (KeyError, ValueError):
         return _ESC_TAIL_DEFAULT
 
@@ -199,7 +200,7 @@ ASCII = Glyphs("T", "|", "-", "*", "o", "x", "(*)", "( )", "[+]", "[ ]", "*", ".
 
 def glyphs_for(stream) -> Glyphs:
     """The richest symbol set ``stream`` can actually encode."""
-    if env_flag("MEDIA_ASCII"):
+    if env_flag(envvars.ASCII):
         return ASCII
     encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding()
     try:
@@ -1078,12 +1079,12 @@ def _nobody_is_watching() -> bool:
     Both take the numbered-menu fallback, which fails deterministically on EOF instead
     of waiting on an answer no one is going to give.
 
-    ``MEDIA_NO_TTY`` overrules them **in both directions**, which is the whole reason
+    ``MEDIA_AI_NO_TTY`` overrules them **in both directions**, which is the whole reason
     the flags are read in three states. A person on a runner shell, or in a dev
     container whose image sets ``CI``, had no way to say "there is still somebody here"
     — the variable could only ever force the fallback on, never off.
     """
-    forced = env_flag("MEDIA_NO_TTY")
+    forced = env_flag(envvars.NO_TTY)
     if forced is not None:
         return forced
     return bool(env_flag("CI")) or os.getenv("TERM", "") == "dumb"

@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..brand import cli_name
+from . import envvars
 from .envflag import env_flag
 from .logging import get_logger
 from .versioning import VERSION, precedence
@@ -138,7 +139,7 @@ _TIMEOUT_SECONDS = 10.0
 _MAX_BYTES = 256 * 1024
 
 #: How long a cached feed is treated as current, unless ``[update] interval`` or
-#: ``$MEDIA_UPDATE_INTERVAL`` says otherwise. A day, because the things this document
+#: ``$MEDIA_AI_UPDATE_INTERVAL`` says otherwise. A day, because the things this document
 #: can say — a release is out, a version is unsupported, a binding is gone — are
 #: decisions taken over days, and the cost of being one day late is one more invocation
 #: of a command that was going to run anyway.
@@ -152,7 +153,7 @@ _LOCK_STALE_SECONDS = 120.0
 
 
 def cache_path() -> Path:
-    """Beside ``config.toml``, so ``$MEDIA_CONFIG_FILE`` relocates the whole set.
+    """Beside ``config.toml``, so ``$MEDIA_AI_CONFIG_FILE`` relocates the whole set.
 
     Derived from :func:`config_path`, not from :func:`~media_ai.brand.config_dir`: the
     two agree on a default install and diverge the moment anyone points the environment
@@ -202,7 +203,7 @@ def _configured() -> UpdateSettings:
 
 
 def _env_interval() -> int | None:
-    """``$MEDIA_UPDATE_INTERVAL`` in seconds, or ``None`` when it says nothing usable.
+    """``$MEDIA_AI_UPDATE_INTERVAL`` in seconds, or ``None`` when it says nothing usable.
 
     Ignored rather than refused when it is not a whole number of seconds, which is the
     opposite of how ``[update] interval`` is read one layer down — deliberately. The
@@ -212,16 +213,16 @@ def _env_interval() -> int | None:
     into an error about a preference nobody was exercising. A debug line says so for
     anyone who goes looking.
     """
-    raw = os.getenv("MEDIA_UPDATE_INTERVAL", "").strip()
+    raw = os.getenv(envvars.UPDATE_INTERVAL, "").strip()
     if not raw:
         return None
     try:
         value = int(raw)
     except ValueError:
-        get_logger().debug("ignoring MEDIA_UPDATE_INTERVAL=%r: not a whole number of seconds", raw)
+        get_logger().debug("ignoring MEDIA_AI_UPDATE_INTERVAL=%r: not a whole number of seconds", raw)
         return None
     if value < 0:
-        get_logger().debug("ignoring MEDIA_UPDATE_INTERVAL=%r: an interval cannot be negative", raw)
+        get_logger().debug("ignoring MEDIA_AI_UPDATE_INTERVAL=%r: an interval cannot be negative", raw)
         return None
     return value
 
@@ -231,11 +232,11 @@ def settings() -> UpdateSettings:
     from .config import UpdateSettings
 
     base = _configured()
-    env_check = env_flag("MEDIA_UPDATE_CHECK")
+    env_check = env_flag(envvars.UPDATE_CHECK)
     env_interval = _env_interval()
     return UpdateSettings(
         check=base.check if env_check is None else env_check,
-        feed=os.getenv("MEDIA_UPDATE_FEED") or base.feed,
+        feed=os.getenv(envvars.UPDATE_FEED) or base.feed,
         interval=base.interval if env_interval is None else env_interval,
     )
 
@@ -256,8 +257,8 @@ def settings_from() -> dict[str, str]:
 
     base = _configured()
     return {
-        "check": "env" if env_flag("MEDIA_UPDATE_CHECK") is not None else ("config" if not base.check else "default"),
-        "feed": "env" if os.getenv("MEDIA_UPDATE_FEED") else ("config" if base.feed else "default"),
+        "check": "env" if env_flag(envvars.UPDATE_CHECK) is not None else ("config" if not base.check else "default"),
+        "feed": "env" if os.getenv(envvars.UPDATE_FEED) else ("config" if base.feed else "default"),
         "interval": (
             "env" if _env_interval() is not None
             else ("config" if base.interval != UpdateSettings().interval else "default")
@@ -269,7 +270,7 @@ def feed_url() -> str:
     """The feed to read: the environment, then the config, then where this build ships.
 
     An internal distribution points every install at its own mirror once, at setup;
-    ``$MEDIA_UPDATE_FEED`` covers the machine that needs one before any config exists
+    ``$MEDIA_AI_UPDATE_FEED`` covers the machine that needs one before any config exists
     (an air-gapped box, a test) and wins when both are set.
     """
     return settings().feed or FEED_URL
@@ -281,7 +282,7 @@ def feed_url() -> str:
 def should_check(version: str) -> bool:
     """Whether this machine should make an unsolicited request at all.
 
-    Turned off by ``[update] check = false`` or ``MEDIA_UPDATE_CHECK=0``; see
+    Turned off by ``[update] check = false`` or ``MEDIA_AI_UPDATE_CHECK=0``; see
     :func:`settings`. Those two are the escape hatch that has to exist for a check that
     happens by default, and they turn off the *request* — the cached answer is still
     read and reported, because nothing about that costs anybody anything.
@@ -291,12 +292,12 @@ def should_check(version: str) -> bool:
     so every job would fetch, no cached answer would ever survive to be used, and the
     only party who could act on "a newer release is published" is not watching. What it
     would reliably produce is noise on the day the network is flaky. A runner that does
-    want the check says so with ``MEDIA_UPDATE_CHECK=1``, which is read three-state and
+    want the check says so with ``MEDIA_AI_UPDATE_CHECK=1``, which is read three-state and
     therefore wins.
 
     Deliberately *not* :func:`media_ai.cli._prompt._nobody_is_watching`, which looks
     almost the same and answers a different question. That one asks "will a human
-    answer a prompt", and ``MEDIA_NO_TTY`` therefore turns it off — but an agent
+    answer a prompt", and ``MEDIA_AI_NO_TTY`` therefore turns it off — but an agent
     harness with no terminal still wants to be told its CLI is out of date, since the
     agent is the party that can act on it. The overlap is only ``CI``, and coupling
     them would let a change to prompting quietly change network behaviour.
@@ -305,7 +306,7 @@ def should_check(version: str) -> bool:
     a development build has no meaningful "newer" to be told about, and telling someone
     working on the tool to go and install it is noise.
     """
-    asked = env_flag("MEDIA_UPDATE_CHECK")
+    asked = env_flag(envvars.UPDATE_CHECK)
     if not settings().check:
         return False
     # `CI` decides only where nothing else has. That is the whole point of reading a

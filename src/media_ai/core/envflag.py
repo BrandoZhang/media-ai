@@ -17,8 +17,8 @@ So a flag is read in three states, not two:
 
 The third state is the load-bearing one. "Unset" and "set to off" are different answers
 wherever something *else* gets to decide in the absence of one — which is exactly the
-shape of an override. ``MEDIA_NO_TTY`` unset lets ``CI`` and ``TERM`` decide;
-``MEDIA_NO_TTY=0`` overrules them. Collapse the two and the variable can only ever
+shape of an override. ``MEDIA_AI_NO_TTY`` unset lets ``CI`` and ``TERM`` decide;
+``MEDIA_AI_NO_TTY=0`` overrules them. Collapse the two and the variable can only ever
 force one direction, which is why there was no way to say "yes, ``CI`` is set, there is
 still somebody here".
 

@@ -42,7 +42,7 @@ through OTel's own `OTEL_EXPORTER_OTLP_HEADERS`, which the exporter reads for it
 for an observability backend is the same kind of secret wearing a different hat.
 
 ```bash
-MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_ENDPOINT=http://localhost:4318 media-ai image generate …
+MEDIA_AI_TELEMETRY=1 MEDIA_AI_TELEMETRY_ENDPOINT=http://localhost:4318 media-ai image generate …
 ```
 
 `media-ai init` offers the same decision — a two-row menu, defaulting to whatever is
@@ -70,8 +70,8 @@ media-ai init --non-interactive --skills-dest ~/.claude/skills \
               --telemetry-endpoint http://collector.internal:4318
 ```
 
-`MEDIA_TELEMETRY` is read three-state through `core/envflag.py`, like every other
-`MEDIA_*` flag here: unset lets the config decide, `MEDIA_TELEMETRY=0` overrules a
+`MEDIA_AI_TELEMETRY` is read three-state through `core/envflag.py`, like every other
+`MEDIA_*` flag here: unset lets the config decide, `MEDIA_AI_TELEMETRY=0` overrules a
 config that says `true`. That direction is the point — a shared config file turning
 telemetry on for a machine that must not export it is exactly the case an override
 exists for, and a two-state read could only ever force it *on*.
@@ -210,7 +210,7 @@ is — the name is what a consumer branches on, so it has to be enumerable.
 
 ## Logs
 
-Same records, two renderings, chosen by `--log-format` / `MEDIA_LOG_FORMAT`:
+Same records, two renderings, chosen by `--log-format` / `MEDIA_AI_LOG_FORMAT`:
 
 ```
 $ media-ai image generate … --log-level debug
@@ -273,7 +273,7 @@ is nothing arriving in my collector?" is the question being asked.
 
 ```bash
 media-ai doctor                                    # reports the telemetry state, offline
-MEDIA_TELEMETRY=1 MEDIA_TELEMETRY_EXPORTER=console \
+MEDIA_AI_TELEMETRY=1 MEDIA_AI_TELEMETRY_EXPORTER=console \
   media-ai image generate --prompt x --output /tmp/x.png   # spans + metrics on stderr
 media-ai image generate … 1>/dev/null              # stdout still exactly one JSON object
 ```

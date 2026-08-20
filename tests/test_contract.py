@@ -151,7 +151,7 @@ def test_a_usage_line_always_names_its_binding(binding_id, tmp_path, monkeypatch
     from media_ai.core.scene import Scene as _Scene
 
     log = tmp_path / "usage.jsonl"
-    monkeypatch.setenv("MEDIA_USAGE_LOG", str(log))
+    monkeypatch.setenv("MEDIA_AI_USAGE_LOG", str(log))
     adapter = adapter_for(binding_id)
     adapter.record(_Scene.IMAGE_TEXT_TO_IMAGE, kind="image", total_tokens=1)
     adapter.record(None, kind="video")  # the job-finalize path, which cannot know one

@@ -29,12 +29,12 @@ FEED = {"schema": 1, "latest": {"version": "9.9.9"}, "notices": [], "retired_bin
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
-    for var in ("CI", "MEDIA_UPDATE_CHECK"):
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
+    for var in ("CI", "MEDIA_AI_UPDATE_CHECK"):
         monkeypatch.delenv(var, raising=False)
     # Unattended by default: the interactive path is exercised explicitly below, and a
     # test that accidentally reached a real prompt would hang the suite.
-    monkeypatch.setenv("MEDIA_NO_TTY", "1")
+    monkeypatch.setenv("MEDIA_AI_NO_TTY", "1")
     # Patched on the command module: `upgrade` imports the name at module level, so
     # patching `_install.detect` would rebind something nothing looks at again.
     monkeypatch.setattr(upgrade_mod, "detect", lambda: _install.Install("uv-tool", "/x"))
@@ -69,7 +69,7 @@ def cache(tmp_path, monkeypatch, feed: dict = FEED) -> None:
     """
     served = tmp_path / "feed.json"
     served.write_text(json.dumps(feed), encoding="utf-8")
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", served.as_uri())
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", served.as_uri())
     (tmp_path / "update-cache.json").write_text(
         json.dumps({"checked_at": time.time(), "feed": feed}), encoding="utf-8"
     )

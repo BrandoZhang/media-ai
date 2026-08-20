@@ -309,7 +309,7 @@ def prune_empty(path: Path) -> bool:
 
 
 def receipt_path() -> Path:
-    """Beside ``config.toml``, so ``$MEDIA_CONFIG_FILE`` relocates the whole set."""
+    """Beside ``config.toml``, so ``$MEDIA_AI_CONFIG_FILE`` relocates the whole set."""
     return config_path().parent / "installed-skills.toml"
 
 

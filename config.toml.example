@@ -3,7 +3,7 @@
 # NON-SECRET: safe to share or commit. `credential` is always a *reference*; a raw key
 # here is refused, because this is the file meant to be shared.
 #
-# Copy to ~/.config/media-ai/config.toml (or point $MEDIA_CONFIG_FILE at it).
+# Copy to ~/.config/media-ai/config.toml (or point $MEDIA_AI_CONFIG_FILE at it).
 # `media-ai init` writes this for you; `media-ai bindings add` writes one entry.
 
 schema = 2
@@ -89,9 +89,9 @@ credential = "env://ARK_API_KEY"
 # `feed` points an internal distribution at its own mirror once, here, rather than at
 # every shell.
 #
-# Never in CI, and never for a development build. `MEDIA_UPDATE_CHECK=0`,
-# `MEDIA_UPDATE_FEED=…` and `MEDIA_UPDATE_INTERVAL=…` override all three for one
-# machine, and `MEDIA_UPDATE_CHECK=1` also overrules the CI rule for a runner that does
+# Never in CI, and never for a development build. `MEDIA_AI_UPDATE_CHECK=0`,
+# `MEDIA_AI_UPDATE_FEED=…` and `MEDIA_AI_UPDATE_INTERVAL=…` override all three for one
+# machine, and `MEDIA_AI_UPDATE_CHECK=1` also overrules the CI rule for a runner that does
 # want to be told. `media-ai version check` reports which layer won.
 
 # [update]
@@ -111,9 +111,9 @@ credential = "env://ARK_API_KEY"
 # `media-ai init` asks about this once the extra is installed (and `--telemetry-endpoint
 # <url>` answers it unattended); `media-ai doctor` reports what is in effect.
 #
-# `MEDIA_TELEMETRY=0` overrides an `enabled = true` here, which is the point of the
+# `MEDIA_AI_TELEMETRY=0` overrides an `enabled = true` here, which is the point of the
 # override: a config shared between machines, one of which must not export.
-# `MEDIA_TELEMETRY_EXPORTER`, `MEDIA_TELEMETRY_ENDPOINT` and `MEDIA_TELEMETRY_TIMEOUT`
+# `MEDIA_AI_TELEMETRY_EXPORTER`, `MEDIA_AI_TELEMETRY_ENDPOINT` and `MEDIA_AI_TELEMETRY_TIMEOUT`
 # override the rest for one invocation.
 #
 # There is deliberately no header or token key: a collector behind authentication is

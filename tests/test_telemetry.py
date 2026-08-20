@@ -165,7 +165,7 @@ def recording(monkeypatch):
     if not HAVE_SDK:
         pytest.skip("the otel extra is not installed")
     spans, metrics = _keep_open_span_exporter(), _CapturingMetricExporter()
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
     monkeypatch.setattr(runtime_mod, "_span_exporter", lambda cfg: spans)
     monkeypatch.setattr(runtime_mod, "_metric_exporter", lambda cfg: metrics)
     # Log export is the one signal built on a private SDK module; it has its own test.
@@ -202,8 +202,8 @@ def test_stdout_is_one_json_object_with_the_console_exporters_on(generate, capsy
     the result document and every consumer of this CLI breaks — including the Agent
     Skills, which tell an agent that stdout is exactly one object.
     """
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
-    monkeypatch.setenv("MEDIA_TELEMETRY_EXPORTER", "console")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY_EXPORTER", "console")
     assert generate() == 0
     out = capsys.readouterr()
     assert json.loads(out.out)["ok"] is True  # parses whole: nothing else was printed
@@ -224,8 +224,8 @@ def test_the_console_exporters_are_constructed_against_stderr():
 
 def test_a_debug_run_writes_no_json_to_stdout(generate, capsys, monkeypatch):
     """The JSON *log* rendering is on stderr too — two JSON streams, one on each fd."""
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
-    monkeypatch.setenv("MEDIA_TELEMETRY_EXPORTER", "none")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY_EXPORTER", "none")
     assert generate("--log-level", "debug", "--log-format", "json") == 0
     out = capsys.readouterr()
     assert json.loads(out.out)["ok"] is True
@@ -242,7 +242,7 @@ def test_a_missing_sdk_degrades_to_a_notice_and_the_command_still_succeeds(gener
     Indistinguishable, from the outside, from a collector that drops everything — and
     the party who can fix it reads stdout, not stderr.
     """
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
     real_import = builtins.__import__
 
     def no_otel(name, *args, **kwargs):
@@ -261,7 +261,7 @@ def test_a_missing_sdk_degrades_to_a_notice_and_the_command_still_succeeds(gener
 
 
 def test_an_exporter_that_explodes_on_boot_does_not_fail_the_command(generate, capsys, monkeypatch):
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
     monkeypatch.setattr(runtime_mod, "_span_exporter", lambda cfg: 1 / 0)
     assert generate() == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
@@ -404,22 +404,22 @@ def test_the_environment_can_turn_a_configured_yes_back_off(configured, monkeypa
     that must not export. A two-state read could only ever force it *on*."""
     path = configured({"mock/mock": None})
     path.write_text(path.read_text() + "\n[telemetry]\nenabled = true\n")
-    monkeypatch.setenv("MEDIA_TELEMETRY", "0")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "0")
     assert telemetry.settings().enabled is False
-    monkeypatch.setenv("MEDIA_TELEMETRY", "1")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
     assert telemetry.settings().enabled is True
 
 
 def test_otels_own_endpoint_variable_is_the_last_word_before_the_default(monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://shared:4318")
     assert telemetry.settings().endpoint == "http://shared:4318"
-    monkeypatch.setenv("MEDIA_TELEMETRY_ENDPOINT", "http://mine:4318/")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY_ENDPOINT", "http://mine:4318/")
     assert telemetry.settings().endpoint == "http://mine:4318"  # ours wins, slash trimmed
 
 
 def test_a_nonsense_exporter_in_the_environment_is_ignored_not_fatal(monkeypatch):
     """A stray variable in a shell profile must not fail every command in that shell."""
-    monkeypatch.setenv("MEDIA_TELEMETRY_EXPORTER", "carrier-pigeon")
+    monkeypatch.setenv("MEDIA_AI_TELEMETRY_EXPORTER", "carrier-pigeon")
     assert telemetry.settings().exporter is Exporter.OTLP
 
 
@@ -486,7 +486,7 @@ def test_a_default_configuration_writes_no_telemetry_table(cfg_path):
 @pytest.fixture
 def cfg_path(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
     return path
 
 
@@ -641,7 +641,7 @@ def test_the_text_rendering_keeps_the_fields_a_json_line_would_have(capsys):
 
 
 def test_the_log_format_can_come_from_the_environment(capsys, monkeypatch):
-    monkeypatch.setenv("MEDIA_LOG_FORMAT", "json")
+    monkeypatch.setenv("MEDIA_AI_LOG_FORMAT", "json")
     configure("info")
     get_logger().info("hello")
     assert json.loads(capsys.readouterr().err.splitlines()[-1])["msg"] == "hello"
@@ -774,9 +774,9 @@ def test_the_otlp_exporter_reaches_a_collector(monkeypatch, generate, capsys):
         for var in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-        monkeypatch.setenv("MEDIA_TELEMETRY", "1")
-        monkeypatch.setenv("MEDIA_TELEMETRY_EXPORTER", "otlp")
-        monkeypatch.setenv("MEDIA_TELEMETRY_ENDPOINT", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setenv("MEDIA_AI_TELEMETRY", "1")
+        monkeypatch.setenv("MEDIA_AI_TELEMETRY_EXPORTER", "otlp")
+        monkeypatch.setenv("MEDIA_AI_TELEMETRY_ENDPOINT", f"http://127.0.0.1:{server.server_port}")
         assert generate() == 0
         assert json.loads(capsys.readouterr().out)["ok"] is True
     finally:

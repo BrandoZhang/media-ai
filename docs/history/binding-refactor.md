@@ -409,8 +409,8 @@ class Adapter:
 **Adapter 不再读环境变量。** 现在 `providers/volc.py` 直接读 `ARK_BASE_URL`、`ARK_IMAGE_MODEL`、
 `ARK_VIDEO_MODEL`、`ARK_POLL_INTERVAL`、`ARK_POLL_TIMEOUT` 五个 env，Gemini 还有七个——这是
 D1「好定位」下最该消掉的东西：**一个 binding 的行为，只由它那一段配置决定**。全部下沉为
-binding 的 `options`。仅保留少量真正全局的 env：`MEDIA_CONFIG_FILE`、`MEDIA_CREDENTIALS_FILE`、
-`MEDIA_USAGE_LOG`。
+binding 的 `options`。仅保留少量真正全局的 env：`MEDIA_AI_CONFIG_FILE`、`MEDIA_AI_CREDENTIALS_FILE`、
+`MEDIA_AI_USAGE_LOG`。
 
 ## 7. CLI 表面
 

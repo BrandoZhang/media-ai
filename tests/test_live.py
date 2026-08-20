@@ -4,7 +4,7 @@ These are the regression tests to run on merge to main (or on demand) with real
 credentials. They are **double-gated** so they never run by accident and never fail
 when nothing is configured:
 
-  1. ``MEDIA_LIVE_TESTS=1`` must be set (opt in), AND
+  1. ``MEDIA_AI_LIVE_TESTS=1`` must be set (opt in), AND
   2. the binding under test must be reachable *on this machine* — configured in
      ``config.toml`` with a credential that resolves.
 
@@ -16,7 +16,7 @@ picked up, an unconfigured one skips green.
 
 Which bindings to exercise comes from the same source: every configured binding
 serving the scene under test, one small artifact each, to bound cost. The video smoke
-is gated again behind ``MEDIA_LIVE_VIDEO=1`` since it is slow and costlier.
+is gated again behind ``MEDIA_AI_LIVE_VIDEO=1`` since it is slow and costlier.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-_LIVE = os.getenv("MEDIA_LIVE_TESTS", "").lower() in {"1", "true", "yes", "on"}
-_VIDEO = os.getenv("MEDIA_LIVE_VIDEO", "").lower() in {"1", "true", "yes", "on"}
+_LIVE = os.getenv("MEDIA_AI_LIVE_TESTS", "").lower() in {"1", "true", "yes", "on"}
+_VIDEO = os.getenv("MEDIA_AI_LIVE_VIDEO", "").lower() in {"1", "true", "yes", "on"}
 
 #: Bindings that produce nothing real. Running a live test against `mock/mock` would
 #: pass while proving nothing, which is the one outcome worse than skipping.
@@ -66,7 +66,7 @@ def _params(scene: str):
     found = _configured_for(scene)
     if found:
         return [pytest.param(b, id=b) for b in found]
-    reason = f"set MEDIA_LIVE_TESTS=1 and configure a binding for {scene}"
+    reason = f"set MEDIA_AI_LIVE_TESTS=1 and configure a binding for {scene}"
     return [pytest.param(None, id="none-configured", marks=pytest.mark.skip(reason=reason))]
 
 
@@ -100,7 +100,7 @@ def test_live_text_to_speech(binding, tmp_path):
     assert res["modality"] == "audio" and res["meta"]["scene"] == "speech.text_to_speech"
 
 
-@pytest.mark.skipif(not _VIDEO, reason="set MEDIA_LIVE_VIDEO=1 (slow and costlier than the rest)")
+@pytest.mark.skipif(not _VIDEO, reason="set MEDIA_AI_LIVE_VIDEO=1 (slow and costlier than the rest)")
 @pytest.mark.parametrize("binding", _params("video.text_to_video"))
 def test_live_text_to_video(binding, tmp_path):
     out = tmp_path / f"{binding.replace('/', '_')}.mp4"

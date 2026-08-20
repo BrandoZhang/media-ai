@@ -30,7 +30,7 @@ What is deliberately **not** derived from the brand:
     name differing from its import name is ordinary; renaming the import package would
     break every plugin for no user-visible gain.
 ``MEDIA_*``, the environment variables
-    ``MEDIA_CONFIG_FILE`` and friends name a *modality*, not a brand, and each is a
+    ``MEDIA_AI_CONFIG_FILE`` and friends name a *modality*, not a brand, and each is a
     per-invocation override rather than a namespace — what has to differ between two
     installs is the default path, which :func:`config_dir` already handles. Renaming
     them would break every caller's CI for no isolation gained.

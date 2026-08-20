@@ -135,12 +135,12 @@ flags uses whichever one its inputs imply.
 credential source and nothing else is consulted, so `uv run --env-file .env …` works
 only in the sense that it populates the variable an `env://` reference points at.
 
-To keep a dev config out of your real one, point `$MEDIA_CONFIG_FILE` (and
-`$MEDIA_CREDENTIALS_FILE`) at a scratch directory:
+To keep a dev config out of your real one, point `$MEDIA_AI_CONFIG_FILE` (and
+`$MEDIA_AI_CREDENTIALS_FILE`) at a scratch directory:
 
 ```bash
-export MEDIA_CONFIG_FILE=/tmp/dev/config.toml
-export MEDIA_CREDENTIALS_FILE=/tmp/dev/credentials.toml
+export MEDIA_AI_CONFIG_FILE=/tmp/dev/config.toml
+export MEDIA_AI_CREDENTIALS_FILE=/tmp/dev/credentials.toml
 ```
 
 Templates: [`config.toml.example`](../config.toml.example) and
@@ -155,11 +155,11 @@ are **double-gated** so they never run by accident or fail without creds:
 
 ```bash
 # opt in AND provide the key(s); anything unset simply skips
-MEDIA_LIVE_TESTS=1 OPENAI_API_KEY=… uv run pytest -m live -v
+MEDIA_AI_LIVE_TESTS=1 OPENAI_API_KEY=… uv run pytest -m live -v
 ```
 
-Each test skips unless `MEDIA_LIVE_TESTS=1` **and** the binding it exercises resolves
-its credential (the video smoke needs `MEDIA_LIVE_VIDEO=1` too). Those variables gate
+Each test skips unless `MEDIA_AI_LIVE_TESTS=1` **and** the binding it exercises resolves
+its credential (the video smoke needs `MEDIA_AI_LIVE_VIDEO=1` too). Those variables gate
 the *tests*; they are not read by the CLI, which takes everything it knows about a
 call from the binding. Keep them cheap — one small artifact per binding.
 
@@ -429,15 +429,15 @@ Three things keep it from becoming a nuisance:
 
 | | |
 |---|---|
-| `[update] interval` / `$MEDIA_UPDATE_INTERVAL` | how stale the cache may get; default 24h, `0` means every command |
+| `[update] interval` / `$MEDIA_AI_UPDATE_INTERVAL` | how stale the cache may get; default 24h, `0` means every command |
 | the stamp, written *before* the request | a fetch that fails costs one attempt per interval, not one per command — so an offline or sandboxed machine spawns one child a day, not one per invocation |
 | an `O_CREAT|O_EXCL` lock beside the cache | twenty shells starting at once make one request; the nineteen that lose exit immediately. Cleared if older than two minutes, so a killed process does not lock the machine out |
 
 And the escape hatches, because it is on by default: `[update] check = false` or
-`MEDIA_UPDATE_CHECK=0` turns off the request (the cached answer is still read and
+`MEDIA_AI_UPDATE_CHECK=0` turns off the request (the cached answer is still read and
 reported — that costs nothing); `CI` turns it off by default, since a fresh container
 fetches a document nobody reads and only makes noise when the network wobbles;
-`MEDIA_UPDATE_CHECK=1` overrules `CI` for a runner that does want it; a development
+`MEDIA_AI_UPDATE_CHECK=1` overrules `CI` for a runner that does want it; a development
 build never checks; and a machine that cannot reach the feed says nothing at all.
 An interruption spawns nothing — `KeyboardInterrupt`, and also the `MediaError` carrying
 `code = "interrupted"` that `providers/volc_ark.py` raises from its signal handler, which
@@ -446,7 +446,7 @@ interpreter outright and no `finally` runs).
 
 The test suite forks none of this, by two levers that cover different ground:
 `conftest` patches `update._spawn` for in-process commands, and sets
-`MEDIA_UPDATE_CHECK=0` for the tests that drive the CLI as a real subprocess, where no
+`MEDIA_AI_UPDATE_CHECK=0` for the tests that drive the CLI as a real subprocess, where no
 monkeypatch reaches. The five files that are *about* update checking delete that
 variable in their own fixtures.
 
@@ -524,7 +524,7 @@ wrapper script makes the two disagree.
 | Follows the brand | Stays fixed |
 |---|---|
 | the executable, and the distribution `uv tool` keys by | `media_ai`, the **import package** — the resource root for `skills/`+`bindings/` and the `media_ai.bindings` entry-point group third-party manifests register under |
-| `error.hint`, `--help`, `meta.poll`, wizard and `doctor` output | `MEDIA_CONFIG_FILE`, `MEDIA_CREDENTIALS_FILE`, `MEDIA_USAGE_LOG` … — these name a *modality*, not a brand, and each is a per-invocation override rather than a namespace, so renaming them would break callers' CI for no isolation gained |
+| `error.hint`, `--help`, `meta.poll`, wizard and `doctor` output | `MEDIA_AI_CONFIG_FILE`, `MEDIA_AI_CREDENTIALS_FILE`, `MEDIA_AI_USAGE_LOG` … — these name a *modality*, not a brand, and each is a per-invocation override rather than a namespace, so renaming them would break callers' CI for no isolation gained |
 | `~/.config/<brand>/` — config, credentials, install receipt | `REPO` in `install/install.sh`: where the code comes from is not what the tool is called |
 | installed skill directories (`<brand>-image`), their cross-references, and their `needs:` edges | the packaged directories, which are named for the command group (`skills/image/`) |
 | the default keychain service name | the scene ids, binding ids, and the result schema |

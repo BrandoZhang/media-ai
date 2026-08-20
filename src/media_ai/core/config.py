@@ -110,6 +110,7 @@ from pathlib import Path
 
 from ..brand import cli_name, cmd, config_dir
 from ..credentials.reference import is_reference
+from . import envvars
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
 from .update import DEFAULT_INTERVAL_SECONDS
@@ -123,7 +124,7 @@ SCHEMA = 2
 
 
 def config_path() -> Path:
-    return Path(os.getenv("MEDIA_CONFIG_FILE") or config_dir() / "config.toml").expanduser()
+    return Path(os.getenv(envvars.CONFIG_FILE) or config_dir() / "config.toml").expanduser()
 
 
 @dataclass(frozen=True)
@@ -581,7 +582,7 @@ def _document(path: Path) -> dict:
         # setup, which would overwrite a good file with one this build can express.
         raise _fail(
             f"{path} was written by a newer build (schema {schema}; this one reads {SCHEMA}). "
-            f"Upgrade {cli_name()}, or point $MEDIA_CONFIG_FILE at a different file.",
+            f"Upgrade {cli_name()}, or point $MEDIA_AI_CONFIG_FILE at a different file.",
             code="config_from_newer_build",
         )
     return data

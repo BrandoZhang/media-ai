@@ -39,7 +39,7 @@ def feed(**over) -> dict:
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(tmp_path / "config.toml"))
     monkeypatch.delenv("CI", raising=False)
     notices.clear()
     yield
@@ -63,7 +63,7 @@ def configured(tmp_path, monkeypatch) -> None:
         })),
         encoding="utf-8",
     )
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(path))
+    monkeypatch.setenv("MEDIA_AI_CONFIG_FILE", str(path))
 
 
 def generate(*argv, expect=0, capsys) -> dict:
@@ -253,7 +253,7 @@ def test_neither_check_ever_reaches_the_network(tmp_path, monkeypatch, capsys):
     that is not there, so a fetch would fail loudly rather than silently."""
     configured(tmp_path, monkeypatch)
     cache(tmp_path, feed(retired_bindings=[RETIRED]))
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setenv("MEDIA_AI_UPDATE_FEED", "https://definitely.invalid/feed.json")
     result = generate("--binding", "mock/mock", "--prompt", "x", "--output",
                       str(tmp_path / "x.png"), expect=3, capsys=capsys)
     assert result["error"]["code"] == "binding_retired"
