@@ -87,7 +87,6 @@ def test_no_stale_prefix_anywhere_a_user_reads():
     # Files that discuss the old names rather than instructing anyone to set one.
     exempt_files = {
         "src/media_ai/core/envvars.py",  # states what the prefix used to be, and why
-        "src/media_ai/cli/common.py",    # ditto, in the notice's docstring
         "tests/test_envvars.py",         # this file names old spellings to assert on them
         "AGENTS.md", "CLAUDE.md",        # the entry explaining why the prefix moved
         "docs/history",                  # a record of what was, not instructions
@@ -134,58 +133,34 @@ def test_names_belonging_to_somebody_else_are_untouched(name):
         f"{name} is no longer read anywhere; drop it from this list rather than leaving it asserted"
 
 
-# ------------------------------------------------------- the old names, once
+# ----------------------------------------------- the old names do nothing
 
 
-def test_every_new_name_has_an_old_one_and_they_derive():
-    assert set(envvars.RENAMED.values()) == set(envvars.NAMES)
-    for old, new in envvars.RENAMED.items():
-        assert old == "MEDIA_" + new[len(envvars.PREFIX):]
+def test_an_old_name_is_not_honoured(tmp_path, monkeypatch):
+    """The whole point of the rename, and the only thing left to assert about the old
+    spellings. Nothing reads them and nothing reports them — reading one "just this
+    once" is the compatibility layer this was done to avoid, and the value here would
+    send the CLI to a config file it was told to stop reading."""
+    from media_ai.core.config import config_path
+
+    monkeypatch.delenv(envvars.CONFIG_FILE, raising=False)
+    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "legacy.toml"))
+    assert config_path() != tmp_path / "legacy.toml"
 
 
-def test_only_the_silent_losses_are_reported(monkeypatch):
-    """The narrow list is the point. Warning about every renamed variable would mean
-    treating any set `MEDIA_LOG_LEVEL` as ours — the exact over-claiming of a generic
-    namespace this rename was made to stop, now with a `warn` on every command belonging
-    to whoever else set it."""
-    monkeypatch.delenv(envvars.LOG_LEVEL, raising=False)
-    monkeypatch.setenv("MEDIA_LOG_LEVEL", "debug")
-    assert envvars.legacy_in_use() == {}
-
-
-@pytest.mark.parametrize("old_name", sorted(
-    old for old, new in envvars.RENAMED.items() if new in envvars._REPORTED
-))
-def test_a_silently_lost_name_is_reported(monkeypatch, old_name):
-    new_name = envvars.RENAMED[old_name]
-    monkeypatch.delenv(new_name, raising=False)
-    monkeypatch.setenv(old_name, "1")
-    assert envvars.legacy_in_use() == {old_name: new_name}
-
-
-def test_the_reported_list_stays_short_and_justified():
-    """Its members are the ones that, ignored, either move where configuration and
-    secrets are read *and written*, or turn an outbound behaviour back on. Adding one
-    outside that rule is what turns a diagnostic into noise, so it is asserted rather
-    than left to a comment."""
-    assert envvars._REPORTED == {
-        envvars.CONFIG_FILE, envvars.CREDENTIALS_FILE,     # reads and writes elsewhere
-        envvars.TELEMETRY, envvars.UPDATE_CHECK, envvars.UPDATE_FEED,  # turn egress on
-    }
-    assert envvars._REPORTED < envvars.NAMES
-
-
-def test_a_doctor_run_is_not_pinned_to_warn_by_somebody_elses_variable(tmp_path, monkeypatch, capsys):
-    """`status` is what a script branches on, and a false positive here has no cure the
-    user could apply — the variable is not theirs to unset."""
+def test_an_old_name_is_not_reported_either(tmp_path, monkeypatch, capsys):
+    """No notice, no `doctor` line, no `status` moved. A warning would have been a table
+    with an expiry date, and — for the generic tails — this CLI claiming a namespace it
+    spends `core/envvars.py` arguing it does not own. Someone with an old name still
+    exported gets the default behaviour, the same as from a typo."""
     import json
     import sys
 
     from media_ai.cli import doctor
     from media_ai.core import notices
 
-    monkeypatch.setenv("MEDIA_LOG_LEVEL", "debug")
-    monkeypatch.setenv("MEDIA_USAGE_LOG", "/somewhere/else.jsonl")
+    for old_name in ("MEDIA_CONFIG_FILE", "MEDIA_TELEMETRY", "MEDIA_LOG_LEVEL"):
+        monkeypatch.setenv(old_name, "1")
     notices.clear()
     old, sys.argv = sys.argv, ["media-ai doctor"]
     try:
@@ -194,66 +169,5 @@ def test_a_doctor_run_is_not_pinned_to_warn_by_somebody_elses_variable(tmp_path,
         sys.argv = old
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert not [c for c in payload["checks"] if c["check"] == "environment"]
-    assert not [n for n in payload.get("notices", []) if n["kind"] == "env_renamed"]
-    notices.clear()
-
-
-def test_an_old_name_is_reported(monkeypatch):
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", "/somewhere")
-    monkeypatch.delenv(envvars.CONFIG_FILE, raising=False)
-    assert envvars.legacy_in_use() == {"MEDIA_CONFIG_FILE": envvars.CONFIG_FILE}
-
-
-def test_an_old_name_is_not_honoured(tmp_path, monkeypatch):
-    """The point of the rename. Reading it "just this once" is the compatibility layer
-    this was done to avoid — and the value here would send the CLI to a config file it
-    was told to stop reading."""
-    from media_ai.core.config import config_path
-
-    monkeypatch.delenv(envvars.CONFIG_FILE, raising=False)
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", str(tmp_path / "legacy.toml"))
-    assert config_path() != tmp_path / "legacy.toml"
-
-
-def test_setting_both_is_not_worth_a_warning(monkeypatch):
-    """Somebody mid-migration has already answered. Nagging about a variable that is
-    being correctly ignored is how a warning teaches people to ignore warnings."""
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", "/old")
-    monkeypatch.setenv(envvars.CONFIG_FILE, "/new")
-    assert envvars.legacy_in_use() == {}
-
-
-@pytest.mark.parametrize("value", ["", "   "])
-def test_a_blank_old_name_says_nothing(monkeypatch, value):
-    """`FOO=""` is what unsetting looks like in a shell that cannot unset — the same
-    reading `core/envflag.py` gives it."""
-    monkeypatch.setenv("MEDIA_CONFIG_FILE", value)
-    monkeypatch.delenv(envvars.CONFIG_FILE, raising=False)
-    assert envvars.legacy_in_use() == {}
-
-
-def test_the_warning_reaches_both_surfaces(tmp_path, monkeypatch, capsys):
-    """The notice rides whatever command they happened to run; `doctor` is where
-    somebody goes *because* something is behaving oddly. A scroll-back can swallow the
-    first, and "my config setting is being ignored" is the symptom that produces the
-    second."""
-    import sys
-
-    from media_ai.cli import doctor
-    from media_ai.core import notices
-
-    monkeypatch.setenv("MEDIA_TELEMETRY", "0")
-    monkeypatch.delenv(envvars.TELEMETRY, raising=False)
-    notices.clear()
-    old, sys.argv = sys.argv, ["media-ai doctor"]
-    try:
-        doctor.main()
-    finally:
-        sys.argv = old
-    out = capsys.readouterr().out
-    import json
-
-    payload = json.loads(out.strip().splitlines()[-1])
-    assert any(c["check"] == "environment" and c["status"] == "warn" for c in payload["checks"])
-    assert any(n["kind"] == "env_renamed" for n in payload.get("notices", []))
+    assert not [n for n in payload.get("notices", []) if "env" in n["kind"]]
     notices.clear()

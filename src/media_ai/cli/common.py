@@ -60,54 +60,6 @@ def _skills_from_another_build():
 
 
 @notices.register_source
-def _environment_variables_that_moved():
-    """A ``MEDIA_*`` variable that is set and is no longer read.
-
-    The prefix became ``MEDIA_AI_`` (see :mod:`media_ai.core.envvars`), and **nothing
-    reads the old spelling** — a compatibility layer is the baggage the rename removed.
-    This is not that. It honours no old value; it only refuses to let the change be
-    silent, which is a different promise and a much cheaper one.
-
-    Worth a `warn` rather than an `info` because of what the quiet failures look like.
-    An unread ``MEDIA_CONFIG_FILE`` does not leave the CLI unconfigured — it sends a
-    script that was pointed at a scratch profile to the user's *real* configuration and
-    credentials, and the writes land there. An unread ``MEDIA_TELEMETRY=0`` does not
-    leave telemetry off; it turns it on, and prompts start reaching a collector nobody
-    re-consented to. From the outside both look like the tool deciding something on its
-    own, which is the one thing this project's notices exist to prevent.
-
-    Which is also why it is not every renamed variable: `envvars._REPORTED` is a short
-    list, and the ones left off it fail visibly and at once. Warning about all eighteen
-    would mean treating any set ``MEDIA_LOG_LEVEL`` as ours — the very over-claiming of
-    a generic namespace that the rename was made to stop, now with a `warn` on every
-    command belonging to whoever else set it.
-
-    Only when the new name is unset, so somebody who has already migrated — or who is
-    setting both during one — is not nagged about a variable that is correctly ignored.
-
-    Delete this, `envvars.legacy_in_use` and the `doctor` check together, a release or
-    two after the rename ships. It is a diagnostic with an expiry date, not a feature.
-    """
-    from ..core.envvars import legacy_in_use
-
-    moved = legacy_in_use()
-    if not moved:
-        return
-    yield notices.Notice(
-        kind="env_renamed",
-        severity="warn",
-        message=(
-            f"{cli_name()} no longer reads "
-            + ", ".join(f"${old} (now ${new})" for old, new in sorted(moved.items()))
-            + "; the old value is being ignored."
-        ),
-        # No `action`: the fix is an edit to whatever exports these — a shell profile, a
-        # Dockerfile, a CI job — and this project documents an action as runnable
-        # verbatim. An `export` line naming one of several would be a guess at both.
-    )
-
-
-@notices.register_source
 def _a_newer_release_is_published():
     """A newer version, from the cached feed and never from the network.
 

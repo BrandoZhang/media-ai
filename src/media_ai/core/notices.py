@@ -46,8 +46,7 @@ __all__ = ["KINDS", "Notice", "add", "clear", "pending", "register_source", "res
 #: Every ``kind`` that can appear. Adding one is a deliberate edit here, next to the
 #: consumers that have to learn it — which is the point of a closed set. Entries are
 #: added with the code that produces them, never in advance.
-KINDS = frozenset({"skills_stale", "update_available", "binding_deprecated", "telemetry_unavailable",
-                   "env_renamed"})
+KINDS = frozenset({"skills_stale", "update_available", "binding_deprecated", "telemetry_unavailable"})
 
 _SEVERITIES = frozenset({"info", "warn"})
 
