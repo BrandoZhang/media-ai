@@ -394,6 +394,68 @@ misparses does not fail loudly — it applies a notice, or a block, to the wrong
 stored exactly as the writer produces it, so a bump never lands a formatting diff on top
 of the version it came for.
 
+#### How a client gets it
+
+Every command tops the cache up on its way **out**, in a detached child process
+(`<cli> __refresh-feed`, an internal group that takes no arguments and prints nothing).
+Nothing on the hot path ever waits on the network: a call reads
+`update-cache.json` beside `config.toml`, and the refresh that follows is a `Popen`
+the parent never waits for.
+
+Three commands opt out (`run(..., refresh_feed=False)`), and the rule is that a command
+which promised something about this keeps it. `doctor` is defined as strictly offline,
+and the whole `version` group manages its own fetching — `check` does it in the
+foreground because that is what was asked for, `show` and `check --offline` say they
+will not. A detached child is still that command reaching the network; the request does
+not become somebody else's because it left in another process. `uninstall` opts out for
+a different reason: it has just deleted the cache and the directory holding it, and this
+writes a stamp before it spawns anything.
+
+The cache carries **two** timestamps and they are not interchangeable. `checked_at` is
+when this machine last *tried*, and the TTL reads it. `fetched_at` is when what it holds
+*arrived*, and every display reads it — `doctor`, `version check`. Collapsing them makes
+a machine that has never reached the feed report "0.9.0 is current as of today", which
+is not merely imprecise: the thing it reassures you about is the thing that did not
+happen. A cache written before the split has one stamp that only ever moved on success,
+so it is read as a `fetched_at`.
+
+That ordering is what makes automatic checking affordable, and it has one consequence
+worth stating: the policy a call is subject to is the one that was on disk when it
+started. A machine that has never fetched is subject to nothing — a first run that
+cannot reach the feed must not be a first run that refuses to work — and a floor
+published today reaches an active machine on its *second* invocation.
+
+Three things keep it from becoming a nuisance:
+
+| | |
+|---|---|
+| `[update] interval` / `$MEDIA_UPDATE_INTERVAL` | how stale the cache may get; default 24h, `0` means every command |
+| the stamp, written *before* the request | a fetch that fails costs one attempt per interval, not one per command — so an offline or sandboxed machine spawns one child a day, not one per invocation |
+| an `O_CREAT|O_EXCL` lock beside the cache | twenty shells starting at once make one request; the nineteen that lose exit immediately. Cleared if older than two minutes, so a killed process does not lock the machine out |
+
+And the escape hatches, because it is on by default: `[update] check = false` or
+`MEDIA_UPDATE_CHECK=0` turns off the request (the cached answer is still read and
+reported — that costs nothing); `CI` turns it off by default, since a fresh container
+fetches a document nobody reads and only makes noise when the network wobbles;
+`MEDIA_UPDATE_CHECK=1` overrules `CI` for a runner that does want it; a development
+build never checks; and a machine that cannot reach the feed says nothing at all.
+An interruption spawns nothing — `KeyboardInterrupt`, and also the `MediaError` carrying
+`code = "interrupted"` that `providers/volc_ark.py` raises from its signal handler, which
+is the only other way a signal reaches `run()` (an untrapped SIGTERM kills the
+interpreter outright and no `finally` runs).
+
+The test suite forks none of this, by two levers that cover different ground:
+`conftest` patches `update._spawn` for in-process commands, and sets
+`MEDIA_UPDATE_CHECK=0` for the tests that drive the CLI as a real subprocess, where no
+monkeypatch reaches. The five files that are *about* update checking delete that
+variable in their own fixtures.
+
+The request carries **no identifier of any kind** — it is an anonymous GET of a static
+file. The version goes in the `User-Agent` and nowhere else: a `?version=`/`?id=` on
+the URL would make this a telemetry endpoint wearing an update check's clothes, which
+is a different thing to build, to document, and to be asked about. `[telemetry]` is
+where this project puts anything that reports.
+
 ### Where the version lives
 
 One place: `__version__` in [`src/media_ai/__init__.py`](../src/media_ai/__init__.py).

@@ -331,8 +331,12 @@ class VolcArkAdapter(HttpAdapter):
         # the billed task on signal/timeout so a killed wait doesn't orphan it.
         def _on_signal(signum, _frame):
             self._cancel(task_id, client, headers)
+            # `code`, because this is the one error in this file that is not about the
+            # provider at all: the caller was killed. `cli/common.run` reads it to tell
+            # a command that was stopped from one that failed — a stopped one must not
+            # leave a background update check running behind it.
             raise MediaError(f"Ark video task {task_id} interrupted (signal {signum}); task cancelled",
-                             category=ErrorCategory.TIMEOUT, provider=self.name)
+                             category=ErrorCategory.TIMEOUT, code="interrupted", provider=self.name)
 
         prev = {}
         for sig in (signal.SIGTERM, signal.SIGINT):

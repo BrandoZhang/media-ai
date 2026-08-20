@@ -80,19 +80,23 @@ def _check_update() -> list[dict]:
     """Whether a newer release is published, from the cache and never the network.
 
     ``doctor`` is defined as strictly offline and that does not bend for this: the
-    cache is written by ``init`` (and, later, by an explicit check), so what is
-    reported here is what this machine last learned, with its age said out loud. A
-    diagnosis that quietly went to the network would be a different command.
+    cache is written by ``init``, by an explicit check, and by the background refresh
+    every other command starts on its way out, so what is reported here is what this
+    machine last learned, with its age said out loud. A diagnosis that quietly went to
+    the network would be a different command.
 
     An absent cache is ``ok``, not a warning — a machine that has never fetched is not
-    a broken machine, and the fix for it (run setup) is not something a diagnosis
-    should nag about.
+    a broken machine, and the fix for it is not something a diagnosis should nag about.
+    It is also, now, a self-solving state on any machine that is allowed to check at
+    all: running *this* command refreshes it. Which is why the line says what writes it
+    rather than telling anyone to go and do something.
     """
     from ..core import update
 
     stamp = update.cached_at()
     if stamp is None:
-        return [_check("update", "ok", f"no release feed cached yet (written by `{cmd('init')}`)")]
+        return [_check("update", "ok", f"no release feed cached yet (written by `{cmd('init')}`, "
+                                      f"`{cmd('version', 'check')}`, or the check that follows any command)")]
     age = max(0, int((time.time() - stamp) // 86400))
     when = "today" if age == 0 else f"{age} day(s) ago"
     latest = update.latest_version(update.cached())
@@ -380,7 +384,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = common.parse_args(_build_parser())
-    return common.run(_diagnose, args)
+    # Strictly offline, and that covers the background refresh too — see `_check_update`.
+    return common.run(_diagnose, args, refresh_feed=False)
 
 
 if __name__ == "__main__":

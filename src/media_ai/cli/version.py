@@ -106,7 +106,14 @@ def _check(args) -> dict:
         "update_available": update.is_newer(latest, __version__),
         "source": source,
         "checked_at": update.cached_at(),
-        "settings": {"check": update.settings().check, "feed": update.feed_url()},
+        "settings": {
+            "check": update.settings().check,
+            "feed": update.feed_url(),
+            # Reported for the same reason `check` is: the check now happens on its own,
+            # so "why did this machine not notice for a week?" is a real question, and
+            # the interval is half its answer. The other half is `settings_from`.
+            "interval": update.interval_seconds(),
+        },
         "settings_from": update.settings_from(),
         # Not `notices`: that key belongs to the envelope every command shares
         # (`cli/common._with_notices`), which would overwrite whatever were put here.
@@ -125,7 +132,12 @@ def _do(args) -> dict:
 
 def main() -> int:
     args = common.parse_args(_build_parser())
-    return common.run(_do, args)
+    # No background refresh on the way out. This group is the one that already decides
+    # when to fetch: `check` does it in the foreground because that is what it was
+    # asked for, and `show` and `check --offline` promise not to. A detached child would
+    # make `--offline` a request that goes to the network in a different process, which
+    # is the distinction nobody using that flag is drawing.
+    return common.run(_do, args, refresh_feed=False)
 
 
 if __name__ == "__main__":

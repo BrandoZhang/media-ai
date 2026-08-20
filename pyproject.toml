@@ -95,6 +95,7 @@ testpaths = ["tests"]
 faulthandler_timeout = 120
 markers = [
     "live: hits real provider APIs; skipped unless MEDIA_LIVE_TESTS=1 and the provider's key is set",
+    "spawns_refresh: allowed to fork a real background update check (see tests/conftest.py)",
 ]
 
 [tool.ruff]

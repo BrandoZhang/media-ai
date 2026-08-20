@@ -134,11 +134,48 @@ def _ledger(tmp_path, monkeypatch, request):
     # Unset means the published URL, so a test that reaches `update.refresh` without
     # saying otherwise would make a real network call — quietly passing on a laptop and
     # failing, or worse succeeding, in CI. A test that wants a feed writes one and
-    # points this at it. `MEDIA_UPDATE_CHECK` is left alone: the code path that decides
-    # whether to check at all is itself under test.
+    # points this at it.
     monkeypatch.setenv("MEDIA_UPDATE_FEED", (tmp_path / "no-such-feed.json").as_uri())
+    # And the check is off by default, which it did not used to be — back when nothing
+    # happened unless a test asked, "the code path that decides whether to check at all
+    # is itself under test" was reason enough to leave this alone. It stopped being: a
+    # command now ends by *forking*, and several tests here drive the CLI as a real
+    # subprocess (`test_cli`, `test_brand`, `test_version`, `test_init`, `test_doctor`),
+    # where no amount of monkeypatching reaches the child. An environment variable is
+    # the only lever that crosses that boundary. The five files that are about update
+    # checking delete it in their own fixtures, exactly as they already do for `CI`.
+    monkeypatch.setenv("MEDIA_UPDATE_CHECK", "0")
     registry.reset_catalog()
     return tmp_path / "usage.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _no_background_refresh(monkeypatch, request):
+    """The suite forks nothing. Every command now ends by spawning a detached child.
+
+    That is the feature, and in a test run it is 70-odd real processes per `pytest -q`
+    — each one an interpreter start, each one writing into a `tmp_path` asynchronously
+    after the test that owned it has been torn down, and each one on a `live` run
+    pointed at the published feed for real. None of it is what any of those tests are
+    asserting, and a background writer racing a fixture's cleanup is the kind of flake
+    that gets blamed on everything except the thing that caused it.
+
+    `_spawn` and not `subprocess.Popen`: this must not touch the ffmpeg tests, which
+    spawn on purpose. Everything above the fork — `due`, the stamp, the lock, the argv
+    — still runs, so what is stubbed out is the one syscall a test has no use for.
+    `tests/test_update_auto.py` puts the real one back where it is the subject.
+
+    The second half of a pair, and each half covers what the other cannot.
+    `MEDIA_UPDATE_CHECK=0` above crosses into CLI subprocesses, where nothing in this
+    process can reach; this covers the five files that delete that variable because
+    they are *about* update checking, and which would otherwise fork while asserting
+    something else entirely.
+    """
+    from media_ai.core import update
+
+    if request.node.get_closest_marker("spawns_refresh"):
+        return
+    monkeypatch.setattr(update, "_spawn", lambda: True)
 
 
 @pytest.fixture(autouse=True)

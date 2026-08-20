@@ -41,7 +41,7 @@ from .core.types import (
 from .core.validate import UnsupportedPolicy, validate_request
 from .providers._base import HttpAdapter
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "register_manifest",
