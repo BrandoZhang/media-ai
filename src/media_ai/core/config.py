@@ -112,6 +112,7 @@ from ..brand import cli_name, cmd, config_dir
 from ..credentials.reference import is_reference
 from .errors import ErrorCategory, MediaError
 from .scene import Scene
+from .update import DEFAULT_INTERVAL_SECONDS
 
 __all__ = [
     "Config", "Exporter", "TelemetrySettings", "UserBinding", "config_path", "load_config",
@@ -184,9 +185,13 @@ class UpdateSettings:
 
     check: bool = True
     feed: str | None = None
-    #: Seconds. Not a bare ``int`` default in two places — :mod:`media_ai.core.update`
-    #: owns the number, because it is the module that reads it.
-    interval: int = 24 * 60 * 60
+    #: Seconds. The number itself is declared once, in
+    #: :data:`media_ai.core.update.DEFAULT_INTERVAL_SECONDS` — that is the module that
+    #: reads it and documents what changing it costs, and this file only says that
+    #: ``[update]`` has the field. Imported at module scope rather than lazily because
+    #: there is no cycle to avoid: `update` reaches back into this file only from
+    #: inside its functions.
+    interval: int = DEFAULT_INTERVAL_SECONDS
 
 
 #: OTLP/HTTP on a collector's default port. A *base* URL: the per-signal paths

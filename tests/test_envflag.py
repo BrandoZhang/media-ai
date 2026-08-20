@@ -113,6 +113,11 @@ def test_no_color_is_deliberately_not_a_flag(monkeypatch):
 def test_the_update_check_reads_ci_the_same_way(monkeypatch):
     """The other `CI` site — it gates the unsolicited *network* fetch. Both had the
     defect, so a fix in one would have been half of one."""
+    # `conftest` now turns the check off for the whole suite (it forks a real process
+    # otherwise); this test is about how `CI` is *read*, so it asks the question with
+    # nothing else answering it — which is also the only state in which `CI` decides,
+    # since an explicit `MEDIA_UPDATE_CHECK` overrules it in both directions.
+    monkeypatch.delenv("MEDIA_UPDATE_CHECK", raising=False)
     monkeypatch.setenv("CI", "false")
     assert update.should_check("0.1.0") is True
     monkeypatch.setenv("CI", "true")

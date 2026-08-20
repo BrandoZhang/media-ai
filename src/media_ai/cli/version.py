@@ -132,7 +132,12 @@ def _do(args) -> dict:
 
 def main() -> int:
     args = common.parse_args(_build_parser())
-    return common.run(_do, args)
+    # No background refresh on the way out. This group is the one that already decides
+    # when to fetch: `check` does it in the foreground because that is what it was
+    # asked for, and `show` and `check --offline` promise not to. A detached child would
+    # make `--offline` a request that goes to the network in a different process, which
+    # is the distinction nobody using that flag is drawing.
+    return common.run(_do, args, refresh_feed=False)
 
 
 if __name__ == "__main__":

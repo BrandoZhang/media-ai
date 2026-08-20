@@ -20,6 +20,13 @@ from ..credentials.redaction import redact_obj
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 
+#: The ``error.code`` a command uses to say "a signal stopped me", as opposed to "the
+#: work failed". Only :mod:`media_ai.providers.volc_ark` sets it today, because it is
+#: the only place that traps a signal in order to clean up after itself; anything else
+#: that grows a signal handler has to say so the same way, or it will be treated as an
+#: ordinary failure by everything downstream that cares about the difference.
+INTERRUPTED = "interrupted"
+
 
 @notices.register_source
 def _skills_from_another_build():
@@ -628,8 +635,8 @@ def run(build_and_call, args, *, refresh_feed: bool = True) -> int:
     """Configure logging and telemetry, run the command, and turn any failure into the
     JSON error contract + a category-specific exit code.
 
-    ``refresh_feed=False`` is for the one command that is not simply *using* this
-    installation but taking it apart — see :func:`_refresh_feed_afterwards`.
+    ``refresh_feed=False`` is for the commands that promise something about the network
+    or about the installation itself — see :func:`_refresh_feed_afterwards`.
 
     The whole of it runs inside ``config.snapshot()``, so an invocation has one view of
     the configuration — the command body and the notice sources that run on the way out
@@ -652,6 +659,14 @@ def run(build_and_call, args, *, refresh_feed: bool = True) -> int:
             result = build_and_call(args)
             return inv.finish(emit_result(result, args))
         except MediaError as e:
+            # A signal that something else caught on the way past. `volc_ark._poll`
+            # traps SIGTERM/SIGINT so it can cancel the billed task, and hands back a
+            # `MediaError` rather than letting the interrupt through — so without this,
+            # Ctrl-C on an Ark video wait is the one interruption that still leaves a
+            # background process behind. Two ways in and both are covered, which is all
+            # of them: an untrapped SIGTERM kills the interpreter outright and no
+            # `finally` runs at all.
+            interrupted = e.code == INTERRUPTED
             inv.failed(e)
             return inv.finish(emit_error(e, args))
         except KeyboardInterrupt:
@@ -689,22 +704,35 @@ def _refresh_feed_afterwards() -> None:
 
     In the ``finally``, so a command that *failed* refreshes too — being out of date is
     a plausible reason for the failure, and the update notice riding the next
-    invocation's ``notices[]`` is how anyone finds out. Not after an interrupt: Ctrl-C
-    means stop, and a process that outlives the one the user just killed is the
-    opposite of that.
+    invocation's ``notices[]`` is how anyone finds out. Not after an interruption:
+    Ctrl-C means stop, and a process that outlives the one the user just killed is the
+    opposite of that. Which counts as an interruption is not only ``KeyboardInterrupt``
+    — see the ``MediaError`` handler above.
 
     Inside ``snapshot()`` because the decision reads ``[update]``, and it must be the
     same configuration the rest of the command saw. Wrapped, because an update check is
     never a reason for a command to fail — least of all here, where the result has
     already been printed and the exit code already chosen.
 
-    ``uninstall`` opts out (``run(..., refresh_feed=False)``), and it is the only
-    command that needs to. This writes a stamp before it spawns anything, so on the way
-    out of a command that has just deleted the cache — and the config directory holding
-    it — it would put one of them straight back. "Uninstalling leaves nothing behind" is
-    a promise this project makes in as many words, and a file recreated one millisecond
-    after removal is the most confusing possible way to break it: the command reports
-    the path as removed, and the path is there.
+    Three commands opt out with ``run(..., refresh_feed=False)``, and the rule is that a
+    command which has made a promise about this keeps it:
+
+    - ``doctor`` is *defined* as strictly offline, and ``version show`` and ``version
+      check --offline`` say the same thing in their own words. A detached child is still
+      this command reaching the network — the request does not become somebody else's
+      because it left in another process, and a machine in an air-gapped environment
+      would see a connection attempt from a command documented as making none. The whole
+      ``version`` group opts out rather than just the offline half, because the online
+      half already fetches, on purpose and in the foreground.
+    - ``uninstall`` has just deleted the cache and the directory holding it. This writes
+      a stamp before it spawns anything, so it would put one of them straight back.
+      "Uninstalling leaves nothing behind" is a promise this project makes in as many
+      words, and a file recreated one millisecond after removal is the most confusing
+      possible way to break it: the command reports the path as removed, and the path is
+      there.
+
+    Nothing else opts out. The mechanism rides on ordinary commands — a generation, a
+    listing, a config read — which is where the callers are anyway.
     """
     from ..core import update
 

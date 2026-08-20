@@ -77,6 +77,7 @@ __all__ = [
     "cache_path",
     "cached",
     "cached_at",
+    "checked_at",
     "due",
     "interval_seconds",
     "is_newer",
@@ -476,21 +477,71 @@ def cached() -> dict | None:
     This is what every command on the hot path calls. An unreadable or absent cache is
     the ordinary state on a fresh install and answers ``None``.
     """
+    return parse_feed(_raw_cache().get("feed"))
+
+
+def _raw_cache() -> dict:
+    """The cache file as it is on disk, or ``{}``. Every reader here goes through it."""
     try:
         raw = json.loads(cache_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
-        return None
-    return parse_feed(raw.get("feed")) if isinstance(raw, dict) else None
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _stamp(raw: dict, *keys: str) -> float | None:
+    """The first of ``keys`` that holds a usable timestamp, or ``None``.
+
+    ``is not None`` rather than truthiness at each step: ``0`` is a lie of a timestamp
+    but it is a *present* one, and falling through it would answer with a different
+    field's value instead of with the epoch. Same rule as `notices_for`'s bounds.
+    """
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+# Two stamps, because the check became automatic and they stopped being the same fact.
+#
+# While a fetch only happened when somebody asked for one, "when did this machine last
+# check" and "how old is what it knows" had one answer: the cache was written when a
+# feed arrived and at no other time. `mark_checked` breaks that — it records an
+# *attempt*, before the request, precisely so a machine that can never reach the feed
+# stops trying twenty times a command.
+#
+# Keeping one stamp for both would have made every failed attempt look like a
+# successful one. `doctor` on a machine that has never reached the feed would report
+# "0.9.0 is current as of today" — an answer that is not merely imprecise but exactly
+# backwards, since the thing it is reassuring you about is the thing that did not
+# happen. So: `checked_at` is when we last tried (the TTL reads it), `fetched_at` is
+# when what we hold arrived (every display reads it).
 
 
 def cached_at() -> float | None:
-    """When the cache was last written, as a unix timestamp, or ``None``."""
-    try:
-        raw = json.loads(cache_path().read_text(encoding="utf-8"))
-        stamp = raw.get("checked_at")
-    except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+    """When the cached feed arrived, as a unix timestamp, or ``None``.
+
+    What ``doctor`` and ``version check`` report, because what a reader wants to know
+    is the age of the *answer*, not the recency of the last failed attempt to improve
+    it. ``None`` whenever there is no feed — a machine that has tried and never
+    succeeded has learned nothing, and must keep saying so.
+
+    A cache written before this build had one stamp and only ever wrote it on success,
+    so its ``checked_at`` is a ``fetched_at``. Read that way rather than discarded: the
+    file is not versioned, and an upgrade that silently reset every install's idea of
+    what it knows is a worse answer than reading the old shape correctly.
+    """
+    raw = _raw_cache()
+    if parse_feed(raw.get("feed")) is None:
         return None
-    return float(stamp) if isinstance(stamp, (int, float)) else None
+    return _stamp(raw, "fetched_at", "checked_at")
+
+
+def checked_at() -> float | None:
+    """When this machine last *tried*, successfully or not. What the TTL reads."""
+    raw = _raw_cache()
+    return _stamp(raw, "checked_at", "fetched_at")
 
 
 def _write_cache(payload: dict) -> bool:
@@ -531,11 +582,12 @@ def _write_cache(payload: dict) -> bool:
 
 def _store(feed: dict) -> None:
     """Record a feed that was just fetched, and the moment it was."""
-    _write_cache({"checked_at": time.time(), "feed": feed})
+    now = time.time()
+    _write_cache({"checked_at": now, "fetched_at": now, "feed": feed})
 
 
 def mark_checked() -> bool:
-    """Stamp "checked just now" without changing what is cached.
+    """Stamp "tried just now", without touching what is cached or when it arrived.
 
     Written **before** the request, not after a successful one, and that order is the
     load-bearing part. A stamp that only moves on success means a machine that cannot
@@ -554,10 +606,19 @@ def mark_checked() -> bool:
     that could not write it must not spawn a refresh, or a read-only config directory
     would reintroduce the storm this prevents from the other end.
     """
+    raw = _raw_cache()
     payload: dict = {"checked_at": time.time()}
-    kept = cached()
+    # Whatever is already known is carried across untouched, including *when* it
+    # arrived. An attempt is not a discovery, and the only field it may move is its own.
+    kept = parse_feed(raw.get("feed"))
     if kept is not None:
         payload["feed"] = kept
+        # Absent rather than `null` when the file somehow holds a feed and no timestamp
+        # — an absent limit is an absent field here as everywhere, and a `null` is one
+        # more shape every reader would have to know about.
+        arrived = _stamp(raw, "fetched_at", "checked_at")
+        if arrived is not None:
+            payload["fetched_at"] = arrived
     return _write_cache(payload)
 
 
@@ -578,7 +639,7 @@ def due(version: str) -> bool:
     """
     if not should_check(version):
         return False
-    stamp = cached_at()
+    stamp = checked_at()
     if stamp is None:
         return True
     # A stamp from the future is a clock that moved, not a check from tomorrow. Left as

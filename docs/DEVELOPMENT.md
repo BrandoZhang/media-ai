@@ -402,6 +402,23 @@ Nothing on the hot path ever waits on the network: a call reads
 `update-cache.json` beside `config.toml`, and the refresh that follows is a `Popen`
 the parent never waits for.
 
+Three commands opt out (`run(..., refresh_feed=False)`), and the rule is that a command
+which promised something about this keeps it. `doctor` is defined as strictly offline,
+and the whole `version` group manages its own fetching — `check` does it in the
+foreground because that is what was asked for, `show` and `check --offline` say they
+will not. A detached child is still that command reaching the network; the request does
+not become somebody else's because it left in another process. `uninstall` opts out for
+a different reason: it has just deleted the cache and the directory holding it, and this
+writes a stamp before it spawns anything.
+
+The cache carries **two** timestamps and they are not interchangeable. `checked_at` is
+when this machine last *tried*, and the TTL reads it. `fetched_at` is when what it holds
+*arrived*, and every display reads it — `doctor`, `version check`. Collapsing them makes
+a machine that has never reached the feed report "0.9.0 is current as of today", which
+is not merely imprecise: the thing it reassures you about is the thing that did not
+happen. A cache written before the split has one stamp that only ever moved on success,
+so it is read as a `fetched_at`.
+
 That ordering is what makes automatic checking affordable, and it has one consequence
 worth stating: the policy a call is subject to is the one that was on disk when it
 started. A machine that has never fetched is subject to nothing — a first run that
@@ -422,6 +439,16 @@ reported — that costs nothing); `CI` turns it off by default, since a fresh co
 fetches a document nobody reads and only makes noise when the network wobbles;
 `MEDIA_UPDATE_CHECK=1` overrules `CI` for a runner that does want it; a development
 build never checks; and a machine that cannot reach the feed says nothing at all.
+An interruption spawns nothing — `KeyboardInterrupt`, and also the `MediaError` carrying
+`code = "interrupted"` that `providers/volc_ark.py` raises from its signal handler, which
+is the only other way a signal reaches `run()` (an untrapped SIGTERM kills the
+interpreter outright and no `finally` runs).
+
+The test suite forks none of this, by two levers that cover different ground:
+`conftest` patches `update._spawn` for in-process commands, and sets
+`MEDIA_UPDATE_CHECK=0` for the tests that drive the CLI as a real subprocess, where no
+monkeypatch reaches. The five files that are *about* update checking delete that
+variable in their own fixtures.
 
 The request carries **no identifier of any kind** — it is an anonymous GET of a static
 file. The version goes in the `User-Agent` and nowhere else: a `?version=`/`?id=` on

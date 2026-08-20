@@ -384,7 +384,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = common.parse_args(_build_parser())
-    return common.run(_diagnose, args)
+    # Strictly offline, and that covers the background refresh too — see `_check_update`.
+    return common.run(_diagnose, args, refresh_feed=False)
 
 
 if __name__ == "__main__":

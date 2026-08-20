@@ -70,11 +70,26 @@ class Spawns:
         self.calls.append((list(argv), kw))
         return object()
 
+    @property
+    def refreshes(self) -> list[list[str]]:
+        """Just the update checks. `doctor` legitimately spawns ffmpeg to probe it, and
+        a test about the update check must not be an assertion about that."""
+        return [argv for argv, _kw in self.calls if update.REFRESH_COMMAND in argv]
+
+
+#: `conftest._no_background_refresh` stubs `_spawn` out for the whole suite, so the one
+#: file that is *about* the spawn puts the real one back and intercepts one level lower,
+#: at `Popen`. Nothing here reaches a real fork either — the recorder returns without
+#: starting anything — but everything between `refresh_detached` and the syscall runs
+#: for real, which is the part worth asserting on.
+_REAL_SPAWN = update._spawn
+
 
 @pytest.fixture
 def spawns(monkeypatch) -> Spawns:
     import subprocess
 
+    monkeypatch.setattr(update, "_spawn", _REAL_SPAWN)
     recorder = Spawns()
     monkeypatch.setattr(subprocess, "Popen", recorder)
     return recorder
@@ -213,9 +228,10 @@ def test_the_stamp_is_written_before_the_request(tmp_path, monkeypatch):
     """A stamp that only moved on success would make a machine that cannot reach the
     feed due on every single command — twenty commands, twenty processes, twenty
     timeouts. Stamping first makes a failed check cost what a successful one costs."""
-    monkeypatch.setenv("MEDIA_UPDATE_FEED", "https://definitely.invalid/feed.json")
+    monkeypatch.setattr(update, "_fetch", lambda url: None)  # a machine that cannot reach it
     assert update.refresh_now(media_ai.__version__) is None
-    assert update.cached_at() is not None
+    assert update.checked_at() is not None, "it tried, and said so"
+    assert update.cached_at() is None, "and it learned nothing, and says that too"
     assert update.due(media_ai.__version__) is False
 
 
@@ -308,6 +324,7 @@ def test_a_spawn_that_fails_is_silence(tmp_path, monkeypatch):
     def boom(argv, **kw):
         raise OSError("no fork for you")
 
+    monkeypatch.setattr(update, "_spawn", _REAL_SPAWN)
     monkeypatch.setattr(subprocess, "Popen", boom)
     assert update.refresh_detached(media_ai.__version__) is False
 
@@ -321,6 +338,7 @@ def test_any_way_a_spawn_can_fail_is_the_same_failure(tmp_path, monkeypatch, blo
     def boom(argv, **kw):
         raise blowup
 
+    monkeypatch.setattr(update, "_spawn", _REAL_SPAWN)
     monkeypatch.setattr(subprocess, "Popen", boom)
     assert update.refresh_detached(media_ai.__version__) is False
 
@@ -495,19 +513,22 @@ def test_a_mistyped_internal_name_is_still_an_unknown_group(tmp_path, capsys):
 # --------------------------------------------------------- hooked into every command
 
 
-def _version_show(capsys) -> dict:
-    from media_ai.cli import version as version_mod
+def _ordinary_command(capsys) -> dict:
+    """`bindings list` — offline, needs no config, and promises nothing about the
+    network. Deliberately not `version show` or `doctor`: those two opt out, which is
+    what `test_a_command_that_promised_not_to_touch_the_network_does_not` is about."""
+    from media_ai.cli import bindings as bindings_mod
 
-    old, sys.argv = sys.argv, ["media-ai version", "show"]
+    old, sys.argv = sys.argv, ["media-ai bindings", "list"]
     try:
-        assert version_mod.main() == 0
+        assert bindings_mod.main() == 0
     finally:
         sys.argv = old
     return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
 
 
 def test_an_ordinary_command_leaves_a_refresh_behind(tmp_path, spawns, capsys):
-    assert _version_show(capsys)["ok"] is True
+    assert _ordinary_command(capsys)["ok"] is True
     assert len(spawns.calls) == 1
 
 
@@ -524,7 +545,8 @@ def test_the_result_is_printed_before_anything_is_spawned(tmp_path, monkeypatch,
 
     real_emit = common.emit
     monkeypatch.setattr(common, "emit", lambda obj, args: (order.append("printed"), real_emit(obj, args))[1])
-    _version_show(capsys)
+    monkeypatch.setattr(update, "_spawn", _REAL_SPAWN)
+    _ordinary_command(capsys)
     assert order == ["printed", "spawned"]
 
 
@@ -580,13 +602,189 @@ def test_uninstall_does_not_put_back_what_it_just_removed(tmp_path, monkeypatch,
     assert not update.cache_path().exists()
 
 
+@pytest.mark.parametrize("group,argv", [
+    ("doctor", []),
+    ("version", ["show"]),
+    ("version", ["check", "--offline"]),
+])
+def test_a_command_that_promised_not_to_touch_the_network_does_not(tmp_path, spawns, capsys, group, argv):
+    """A detached child is still *this* command reaching the network. It does not become
+    somebody else's request by leaving in another process, and an air-gapped machine
+    running a command documented as offline would see a connection attempt either way."""
+    from importlib import import_module
+
+    main = import_module(f"media_ai.cli.{group}").main
+    old, sys.argv = sys.argv, [f"media-ai {group}", *argv]
+    try:
+        main()
+    finally:
+        sys.argv = old
+    capsys.readouterr()
+    assert spawns.refreshes == []
+
+
+def test_a_trapped_signal_counts_as_an_interruption(tmp_path, spawns, capsys):
+    """`volc_ark._poll` traps SIGTERM/SIGINT so it can cancel the billed task, and hands
+    back a `MediaError` instead of letting the interrupt through — so Ctrl-C on an Ark
+    video wait would otherwise be the one interruption that still forks."""
+    from media_ai.cli import common
+    from media_ai.core.errors import ErrorCategory, MediaError
+
+    def killed(args):
+        raise MediaError("interrupted (signal 2); task cancelled",
+                         category=ErrorCategory.TIMEOUT, code=common.INTERRUPTED)
+
+    class Args:
+        pretty = False
+        _command = "video.generate"
+
+    assert common.run(killed, Args()) == 7
+    capsys.readouterr()
+    assert spawns.calls == []
+
+
+def test_the_provider_that_traps_signals_still_says_so():
+    """The code above is a contract between two files. A rename here is a background
+    process that outlives a Ctrl-C, which nothing else would notice."""
+    import ast
+    from pathlib import Path
+
+    from media_ai.cli.common import INTERRUPTED
+    from media_ai.providers import volc_ark
+
+    tree = ast.parse(Path(volc_ark.__file__).read_text(encoding="utf-8"))
+    codes = {
+        kw.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "MediaError"
+        for kw in node.keywords
+        if kw.arg == "code" and isinstance(kw.value, ast.Constant)
+    }
+    assert INTERRUPTED in codes
+
+
+def test_an_ordinary_failure_is_not_an_interruption(tmp_path, spawns, capsys):
+    """The command ran and did not work — being out of date is a plausible reason, and
+    the notice riding the next invocation is how anyone finds out."""
+    from media_ai.cli import common
+    from media_ai.core.errors import ErrorCategory, MediaError
+
+    def failed(args):
+        raise MediaError("the provider said no", category=ErrorCategory.TIMEOUT)
+
+    class Args:
+        pretty = False
+        _command = "video.generate"
+
+    assert common.run(failed, Args()) == 7
+    capsys.readouterr()
+    assert len(spawns.calls) == 1
+
+
+# ------------------------------------------------- a stamp is not a discovery
+
+
+def test_a_machine_that_never_reached_the_feed_does_not_claim_to_be_current(tmp_path, monkeypatch):
+    """The stamp records an attempt. Reported as an arrival, `doctor` answers "0.9.0 is
+    current as of today" on a machine that has never read the feed at all — not merely
+    imprecise but exactly backwards, since what it reassures you about is the thing that
+    did not happen."""
+    from media_ai.cli import doctor
+
+    monkeypatch.setattr(update, "_fetch", lambda url: None)
+    update.refresh_now(media_ai.__version__)
+    (found,) = doctor._check_update()
+    assert found["status"] == "ok"
+    assert "no release feed cached yet" in found["detail"]
+
+
+def test_a_failed_attempt_does_not_age_what_is_already_known(tmp_path):
+    """The other direction: a machine that fetched yesterday and could not reach the
+    feed today still holds yesterday's answer, and reports its real age."""
+    yesterday = time.time() - 86400
+    (tmp_path / "update-cache.json").write_text(
+        json.dumps({"checked_at": yesterday, "fetched_at": yesterday, "feed": FEED}), encoding="utf-8")
+    assert update.mark_checked() is True
+    assert update.checked_at() > yesterday
+    assert update.cached_at() == pytest.approx(yesterday)
+    assert update.latest_version(update.cached()) == "9.9.9"
+
+
+def test_a_cache_from_before_the_second_stamp_is_read_as_an_arrival(tmp_path):
+    """The file is not versioned, and every install has one. An upgrade that reset
+    everybody's idea of what they knew is worse than reading the old shape correctly:
+    it only ever wrote on success, so its `checked_at` is a `fetched_at`."""
+    when = time.time() - 3600
+    (tmp_path / "update-cache.json").write_text(
+        json.dumps({"checked_at": when, "feed": FEED}), encoding="utf-8")
+    assert update.cached_at() == pytest.approx(when)
+    assert update.checked_at() == pytest.approx(when)
+
+
+def test_version_check_does_not_report_a_time_it_learned_nothing_at(tmp_path, monkeypatch, capsys):
+    """`source: "none"` beside a fresh `checked_at` is a self-contradicting answer, and
+    the interesting case — a machine behind a proxy — is exactly where it appears."""
+    from media_ai.cli import version as version_mod
+
+    monkeypatch.setattr(update, "_fetch", lambda url: None)
+    update.refresh_now(media_ai.__version__)
+    old, sys.argv = sys.argv, ["media-ai version", "check"]
+    try:
+        version_mod.main()
+    finally:
+        sys.argv = old
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["source"] == "none"
+    assert out["checked_at"] is None
+
+
+# --------------------------------------------------------- nothing left behind
+
+
+def test_uninstall_takes_every_file_the_check_writes(tmp_path, monkeypatch, capsys):
+    """A stray lock or a temp file left by an interrupted write is enough for
+    `prune_empty` to find the directory non-empty and leave the whole of it behind."""
+    from media_ai.cli import uninstall
+
+    cache(tmp_path)
+    update.lock_path().write_text("4242", encoding="utf-8")
+    (tmp_path / "update-cache.json.abcdef.tmp").write_text("{half a docum", encoding="utf-8")
+    monkeypatch.setenv("MEDIA_CREDENTIALS_FILE", str(tmp_path / "credentials.toml"))
+    old, sys.argv = sys.argv, ["media-ai uninstall", "--yes", "--skills-dest", str(tmp_path / "none")]
+    try:
+        uninstall.main()
+    finally:
+        sys.argv = old
+    capsys.readouterr()
+    assert not update.cache_path().exists()
+    assert not update.lock_path().exists()
+    assert list(tmp_path.glob("update-cache.json.*.tmp")) == []
+
+
+def test_the_suite_itself_forks_nothing(tmp_path, capsys):
+    """`conftest._no_background_refresh` is what keeps a `pytest -q` run from starting
+    seventy interpreters that write into `tmp_path` after teardown. Asserted here rather
+    than trusted, since it is invisible when it works."""
+    import subprocess
+
+    started = []
+    real = subprocess.Popen
+    try:
+        subprocess.Popen = lambda argv, **kw: started.append(argv)
+        _ordinary_command(capsys)
+    finally:
+        subprocess.Popen = real
+    assert started == []
+
+
 def test_a_command_never_waits_for_the_answer(tmp_path, monkeypatch, capsys):
     """The invariant the whole arrangement exists for, asserted the blunt way: a feed
     that takes forever to serve does not make a command take forever to finish."""
     import subprocess
 
     monkeypatch.setattr(update, "_fetch", lambda url: pytest.fail("the hot path fetched"))
+    monkeypatch.setattr(update, "_spawn", _REAL_SPAWN)
     monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: time.sleep(0))
     started = time.monotonic()
-    _version_show(capsys)
+    _ordinary_command(capsys)
     assert time.monotonic() - started < 5

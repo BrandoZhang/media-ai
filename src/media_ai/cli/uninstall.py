@@ -209,7 +209,14 @@ def _uninstall(args, prompter) -> dict:
     # user's to decide, and the next run would fetch it again anyway. It also has to go
     # for `prune_empty` below to find the config directory empty — a cache left behind
     # is exactly the litter this command exists to remove.
-    doomed: list[Path] = [update.cache_path()] if update.cache_path().is_file() else []
+    #
+    # The whole set the update check writes, not just the cache. The refresh lock is
+    # normally unlinked by whoever took it, and a temp file only outlives a write that
+    # was interrupted mid-rename — so both are absent almost always, and "almost always"
+    # is the wrong standard for a command whose promise is that nothing is left. One
+    # stray dotfile is enough for `prune_empty` to find the directory non-empty and
+    # leave the whole of it behind.
+    doomed: list[Path] = [p for p in _update_litter() if p.is_file()]
     for flag, where, _what in CONFIG_FILES:
         path = where()
         if choices.files.get(flag):
@@ -226,6 +233,12 @@ def _uninstall(args, prompter) -> dict:
     summary["remove_cli"] = _remove_cli_hint()
     _report(summary, prompter)
     return summary
+
+
+def _update_litter() -> list[Path]:
+    """Every path the release-feed check may have written, whether or not it is there."""
+    cache = update.cache_path()
+    return [cache, update.lock_path(), *sorted(cache.parent.glob(f"{cache.name}.*.tmp"))]
 
 
 def _remove_cli_hint() -> str:
